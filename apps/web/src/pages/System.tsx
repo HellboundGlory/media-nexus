@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Play } from "lucide-react";
+import { KeyRound, Play } from "lucide-react";
+import { useAppStore } from "../store/useAppStore";
 import { api } from "../api/client";
 import type { JobRun } from "../api/types";
 import { Badge, statusTone, ErrorState, formatDate } from "../lib/ui";
@@ -9,6 +10,9 @@ import { Badge, statusTone, ErrorState, formatDate } from "../lib/ui";
 export default function System() {
   const qc = useQueryClient();
   const [themeSetting, setThemeSetting] = useState("");
+  const apiKey = useAppStore((s) => s.apiKey);
+  const setApiKey = useAppStore((s) => s.setApiKey);
+  const [keyDraft, setKeyDraft] = useState(apiKey);
 
   const runs = useQuery({ queryKey: ["job-runs"], queryFn: () => api.get<JobRun[]>("/system/jobs/runs") });
   const cfg = useQuery({ queryKey: ["config"], queryFn: () => api.get<Record<string, unknown>>("/system/config") });
@@ -88,6 +92,34 @@ export default function System() {
           <p className="text-xs text-zinc-500">Settings persist via the <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">setting</code> table. Endpoint inventory below reflects the native + compat API.</p>
         </section>
       </div>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mb-3 flex items-center gap-2">
+          <KeyRound className="h-4 w-4" />
+          <h3 className="font-medium">API key (this browser)</h3>
+        </div>
+        <p className="mb-2 text-xs text-zinc-500">
+          First-run bootstrap prints an <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">X-Api-Key</code> to the API
+          logs. Paste it here so this browser can call the API (stored locally only). In dev you can also set
+          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800"> VITE_MEDIA_NEXUS_API_KEY </code> in{" "}
+          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">apps/web/.env</code>.
+        </p>
+        <div className="flex gap-2">
+          <input
+            value={keyDraft}
+            onChange={(e) => setKeyDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { setApiKey(keyDraft.trim()); qc.invalidateQueries(); } }}
+            placeholder="mn_…"
+            className="flex-1 rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700"
+          />
+          <button
+            onClick={() => { setApiKey(keyDraft.trim()); setTimeout(() => qc.invalidateQueries(), 150); }}
+            className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500"
+          >
+            Save key
+          </button>
+        </div>
+      </section>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
         <h3 className="mb-3 font-medium">API surface</h3>

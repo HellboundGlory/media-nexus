@@ -22,8 +22,8 @@ docker compose up -d
 ```
 
 The first boot seeds the `admin` user and prints a one-time **API key** to the api logs
-(`docker compose logs api`). The web app reads the key from `VITE_MEDIA_NEXUS_API_KEY` in `.env` (dev) — in Docker you set
-the same key in `.env` so the UI can authenticate.
+(`docker compose logs api`). In Docker, open **System → API key** in the UI and paste that key (stored in the browser);
+in local dev you can instead set `VITE_MEDIA_NEXUS_API_KEY` in `apps/web/.env`/`.env.example` at the repo root.
 
 > Note: Docker is not available in the scaffold's dev environment; images/compose are authored to be CI-validated before
 > the claim "verified in Docker" is made. Local run + tests below are fully verified.
