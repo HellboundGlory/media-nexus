@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download } from "lucide-react";
+import { Download, HeartPulse, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { IndexerDef, IndexerRow, Release, Paged, Movie } from "../api/types";
-import { Badge, formatBytes, statusTone } from "../lib/ui";
+import { Badge, ErrorState, formatBytes, statusTone } from "../lib/ui";
+
+interface CardigannSettingMeta {
+  name: string;
+  label?: string;
+  type: string;
+  default?: string | number | boolean;
+  required?: boolean;
+  options?: string[];
+}
 
 export default function Indexers() {
   const qc = useQueryClient();
@@ -12,24 +21,50 @@ export default function Indexers() {
   const [defKey, setDefKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
-  
+  const [settingsDraft, setSettingsDraft] = useState<Record<string, string | boolean>>({});
+  // cardigann custom definition form
+  const [showCustom, setShowCustom] = useState(false);
+  const [customKey, setCustomKey] = useState("");
+  const [customName, setCustomName] = useState("");
+  const [customProtocol, setCustomProtocol] = useState<"usenet" | "torrent">("torrent");
+  const [customYaml, setCustomYaml] = useState("");
+  // search/grabs
   const [movieId, setMovieId] = useState("");
   const [releases, setReleases] = useState<Release[] | null>(null);
 
-  const defs = useQuery({ queryKey: ["indexer-defs"], queryFn: () => api.get<IndexerDef[]>("/indexers/definitions") });
-  const indexers = useQuery({ queryKey: ["indexers"], queryFn: () => api.get<IndexerRow[]>("/indexers") });
+  const defs = useQuery({ queryKey: ["indexer-defs"], queryFn: () => api.get<(IndexerDef & { settingsSchema?: CardigannSettingMeta[] })[]>("/indexers/definitions") });
+  const indexers = useQuery({ queryKey: ["indexers"], queryFn: () => api.get<IndexerRow[] & { lastError?: string | null }[]>("/indexers") });
+  const stats = useQuery({ queryKey: ["indexer-stats"], queryFn: () => api.get<any[]>("/indexers/statistics") });
   const movies = useQuery({ queryKey: ["movies"], queryFn: () => api.get<Paged<Movie>>("/movies?pageSize=100") });
+
+  const selectedDef = defs.data?.find((d) => d.key === defKey);
 
   const addIndexer = useMutation({
     mutationFn: (body: { definitionKey: string; name: string; protocol: "torrent" | "usenet"; settings: Record<string, unknown> }) => api.post("/indexers", body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["indexers"] }); setName(""); setBaseUrl(""); setApiKey(""); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["indexers"] }); qc.invalidateQueries({ queryKey: ["indexer-stats"] }); setName(""); setBaseUrl(""); setApiKey(""); setSettingsDraft({}); },
   });
 
-  const submitIndexer = (def: IndexerDef) => {
-    const settings: Record<string, unknown> = {};
-    if (def.implementation === "memory") settings.title = "Demo";
-    else { settings.baseUrl = baseUrl; settings.apiKey = apiKey; settings.categories = [2000, 5000, 5010, 5020, 5030, 5040]; }
-    addIndexer.mutate({ definitionKey: def.key, name: name || def.name, protocol: def.protocol as "torrent" | "usenet", settings });
+  const testIndexer = useMutation({
+    mutationFn: (id: string) => api.post(`/indexers/${id}/test`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["indexers"] }); qc.invalidateQueries({ queryKey: ["indexer-stats"] }); },
+  });
+  const removeIndexer = useMutation({ mutationFn: (id: string) => api.del(`/indexers/${id}`), onSuccess: () => { qc.invalidateQueries({ queryKey: ["indexers"] }); qc.invalidateQueries({ queryKey: ["indexer-stats"] }); } });
+
+  const createDefinition = useMutation({
+    mutationFn: (body: { key: string; name: string; protocol: "usenet" | "torrent"; cardigannYml: string }) => api.post("/indexers/definitions", body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["indexer-defs"] }); setShowCustom(false); setCustomYaml(""); setCustomKey(""); setCustomName(""); },
+  });
+
+  const submitIndexer = () => {
+    if (!selectedDef) return;
+    const settings: Record<string, unknown> = { ...Object.fromEntries(Object.entries(settingsDraft)) };
+    if (selectedDef.implementation === "memory") settings.title = "Demo";
+    else if (selectedDef.implementation !== "cardigann") {
+      settings.baseUrl = baseUrl;
+      settings.apiKey = apiKey;
+      settings.categories = [2000, 5000, 5010, 5020, 5030, 5040];
+    }
+    addIndexer.mutate({ definitionKey: selectedDef.key, name: name || selectedDef.name, protocol: selectedDef.protocol as "torrent" | "usenet", settings });
   };
 
   const search = useMutation({
@@ -40,118 +75,165 @@ export default function Indexers() {
   });
 
   const grab = useMutation({
-    mutationFn: ({ release }: { release: Release }) => api.post("/grabs", { mediaType: "movie", mediaId: movieId, releaseId: release.id, indexerId: release.indexerId }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["queue"] }); setReleases(null); },
+    mutationFn: ({ release }: { release: Release }) => api.post("/grabs", { mediaType: "movie", mediaId: movieId, releaseId: release.id }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["queue"] }); qc.invalidateQueries({ queryKey: ["indexer-stats"] }); setReleases(null); },
   });
+
+  const cardigannSettings = selectedDef?.implementation === "cardigann" ? (selectedDef.settingsSchema ?? []) : [];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Indexers</h2>
-        <p className="text-sm text-zinc-500">Configure search sources. Search → grab works today against the in-memory demo provider.</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-semibold tracking-tight">Indexers</h2>
+          <p className="text-sm text-zinc-500">Configure search sources (Newznab/Torznab via HTTP, Cardigann custom, memory demo). Test health, view grab stats, then Search & grab below.</p>
+        </div>
+        <button onClick={() => setShowCustom((v) => !v)} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-200 dark:text-zinc-900">
+          {showCustom ? "Hide custom form" : "New custom (Cardigann)"}
+        </button>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-          <h3 className="mb-3 font-medium">Configure</h3>
-          <div className="space-y-3">
-            <label className="block">
-              <span className="mb-1 block text-xs text-zinc-500">Definition</span>
-              <select value={defKey} onChange={(e) => setDefKey(e.target.value)}
-                className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
-                <option value="">Select…</option>
-                {defs.data?.map((d) => <option key={d.key} value={d.key}>{d.name} ({d.protocol})</option>)}
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-xs text-zinc-500">Name</span>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My indexer"
-                className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
-            </label>
-            {defs.data?.find((d) => d.key === defKey)?.implementation !== "memory" && defKey && (
-              <>
-                <label className="block">
-                  <span className="mb-1 block text-xs text-zinc-500">Base URL</span>
-                  <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://indexer.example.com"
-                    className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-xs text-zinc-500">API key (optional)</span>
-                  <input value={apiKey} onChange={(e) => setApiKey(e.target.value)}
-                    className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
-                </label>
-              </>
-            )}
-            <button
-              disabled={!defKey || addIndexer.isPending}
-              onClick={() => { const def = defs.data?.find((d) => d.key === defKey); if (def) submitIndexer(def); }}
-              className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
-            >
-              {addIndexer.isPending ? "Adding…" : "Add indexer"}
+      {showCustom && (
+        <form
+          className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
+          onSubmit={(e) => { e.preventDefault(); createDefinition.mutate({ key: customKey, name: customName, protocol: customProtocol, cardigannYml: customYaml }); }}
+        >
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label><span className="mb-1 block text-xs text-zinc-500">Key (slug)</span>
+              <input required value={customKey} onChange={(e) => setCustomKey(e.target.value)} placeholder="my-tracker" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+            <label><span className="mb-1 block text-xs text-zinc-500">Name</span>
+              <input required value={customName} onChange={(e) => setCustomName(e.target.value)} placeholder="My Tracker" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+            <label><span className="mb-1 block text-xs text-zinc-500">Protocol</span>
+              <select value={customProtocol} onChange={(e) => setCustomProtocol(e.target.value as never)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
+                <option value="torrent">Torrent</option><option value="usenet">Usenet</option>
+              </select></label>
+          </div>
+          <label><span className="mb-1 block text-xs text-zinc-500">Cardigann definition (YAML)</span>
+            <textarea required rows={7} value={customYaml} onChange={(e) => setCustomYaml(e.target.value)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" placeholder={"name: MyTracker\nsettings:\n  - name: baseUrl\n    type: text\nsearch:\n  paths:\n    - path: /browse\n      inputs:\n        q: ${query.plus}\n      rows: tr.row\n      title: td.name a\n      link: td.name a@href\n      size: td.size\n      seeders: td.seeders"} />
+          </label>
+          <div className="flex items-center gap-2">
+            <button disabled={createDefinition.isPending} className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
+              {createDefinition.isPending ? "Creating…" : "Create definition"}
             </button>
-            {addIndexer.isError && <p className="text-xs text-red-600">{addIndexer.error instanceof Error ? addIndexer.error.message : "Failed"}</p>}
+            {createDefinition.isError && <p className="text-xs text-red-600">{createDefinition.error instanceof Error ? createDefinition.error.message : "Invalid definition"}</p>}
           </div>
+        </form>
+      )}
 
-<h3 className="mb-2 mt-5 text-xs uppercase tracking-wide text-zinc-500">Configured</h3>
-          {indexers.isLoading ? <p className="text-sm text-zinc-500">Loading…</p> : indexers.data?.length === 0 ? (
-            <p className="text-sm text-zinc-500">None configured yet.</p>
-          ) : (
-            <ul className="space-y-2 text-sm">
-              {indexers.data?.map((i) => (
-                <li key={i.id} className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
-                  <span className="font-medium">{i.name}</span>
-                  <span className="flex items-center gap-2"><span className="font-mono text-xs text-zinc-500">{i.implementation}</span><Badge tone={statusTone(i.status)}>{i.status}</Badge></span>
-                </li>
-              ))}
-            </ul>
-          )}
+      {indexers.isError ? <ErrorState error={indexers.error} onRetry={() => indexers.refetch()} /> : (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+            <h3 className="mb-3 font-medium">Configure</h3>
+            <div className="space-y-3">
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-500">Definition</span>
+                <select value={defKey} onChange={(e) => { setDefKey(e.target.value); setSettingsDraft({}); }}
+                  className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
+                  <option value="">Select…</option>
+                  {defs.data?.map((d) => <option key={d.key} value={d.key}>{d.name}{d.implementation === "cardigann" ? " (custom)" : ""} · {d.protocol}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-500">Name</span>
+                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My indexer" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+              </label>
 
-          <h3 className="mb-2 mt-5 text-xs uppercase tracking-wide text-zinc-500">Definition catalog</h3>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            {defs.data?.map((d) => (
-              <div key={d.id} className="rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
-                <p className="font-medium">{d.name}</p>
-                <p className="text-zinc-500">{d.protocol} · {d.implementation}</p>
-              </div>
-            ))}
-          </div>
-        </section>
+              {selectedDef?.implementation === "cardigann" ? (
+                cardigannSettings.map((s) => (
+                  <label key={s.name} className="block">
+                    <span className="mb-1 block text-xs text-zinc-500">{s.label ?? s.name}</span>
+                    {s.type === "checkbox" ? (
+                      <input type="checkbox" onChange={(e) => setSettingsDraft((d) => ({ ...d, [s.name]: e.target.checked }))} />
+                    ) : s.type === "number" ? (
+                      <input type="number" onChange={(e) => setSettingsDraft((d) => ({ ...d, [s.name]: e.target.value }))} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+                    ) : (
+                      <input onChange={(e) => setSettingsDraft((d) => ({ ...d, [s.name]: e.target.value }))} placeholder={String(s.default ?? "")} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+                    )}
+                  </label>
+                ))
+              ) : selectedDef?.implementation !== "memory" && selectedDef ? (
+                <>
+                  <label className="block"><span className="mb-1 block text-xs text-zinc-500">Base URL</span>
+                    <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://indexer.example.com" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+                  <label className="block"><span className="mb-1 block text-xs text-zinc-500">API key (optional)</span>
+                    <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+                </>
+              ) : null}
 
-        <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-          <h3 className="mb-3 font-medium">Search & grab (demo)</h3>
-          <div className="flex flex-col gap-3">
-            <label>
-              <span className="mb-1 block text-xs text-zinc-500">Movie</span>
-              <select value={movieId} onChange={(e) => setMovieId(e.target.value)}
-                className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
-                <option value="">Select a movie…</option>
-                {movies.data?.items.map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
-              </select>
-            </label>
-            <button disabled={!movieId || search.isPending} onClick={() => search.mutate({ mediaType: "movie", mediaId: movieId, query: "" })}
-              className="w-fit rounded-lg bg-zinc-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-200 dark:text-zinc-900 dark:hover:bg-white">
-              {search.isPending ? "Searching…" : "Search (demo releases)"}
-            </button>
-          </div>
-
-          {releases !== null && (
-            <div className="mt-4 space-y-2">
-              {releases.length === 0 ? <p className="text-sm text-zinc-500">No releases found.</p> : releases.map((r) => (
-                <div key={r.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{r.title}</p>
-                    <p className="text-xs text-zinc-500">{r.quality.source}/{r.quality.resolution} · {formatBytes(r.size)}{r.seeders != null ? ` · ${r.seeders} peers` : ""}</p>
-                  </div>
-                  <button disabled={grab.isPending} onClick={() => grab.mutate({ release: r })}
-                    className="flex shrink-0 items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-500">
-                    <Download className="h-3 w-3" /> Grab
-                  </button>
-                </div>
-              ))}
+              <button disabled={!defKey || addIndexer.isPending} onClick={submitIndexer} className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
+                {addIndexer.isPending ? "Adding…" : "Add indexer"}
+              </button>
+              {addIndexer.isError && <p className="text-xs text-red-600">{addIndexer.error instanceof Error ? addIndexer.error.message : "Failed"}</p>}
             </div>
-          )}
-        </section>
-      </div>
+
+            <h3 className="mb-2 mt-5 text-xs uppercase tracking-wide text-zinc-500">Configured</h3>
+            {indexers.isLoading ? <p className="text-sm text-zinc-500">Loading…</p> : indexers.data?.length === 0 ? (
+              <p className="text-sm text-zinc-500">None configured yet.</p>
+            ) : (
+              <ul className="space-y-2 text-sm">
+                {indexers.data?.map((i) => (
+                  <li key={i.id} className="rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{i.name}</span>
+                      <span className="flex items-center gap-2">
+                        <Badge tone={statusTone(i.status)}>{i.status}</Badge>
+                        <button onClick={() => testIndexer.mutate(i.id)} className="rounded p-1 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" title="Health check"><HeartPulse className="h-4 w-4" /></button>
+                        <button onClick={() => removeIndexer.mutate(i.id)} className="rounded p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-950" title="Remove"><Trash2 className="h-4 w-4" /></button>
+                      </span>
+                    </div>
+                    <p className="truncate font-mono text-xs text-zinc-500">{i.implementation} · {i.protocol}{i.lastError ? ` · ${i.lastError}` : ""}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <h3 className="mb-2 mt-5 text-xs uppercase tracking-wide text-zinc-500">Statistics (grabs)</h3>
+            {stats.data?.length === 0 ? <p className="text-sm text-zinc-500">No data yet.</p> : (
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {stats.data?.map((s) => (
+                  <div key={s.id} className="rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+                    <p className="truncate font-medium">{s.name}</p>
+                    <p className="text-zinc-500">{s.grabs} grabs{s.lastGrabAt ? ` · last ${new Date(s.lastGrabAt).toLocaleDateString()}` : ""}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+            <h3 className="mb-3 font-medium">Search & grab</h3>
+            <div className="flex flex-col gap-3">
+              <label>
+                <span className="mb-1 block text-xs text-zinc-500">Movie</span>
+                <select value={movieId} onChange={(e) => setMovieId(e.target.value)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
+                  <option value="">Select a movie…</option>
+                  {movies.data?.items.map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
+                </select>
+              </label>
+              <button disabled={!movieId || search.isPending} onClick={() => search.mutate({ mediaType: "movie", mediaId: movieId, query: "" })}
+                className="w-fit rounded-lg bg-zinc-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-200 dark:text-zinc-900">
+                {search.isPending ? "Searching…" : "Search across indexers"}
+              </button>
+            </div>
+            {releases !== null && (
+              <div className="mt-4 space-y-2">
+                {releases.length === 0 ? <p className="text-sm text-zinc-500">No releases found.</p> : releases.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{r.title}</p>
+                      <p className="text-xs text-zinc-500">{r.indexerName} · {r.quality.source}/{r.quality.resolution} · {formatBytes(r.size)}{r.seeders != null ? ` · ${r.seeders} peers` : ""}</p>
+                    </div>
+                    <button disabled={grab.isPending} onClick={() => grab.mutate({ release: r })}
+                      className="flex shrink-0 items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-500">
+                      <Download className="h-3 w-3" /> Grab
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }

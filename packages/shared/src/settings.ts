@@ -22,6 +22,7 @@ export const runtimeSettingsSchema = z.object({
     episodes: "{Series Title} - S{season:00}E{episode:00} - {Episode Title}",
   }),
   "media.preferredProtocol": z.enum(["usenet", "torrent", "any"]).default("any"),
+  "discovery.flareSolverrBaseUrl": z.string().default(""),
   "system.timezone": z.string().default("UTC"),
   "ui.theme": z.enum(["dark", "light"]).default("dark"),
 });

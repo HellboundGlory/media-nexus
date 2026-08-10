@@ -470,3 +470,105 @@ describe("M2: series auto-grab via RSS sync + episode import (mock HTTP + real f
     expect(wantedFinal.body.some((e: any) => e.id === ep2Id)).toBe(false);
   });
 });
+
+
+describe("M3: indexer health, Cardigann custom definitions, and statistics", () => {
+  let nzUrl: string;
+  let cgUrl: string;
+  const servers: import("node:http").Server[] = [];
+
+  beforeAll(async () => {
+    const { createServer } = await import("node:http");
+    const makeNzb = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ channel: { title: "m3", item: [{ title: "M3.Test.2024.1080p.WEB-DL", guid: "m3-1", link: "https://x/1.nzb", "newznab:attr": [{ name: "size", value: "9000000000" }] }] } }));
+    });
+    const makeCg = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(`<table><tbody>
+        <tr class="tr"><td class="n"><a href="/d/1">M3.Tracker.S01E01.720p.HDTV</a></td><td class="s">1.5 GB</td><td class="se">99</td></tr>
+      </tbody></table>`);
+    });
+    await new Promise<void>((r) => makeNzb.listen(0, "127.0.0.1", () => r()));
+    await new Promise<void>((r) => makeCg.listen(0, "127.0.0.1", () => r()));
+    servers.push(makeNzb, makeCg);
+    nzUrl = `http://127.0.0.1:${(makeNzb.address() as any).port}`;
+    cgUrl = `http://127.0.0.1:${(makeCg.address() as any).port}`;
+  });
+
+  afterAll(async () => {
+    for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
+  });
+
+  it("health-checks an indexer and persists status (ok + failing)", async () => {
+    const idx = await auth(request(http).post("/api/v1/indexers").send({
+      definitionKey: "generic-newznab", name: "M3 Health NZB", protocol: "usenet",
+      settings: { baseUrl: nzUrl, apiKey: "k" },
+    }));
+    expect(idx.status).toBe(201);
+    const id = idx.body.id;
+
+    const ok = await auth(request(http).post(`/api/v1/indexers/${id}/test`));
+    expect(ok.status).toBe(201);
+    expect(ok.body.ok).toBe(true);
+
+    // an unreachable indexer -> status error + lastError persisted
+    const broken = await auth(request(http).post("/api/v1/indexers").send({
+      definitionKey: "generic-newznab", name: "M3 Broken", protocol: "usenet",
+      settings: { baseUrl: "http://127.0.0.1:1", apiKey: "k" },
+    }));
+    const bad = await auth(request(http).post(`/api/v1/indexers/${broken.body.id}/test`));
+    expect(bad.body.ok).toBe(false);
+    const list = await auth(request(http).get("/api/v1/indexers"));
+    const row = list.body.find((i: any) => i.id === broken.body.id);
+    expect(row.status).toBe("error");
+    expect(row.lastError).toBeTruthy();
+
+    // discovery.indexerRefresh job runs healthchecks across configured indexers
+    const refresh = await auth(request(http).post("/api/v1/system/commands/discovery.indexerRefresh"));
+    expect(refresh.status).toBe(201);
+  });
+
+  it("creates a Cardigann definition, configures an indexer from it, and searches (HTML scrape)", async () => {
+    const yaml = `name: M3Tests\nsettings:\n  - name: baseUrl\n    type: text\n    default: ${cgUrl}\nsearch:\n  paths:\n    - path: /browse\n      inputs:\n        q: "${'${query.plus}'}"\n      rows: tr.tr\n      title: td.n a\n      link: td.n a@href\n      size: td.s\n      seeders: td.se`;
+    const def = await auth(request(http).post("/api/v1/indexers/definitions").send({ key: "m3tests", name: "M3 Tests", protocol: "torrent", cardigannYml: yaml }));
+    expect(def.status).toBe(201);
+
+    // definition is now selectable and announces its settings schema
+    const defs = await auth(request(http).get("/api/v1/indexers/definitions"));
+    const custom = defs.body.find((d: any) => d.key === "m3tests");
+    expect(custom).toBeTruthy();
+    expect(custom.implementation).toBe("cardigann");
+    expect(custom.settingsSchema?.length).toBeGreaterThanOrEqual(1);
+
+    const idx = await auth(request(http).post("/api/v1/indexers").send({
+      definitionKey: "m3tests", name: "M3 Cardigann", protocol: "torrent", settings: { baseUrl: cgUrl },
+    }));
+    expect(idx.status).toBe(201);
+
+    const search = await auth(request(http).post("/api/v1/search").send({ mediaType: "series", mediaId: "unused", query: "m3" }));
+    const mine = search.body.releases.find((r: any) => r.indexerName === "M3 Cardigann");
+    expect(mine).toBeTruthy();
+    expect(mine.title).toContain("S01E01");
+    expect(mine.seeders).toBe(99);
+  });
+
+  it("reports per-indexer statistics from history", async () => {
+    // self-contained: configure a memory indexer + movie + grab so statistics has data
+    const idx = await auth(request(http).post("/api/v1/indexers").send({
+      definitionKey: "memory", name: "M3 Stats Demo", protocol: "torrent", settings: { title: "Demo" },
+    }));
+    expect(idx.status).toBe(201);
+    const movie = await auth(request(http).post("/api/v1/movies").send({ title: "M3 Stats Movie", tmdbId: 835555 }));
+    const search = await auth(request(http).post("/api/v1/search").send({ mediaType: "movie", mediaId: movie.body.id, query: "matrix" }));
+    const g = await auth(request(http).post("/api/v1/grabs").send({ mediaType: "movie", mediaId: movie.body.id, releaseId: search.body.releases[0].id }));
+    expect(g.status).toBe(201);
+
+    const stats = await auth(request(http).get("/api/v1/indexers/statistics"));
+    expect(stats.status).toBe(200);
+    const rows = stats.body.filter((s: any) => s.grabs > 0);
+    expect(rows.length).toBeGreaterThan(0);
+    // grabs are attributed to the indexer that produced the release (any of them)
+    expect(stats.body.some((s: any) => s.name === "M3 Health NZB" || s.name === "M3 Stats Demo")).toBe(true);
+  });
+});

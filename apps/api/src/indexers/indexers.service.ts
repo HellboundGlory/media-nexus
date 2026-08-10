@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable } from "@nestjs/common";
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, sql as dsql } from "drizzle-orm";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
@@ -15,6 +15,7 @@ import { ConfigService } from "../system/config.service";
 import { join, resolve } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { episodeQueryTag } from "@medianexus/domain";
+import { parseCardigannYaml, cardigannSettingsSchema } from "@medianexus/integrations";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   memory: memoryIndexerSettingsSchema,
@@ -31,8 +32,46 @@ export class IndexersService {
     private readonly config: ConfigService,
   ) {}
 
-  definitions() {
-    return this.db.select().from(schema.indexerDefinition).orderBy(asc(schema.indexerDefinition.name));
+  async definitions() {
+    const rows = await this.db.select().from(schema.indexerDefinition).orderBy(asc(schema.indexerDefinition.name));
+    return rows.map((def) => {
+      let settingsSchema: { name: string; label?: string; type: string; default?: string | number | boolean; required: boolean; options?: string[] }[] | undefined;
+      if (def.implementation === "cardigann" && def.cardigannYml) {
+        try {
+          const parsed = parseCardigannYaml(def.cardigannYml);
+          settingsSchema = parsed.settings?.map((s) => ({ name: s.name, label: s.label, type: s.type, default: s.default, required: Boolean(s.required), options: s.options }));
+        } catch { /* leave undefined */ }
+      }
+      return { ...def, settingsSchema };
+    });
+  }
+
+  /** Create a custom Cardigann definition (validated YAML) → selectable like built-ins. */
+  async createDefinition(input: { key: string; name: string; protocol: "usenet" | "torrent"; cardigannYml: string }) {
+    try { parseCardigannYaml(input.cardigannYml); } catch (err) {
+      throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid Cardigann YAML: ${(err as Error).message}` });
+    }
+    const existing = await this.db.select().from(schema.indexerDefinition).where(eq(schema.indexerDefinition.key, input.key)).limit(1);
+    const now = new Date().toISOString();
+    if (existing[0]) {
+      await this.db.update(schema.indexerDefinition)
+        .set({ name: input.name, protocol: input.protocol, cardigannYml: input.cardigannYml })
+        .where(eq(schema.indexerDefinition.key, input.key));
+      return { updated: input.key };
+    }
+    await this.db.insert(schema.indexerDefinition).values({
+      id: newEntityId("idef"),
+      key: input.key,
+      name: input.name,
+      protocol: input.protocol,
+      implementation: "cardigann",
+      builtIn: false,
+      capabilities: { search: true },
+      categoryIds: [],
+      cardigannYml: input.cardigannYml,
+      createdAt: now,
+    });
+    return { created: input.key };
   }
 
   list() {
@@ -49,14 +88,26 @@ export class IndexersService {
     const def = await this.db.select().from(schema.indexerDefinition).where(eq(schema.indexerDefinition.key, input.definitionKey)).limit(1);
     if (!def[0]) throw new ApiError({ code: "VALIDATION_ERROR", message: `Unknown indexer definition key "${input.definitionKey}"` });
     const impl = def[0].implementation;
-    const s = settingsSchemas[impl];
-    if (!s) {
-      throw new ApiError({ code: "VALIDATION_ERROR", message: `Indexer implementation "${impl}" not available yet (M1 adds Newznab/Torznab HTTP)` });
+
+    let parsedSettings: Record<string, unknown>;
+    if (impl === "cardigann") {
+      if (!def[0].cardigannYml) throw new ApiError({ code: "VALIDATION_ERROR", message: "Cardigann definition has no YAML body" });
+      const parsed = parseCardigannYaml(def[0].cardigannYml);
+      const res = cardigannSettingsSchema(parsed).safeParse(input.settings);
+      if (!res.success) throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid settings for ${def[0].name}`, details: res.error.issues });
+      parsedSettings = res.data as Record<string, unknown>;
+    } else {
+      const s = settingsSchemas[impl];
+      if (!s) {
+        throw new ApiError({ code: "VALIDATION_ERROR", message: `Indexer implementation "${impl}" not available yet` });
+      }
+      const parsed = s.safeParse(input.settings);
+      if (!parsed.success) {
+        throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid settings for ${impl}`, details: parsed.error.issues });
+      }
+      parsedSettings = parsed.data as Record<string, unknown>;
     }
-    const parsed = s.safeParse(input.settings);
-    if (!parsed.success) {
-      throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid settings for ${impl}`, details: parsed.error.issues });
-    }
+
     const now = new Date().toISOString();
     const row = {
       id: newEntityId("idx"),
@@ -65,7 +116,7 @@ export class IndexersService {
       protocol: input.protocol,
       enabled: input.enabled ?? true,
       implementation: impl,
-      settings: parsed.data as Record<string, unknown>,
+      settings: parsedSettings,
       proxy: input.proxy ?? null,
       priority: input.priority ?? 25,
       status: "ok",
@@ -75,6 +126,59 @@ export class IndexersService {
     };
     await this.db.insert(schema.indexer).values(row);
     return row;
+  }
+
+  /** Run a live health check on one configured indexer and persist the result. */
+  async test(id: string) {
+    const row = await this.get(id);
+    const { provider } = await this.bestProviderFor(row);
+    if (!provider) throw new ApiError({ code: "UNPROCESSABLE", message: "No provider for this indexer" });
+    const health = await provider.healthcheck();
+    const now = new Date().toISOString();
+    await this.db.update(schema.indexer)
+      .set({ status: health.ok ? "ok" : "error", lastError: health.ok ? null : (health.message ?? null), lastSyncAt: now, updatedAt: now })
+      .where(eq(schema.indexer.id, id));
+    if (!health.ok) {
+      this.events.publish(EventTypes.IndexerFailed, { indexerId: id, error: health.message ?? "healthcheck failed" }, { aggType: "indexer", aggId: id });
+    }
+    return { id, ok: health.ok, latencyMs: health.latencyMs, message: health.message };
+  }
+
+  /** Health-check every enabled indexer (used by the discovery.indexerRefresh job). */
+  async refreshAll(): Promise<{ checked: number; ok: number; failed: number }> {
+    const configured = await this.providers.configuredIndexers();
+    let ok = 0; let failed = 0;
+    for (const { row } of configured) {
+      const r = await this.test(row.id).catch((e) => ({ ok: false as const, message: (e as Error).message }));
+      if (r.ok) ok++; else failed++;
+    }
+    return { checked: configured.length, ok, failed };
+  }
+
+  /** Per-indexer acquisition stats (from history). */
+  async statistics() {
+    const grabs = await this.db
+      .select({
+        indexerId: dsql`json_extract(${schema.historyEntry.data}, '$.indexerId')`,
+        createdAt: schema.historyEntry.createdAt,
+      })
+      .from(schema.historyEntry)
+      .where(eq(schema.historyEntry.action, "grabbed"))
+      .orderBy(desc(schema.historyEntry.createdAt))
+      .limit(2000);
+    const rows = await this.list();
+    const stats = rows.map((r) => {
+      const mine = grabs.filter((g) => String(g.indexerId) === String(r.id));
+      const total = mine.length;
+      const last = mine[0]?.createdAt ?? null;
+      return { id: r.id, name: r.name, implementation: r.implementation, status: r.status, lastError: r.lastError, grabs: total, lastGrabAt: last };
+    });
+    return stats;
+  }
+
+  private async bestProviderFor(row: (typeof schema.indexer.$inferSelect)) {
+    const configured = await this.providers.configuredIndexers();
+    return configured.find((c) => c.row.id === row.id) ?? { row, provider: null as never };
   }
 
   async remove(id: string) {

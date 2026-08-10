@@ -3,6 +3,8 @@
 import { Global, Inject, Injectable, Module } from "@nestjs/common";
 import { eq } from "drizzle-orm";
 import {
+  buildFetcher,
+  CardigannProvider,
   MemoryIndexerProvider,
   MemoryDownloadClientProvider,
   NewznabProvider,
@@ -14,6 +16,7 @@ import {
 } from "@medianexus/integrations";
 import { schema, type Db } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
+import { ConfigService } from "../system/config.service";
 
 export const MEMORY_INDEXER = Symbol("MEMORY_INDEXER");
 export const MEMORY_DOWNLOAD_CLIENT = Symbol("MEMORY_DOWNLOAD_CLIENT");
@@ -39,19 +42,40 @@ export class ProvidersService {
     @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
     @Inject(MEMORY_INDEXER) private readonly memIdx: MemoryIndexerProvider,
     @Inject(MEMORY_DOWNLOAD_CLIENT) private readonly memClient: MemoryDownloadClientProvider,
+    private readonly config: ConfigService,
   ) {}
 
   async configuredIndexers(): Promise<ConfiguredIndexer[]> {
     const rows = await this.db.select().from(schema.indexer).where(eq(schema.indexer.enabled, true));
+    const flare = (await this.config.get())["discovery.flareSolverrBaseUrl"] || undefined;
     const out: ConfiguredIndexer[] = [];
     for (const row of rows) {
       const settings = (row.settings ?? {}) as Record<string, unknown>;
+      const proxy = row.proxy as { type?: string; host?: string; port?: number; username?: string; password?: string; enabled?: boolean; flareSolverr?: boolean } | null;
+      const fetcher = buildFetcher({
+        proxy: (proxy ? { enabled: proxy.enabled ?? true, type: proxy.type as never, host: proxy.host as string, port: proxy.port ?? 0, username: proxy.username, password: proxy.password } : null) as never,
+        flareSolverrUrl: proxy?.flareSolverr && flare ? flare : undefined,
+      });
       if (row.implementation === "memory") {
         out.push({ row, provider: this.memIdx });
       } else if (row.implementation === "newznab" || row.implementation === "torznab") {
         out.push({
           row,
-          provider: new NewznabProvider(row.id, row.protocol as "usenet" | "torrent", settings as never),
+          provider: new NewznabProvider(row.id, row.protocol as "usenet" | "torrent", settings as never, fetcher as never),
+        });
+      } else if (row.implementation === "cardigann") {
+        const def = await this.db.select().from(schema.indexerDefinition).where(eq(schema.indexerDefinition.key, row.definitionKey)).limit(1);
+        const yml = def[0]?.cardigannYml;
+        if (!yml) continue;
+        out.push({
+          row,
+          provider: new CardigannProvider({
+            key: row.id,
+            protocol: row.protocol as "usenet" | "torrent",
+            definitionText: yml,
+            settings: settings as Record<string, never>,
+            fetcher: fetcher as never,
+          }),
         });
       }
     }

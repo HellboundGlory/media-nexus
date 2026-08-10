@@ -21,7 +21,7 @@ sources.
 | `apps/api` / `packages/*` | Original TypeScript; API shapes modeled on documented public OpenAPI of _arr apps (behavioral, not code) | Merely compatible / original | MIT | Active |
 | Planned: Sonarr/Radarr/Prowlarr/Seerr compat adapters (`packages/compatibility`) | Wire-shape interop against public OpenAPI/docs | Merely compatible | MIT | Planned — record here when landed |
 | Planned: Plex/Jellyfin auth flow | Pattern influence from Seerr (MIT) | Adapted pattern (no source text) | MIT (attribution noted) | Planned — record adaptations here |
-| Planned: Cardigann YAML interpreter | Format spec (documented schema) | Reimplemented format | MIT | Planned — never port Prowlarr engine code |
+| Cardigann YAML interpreter (`packages/integrations/src/cardigann.ts`) | Format spec (documented schema); own parser/runtime | Reimplemented format | MIT | Active — never port Prowlarr engine code |
 
 ## Attribution
 

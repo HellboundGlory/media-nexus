@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MIT
+name: MockPrivateTracker
+description: A simple Cardigann-style definition used in tests
+settings:
+  - name: baseUrl
+    type: text
+    label: Site URL
+    default: https://tracker.example
+  - name: apikey
+    type: password
+    label: API key
+search:
+  paths:
+    - path: /browse.php
+      method: get
+      inputs:
+        q: "${query.escape}${query.plus}"
+        apikey: "${apikey}"
+      rows: tr.torrent
+      title: td.name a
+      link: td.name a@href
+      details: td.name a@href
+      size: td.size
+      seeders: td.seeders

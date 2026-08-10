@@ -148,6 +148,7 @@ export interface IndexerRow {
   enabled: boolean;
   implementation: string;
   status: string;
+  lastError?: string | null;
 }
 
 export interface DownloadClient {

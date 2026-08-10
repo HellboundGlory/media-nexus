@@ -73,7 +73,9 @@ Implemented in the scaffold (each listed endpoint exists and is covered by tests
 | Requests | `GET /api/v1/requests` | list requests (with status) |
 | Activity | `GET /api/v1/history` | unified history feed |
 | Activity | `GET /api/v1/queue` | download queue |
-| Indexers | `GET /api/v1/indexers`, `POST /api/v1/indexers`, `GET /api/v1/indexers/definitions` | indexer config + definition catalog (Newznab/Torznab HTTP providers) |
+| Indexers | `GET /api/v1/indexers`, `POST /api/v1/indexers` | indexer config (Newznab/Torznab/Cardigann/memory) |
+| Indexers | `GET /api/v1/indexers/definitions`, `POST /api/v1/indexers/definitions` | definition catalog + create custom Cardigann definitions |
+| Indexers | `POST /api/v1/indexers/:id/test`, `GET /api/v1/indexers/statistics` | live health check (persisted) + per-indexer grab statistics |
 | Clients | `GET /api/v1/download-clients`, `POST /api/v1/download-clients`, `DELETE /api/v1/download-clients/:id`, `POST /api/v1/download-clients/:id/test` | download client config + live health check (SABnzbd/qBittorrent/memory) |
 
 `POST /api/v1/search` searches all enabled indexers through their providers (real Newznab/Torznab HTTP); `POST /api/v1/grabs` adds the chosen release to a real SABnzbd/qBittorrent client and mirrors it into the unified queue/history; `acquisition.downloadMonitor` executes the real filesystem import.

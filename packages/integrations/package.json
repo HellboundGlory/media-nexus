@@ -12,7 +12,12 @@
   },
   "dependencies": {
     "zod": "^4.0.0",
-    "@medianexus/shared": "*"
+    "@medianexus/shared": "*",
+    "http-proxy-agent": "^9.1.0",
+    "https-proxy-agent": "^9.1.0",
+    "socks-proxy-agent": "^10.1.0",
+    "yaml": "^2.9.0",
+    "cheerio": "^1.2.0"
   },
   "devDependencies": {
     "typescript": "~5.9.2",

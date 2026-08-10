@@ -8,6 +8,13 @@ import {
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { IndexersService } from "./indexers.service";
 
+const createDefinitionBody = z.object({
+  key: z.string().regex(/^[a-z0-9_-]+$/, "key must be lowercase alphanumeric + -/_"),
+  name: z.string().min(1),
+  protocol: z.enum(["usenet", "torrent"]),
+  cardigannYml: z.string().min(10),
+});
+
 const searchSchema = z.object({
   mediaType: z.enum(["movie", "series"]),
   mediaId: z.string(),
@@ -34,9 +41,27 @@ export class IndexersController {
   }
 
   @Post("indexers")
-  @ApiOperation({ summary: "Configure an indexer" })
+  @ApiOperation({ summary: "Configure an indexer (newznab/torznab/memory/cardigann)" })
   create(@Body(new ZodValidationPipe(createIndexerSchema)) body: CreateIndexer) {
     return this.indexers.create(body);
+  }
+
+  @Post("indexers/:id/test")
+  @ApiOperation({ summary: "Health-check an indexer and persist the result" })
+  test(@Param("id") id: string) {
+    return this.indexers.test(id);
+  }
+
+  @Get("indexers/statistics")
+  @ApiOperation({ summary: "Per-indexer grab statistics" })
+  statistics() {
+    return this.indexers.statistics();
+  }
+
+  @Post("indexers/definitions")
+  @ApiOperation({ summary: "Create a custom Cardigann definition" })
+  createDefinition(@Body(new ZodValidationPipe(createDefinitionBody)) body: z.infer<typeof createDefinitionBody>) {
+    return this.indexers.createDefinition(body);
   }
 
   @Delete("indexers/:id")

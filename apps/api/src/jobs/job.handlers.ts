@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
-import { count, eq } from "drizzle-orm";
+import { count } from "drizzle-orm";
 import { schema } from "@medianexus/database";
 import { EventTypes } from "@medianexus/events";
 import type { JobContext } from "@medianexus/jobs";
@@ -10,6 +10,7 @@ import { JobsService } from "./jobs.service";
 import { EventsService } from "../events/events.service";
 import { AcquisitionService } from "../acquisition/acquisition.service";
 import { RssSyncService } from "../acquisition/rss-sync.service";
+import { IndexersService } from "../indexers/indexers.service";
 
 /** Registration of the built-in job handlers (kept small; more land per milestone). */
 @Injectable()
@@ -20,6 +21,7 @@ export class JobHandlers implements OnModuleInit {
     private readonly events: EventsService,
     private readonly acquisition: AcquisitionService,
     private readonly rssSync: RssSyncService,
+    private readonly indexers: IndexersService,
   ) {}
 
   onModuleInit(): void {
@@ -48,9 +50,7 @@ export class JobHandlers implements OnModuleInit {
   }
 
   private async indexerRefresh(): Promise<unknown> {
-    const rows = await this.db.select().from(schema.indexer).where(eq(schema.indexer.enabled, true));
-    // M1: real healthchecks per configured indexer via providers. Today: mark disabled/untested.
-    return { checked: rows.length, perProvider: "M1" };
+    return this.indexers.refreshAll().catch((e) => ({ error: (e as Error).message }));
   }
 
   /** Poll all configured download clients and import completed downloads (M1). */

@@ -68,7 +68,7 @@ independently of HTTP.
 | key | schedule | purpose |
 |---|---|---|
 | `system.healthCheck` | `*/5 * * * *` | last-job heartbeat + system status row |
-| `discovery.indexerRefresh` | `0 */6 * * *` | re-check configured indexer health (planned body) |
+| `discovery.indexerRefresh` | `0 */6 * * *` | health-check every enabled indexer via its provider (HTTP/Newznab/Cardigann), persist status + lastError, emit IndexerFailed on failure |
 | `media.rssSync` | `*/15 * * * *` | RSS-poll indexers for new content (milestone M2) |
 | `system.metadataCleanup` | `0 4 * * *` | prune stale media_availability/history (planned body) |
 | `acquisition.downloadMonitor` | `*/1 * * * *` | poll all configured download clients (SABnzbd/qBittorrent/memory), mirror progress into the unified queue, and import completed downloads into the library (M1) |

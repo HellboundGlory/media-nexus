@@ -5,7 +5,7 @@ in one coherent, self-hostable application: one UI, one backend, one domain mode
 architecture, one API, Docker-first deployment — with an explicit **compatibility layer** so existing _arr ecosystem
 clients keep working.
 
-> Status: **M0 foundations ✅ + M1 vertical slice ✅ + M2 series automation ✅** (see [Roadmap](docs/implementation/roadmap.md)). The full pipeline
+> Status: **M0 ✅ + M1 vertical slice ✅ + M2 series automation ✅ + M3 indexer management ✅** (see [Roadmap](docs/implementation/roadmap.md)). The full pipeline
 > now runs against **real indexer + download clients over HTTP** (Newznab/Torznab, SABnzbd, qBittorrent) with a real
 > filesystem import (hardlink→copy), proven by a mock-HTTP + real-files end-to-end test. The in-memory demo providers
 > remain for zero-dependency development.
@@ -71,10 +71,13 @@ See [docs/development/setup.md](docs/development/setup.md) for the full walkthro
   episode API (list/monitor/bulk-create), Want/Missing + Calendar, series grab with episode-mapped import
   ("Season N/SxxExx" naming, episode.hasFile, partially-available tracking), and the media.rssSync auto-grab job —
   monitored missing episodes are searched with an SxxExx tag and the best release is grabbed automatically.
-- **Web UI:** dashboard, movies, series, activity, requests, indexers (real Newznab/Torznab config), download clients
-  (SABnzbd/qBittorrent config, health check, import paths) and system pages — dark/light, responsive, real API wiring.
+- **Indexers (M3):** live per-indexer health checks (`/indexers/:id/test` + `discovery.indexerRefresh` job), per-indexer
+  proxy (HTTP/HTTPS CONNECT, SOCKS4/5, FlareSolverr challenge bypass) via a proxy-aware fetch layer, **Cardigann YAML
+  custom definitions** (HTML-scrape + JSON modes, dynamic settings forms, subset interpreter), and per-indexer grab statistics.
+- **Web UI:** dashboard, movies, series, activity, requests, indexers (Newznab/Torznab/Cardigann config + health + stats),
+  download clients (SABnzbd/qBittorrent config, health check, import paths) and system pages — dark/light, responsive.
 
-Not built yet (roadmap): metadata import (TMDB/TVDB) to auto-populate episodes, Prowlarr indexer-sync, Seerr
+Not built yet (roadmap): metadata import (TMDB/TVDB) to auto-populate episodes, Prowlarr indexer-sync/throttling, Seerr
 Plex/Jellyfin login, PostgreSQL wiring, notifications+SSE, full compat adapters, E2E.
 
 ## Repository layout

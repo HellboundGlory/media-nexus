@@ -45,10 +45,11 @@ Configuration schemas (e.g. `sabnzbdSettingsSchema`, `qbittorrentSettingsSchema`
 - **Newznab** (usenet): XML-RSS API (`?t=search&q=...&apikey=...`), categories, `nzb` downloads. Public spec
   (newznab.readthedocs.io) — reimplemented against the documented protocol, not copied from Prowlarr's GPL code.
 - **Torznab** (torrents): Newznab extension adding torrent categories (2000s) + `torznab` capabilities. Also public spec.
-- **Cardigann** (Prowlarr): YAML templates for tracker sites with no standard API. The **format/behavior is reimplemented**
-  for compatibility; note in `legal/upstream-licenses.md` that we reimplement the *format*, not Prowlarr's parser code.
-- **Proxy support** (planned): HTTP/SOCKS5 per-indexer proxy, plus FlareSolverr interop for Cloudflare-walled trackers
-  (matching Prowlarr's documented capability set).
+- **Cardigann** (Prowlarr): YAML templates for tracker sites with no standard API. A **subset interpreter is implemented**
+  (`packages/integrations/src/cardigann.ts`): settings-driven forms, search paths with `${...}` substitution, HTML scraping
+  via cheerio selectors and a JSON mode. The *format* is reimplemented — never Prowlarr's parser code (see `legal/upstream-licenses.md`).
+- **Proxy support:** per-indexer HTTP/HTTPS CONNECT + SOCKS4/5 (via http(s)-proxy-agent / socks-proxy-agent) and **FlareSolverr**
+  challenge bypass — routed through a proxy-aware fetch builder (`buildFetcher`) so every provider benefits.
 - **Health/sync:** periodic `healthcheck()` per indexer writes `indexer.status`; Prowlarr-style "sync indexers to other
   apps" becomes part of the compatibility layer (it is an interop feature, not a core one — see `compatibility.md`).
 
