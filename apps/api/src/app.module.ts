@@ -7,6 +7,7 @@ import { AuthModule } from "./auth/auth.module";
 import { ApiKeyGuard } from "./auth/api-key.guard";
 import { HealthModule } from "./health/health.module";
 import { SystemModule } from "./system/system.module";
+import { SettingsModule } from "./system/settings.module";
 import { JobsModule } from "./jobs/jobs.module";
 import { DemoProvidersModule } from "./providers/demo.providers";
 import { MoviesModule } from "./movies/movies.module";
@@ -14,6 +15,7 @@ import { SeriesModule } from "./series/series.module";
 import { RequestsModule } from "./requests/requests.module";
 import { ActivityModule } from "./activity/activity.module";
 import { IndexersModule } from "./indexers/indexers.module";
+import { DownloadClientsModule } from "./download-clients/download-clients.module";
 import { CompatModule } from "./compat/compat.module";
 import { RequestIdMiddleware } from "./common/request-id.middleware";
 
@@ -24,6 +26,7 @@ import { RequestIdMiddleware } from "./common/request-id.middleware";
     AuthModule,
     HealthModule,
     SystemModule,
+    SettingsModule,
     JobsModule,
     DemoProvidersModule,
     MoviesModule,
@@ -31,6 +34,7 @@ import { RequestIdMiddleware } from "./common/request-id.middleware";
     RequestsModule,
     ActivityModule,
     IndexersModule,
+    DownloadClientsModule,
     CompatModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ApiKeyGuard }],

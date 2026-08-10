@@ -204,6 +204,7 @@ export const downloadQueueEntry = sqliteTable("download_queue_entry", {
   size: integer("size").notNull().default(0),
   remainingTime: integer("remaining_time"),
   errorMessage: text("error_message"),
+  data: text("data", { mode: "json" }).$type<Record<string, unknown>>().notNull().default({}),
   addedAt: iso("added_at"),
   updatedAt: iso("updated_at"),
 }, (t) => [index("queue_media_idx").on(t.mediaType, t.mediaId)]);

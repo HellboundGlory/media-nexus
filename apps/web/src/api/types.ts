@@ -121,6 +121,28 @@ export interface IndexerRow {
   status: string;
 }
 
+export interface DownloadClient {
+  id: string;
+  name: string;
+  implementation: string;
+  kind: string;
+  enabled: boolean;
+  priority: number;
+  settings: Record<string, unknown>;
+  tags: string[];
+  createdAt: string;
+}
+
+export interface IndexerRow {
+  id: string;
+  definitionKey: string;
+  name: string;
+  protocol: string;
+  enabled: boolean;
+  implementation: string;
+  status: string;
+}
+
 export interface JobRun {
   id: string;
   jobKey: string;

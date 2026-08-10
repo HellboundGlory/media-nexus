@@ -71,5 +71,5 @@ independently of HTTP.
 | `discovery.indexerRefresh` | `0 */6 * * *` | re-check configured indexer health (planned body) |
 | `media.rssSync` | `*/15 * * * *` | RSS-poll indexers for new content (milestone M2) |
 | `system.metadataCleanup` | `0 4 * * *` | prune stale media_availability/history (planned body) |
-| `acquisition.downloadMonitor` | `*/1 * * * *` | poll download clients + import completed downloads (demo client today) |
+| `acquisition.downloadMonitor` | `*/1 * * * *` | poll all configured download clients (SABnzbd/qBittorrent/memory), mirror progress into the unified queue, and import completed downloads into the library (M1) |
 | `media.searchForRequest` | event-triggered | search indexers to fulfil an approved request (stub body; real search in M1) |

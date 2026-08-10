@@ -43,6 +43,8 @@ export interface ClientQueueItem {
   size: number;
   remainingTimeSeconds?: number;
   errorMessage?: string;
+  /** absolute path hint from the client (torrent content_path / nzb path) for import */
+  contentPath?: string;
 }
 
 export interface DownloadClientContract {
@@ -50,7 +52,7 @@ export interface DownloadClientContract {
   readonly kind: "usenet" | "torrent";
   addRelease(input: AddDownloadInput): Promise<{ downloadId: string }>;
   getQueue(): Promise<ClientQueueItem[]>;
-  remove(downloadId: string, deleteData: boolean): Promise<void>;
+  remove(downloadId: string, deleteData?: boolean): Promise<void>;
   healthcheck(): Promise<HealthResult>;
 }
 
@@ -127,7 +129,7 @@ export interface StorageContract {
   list(path: string): Promise<StorageItem[]>;
   move(src: string, dst: string): Promise<void>;
   copy(src: string, dst: string): Promise<void>;
-  hardlink(src: string, dst: string): Promise<void>;
+  hardlink(src: string, dst: string): Promise<boolean>;
   delete(path: string): Promise<void>;
   diskFree(path: string): Promise<{ free: number; total: number }>;
 }

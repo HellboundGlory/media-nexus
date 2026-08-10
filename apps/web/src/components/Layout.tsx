@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { NavLink, Outlet } from "react-router-dom";
 import { clsx } from "clsx";
-import { Moon, Sun, LayoutDashboard, Film, Tv, Activity, Inbox, ListTree, ScrollText, KeyRound } from "lucide-react";
+import { Moon, Sun, LayoutDashboard, Film, Tv, Activity, Inbox, ListTree, ScrollText, KeyRound, Download } from "lucide-react";
 import { useAppStore, applyTheme } from "../store/useAppStore";
 
 const nav = [
@@ -11,6 +11,7 @@ const nav = [
   { to: "/activity", label: "Activity", icon: Activity },
   { to: "/requests", label: "Requests", icon: Inbox },
   { to: "/indexers", label: "Indexers", icon: ListTree },
+  { to: "/clients", label: "Download Clients", icon: Download },
 ];
 
 export default function Layout() {

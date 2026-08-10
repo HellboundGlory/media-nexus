@@ -79,6 +79,9 @@ Configuration schemas (e.g. `sabnzbdSettingsSchema`, `qbittorrentSettingsSchema`
 
 ## 7. What is real today vs planned
 
-In the scaffold, the contracts, registries, zod config schemas, and a **`MemoryIndexerProvider`** / **`MemoryDownloadClientProvider`**
-test-double pair are implemented and unit-tested; the first real provider (Newznab over HTTP) is milestone M1 in the
-roadmap. Nothing in this document claims a live vendor integration exists yet.
+**Real implementations now (M1):** `NewznabProvider` (Newznab **and** Torznab over HTTP, JSON mode, basic-auth + proxy-ready,
+healthcheck via `t=caps`), `SabnzbdProvider` (addurl/queue/history/delete, merges history-completed for import),
+`QbittorrentProvider` (login-cookie, torrents/add/info/delete, resolves the hash from a magnet optionally), and a
+`LocalStorageProvider` (hardlink→copy import, largest-video discovery, disk free). Each is contract-tested against local mock
+HTTP servers. The in-memory demo providers remain registered for zero-dependency development. Contract-first rule holds:
+core never constructs vendor-specific clients — it goes through `ProvidersService` in `apps/api`.

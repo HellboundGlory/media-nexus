@@ -41,7 +41,7 @@ export const grabRequestSchema = z.object({
   mediaType: z.enum(["movie", "series"]),
   mediaId: z.string(),
   releaseId: z.string(),
-  indexerId: z.string(),
+  indexerId: z.string().optional(),
   downloadClientId: z.string().optional(),
 });
 export type GrabRequest = z.infer<typeof grabRequestSchema>;

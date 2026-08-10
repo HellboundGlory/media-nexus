@@ -5,9 +5,10 @@ in one coherent, self-hostable application: one UI, one backend, one domain mode
 architecture, one API, Docker-first deployment — with an explicit **compatibility layer** so existing _arr ecosystem
 clients keep working.
 
-> Status: **foundations + scaffold** (see [Roadmap](docs/implementation/roadmap.md)). The scaffold proves the full
-> architecture end-to-end with in-memory demo providers (search → grab → download → import). Real indexer/download
-> client providers are milestone **M1**.
+> Status: **M0 foundations ✅ + M1 vertical slice ✅** (see [Roadmap](docs/implementation/roadmap.md)). The full pipeline
+> now runs against **real indexer + download clients over HTTP** (Newznab/Torznab, SABnzbd, qBittorrent) with a real
+> filesystem import (hardlink→copy), proven by a mock-HTTP + real-files end-to-end test. The in-memory demo providers
+> remain for zero-dependency development.
 
 ## Quick start
 
@@ -59,15 +60,17 @@ See [docs/development/setup.md](docs/development/setup.md) for the full walkthro
   progress, history. `system.healthCheck` runs on schedule; `acquisition.downloadMonitor` drives the demo import pipeline.
 - **Events:** typed in-process domain event bus with correlation IDs; `MovieAdded`/`SeriesAdded`/`RequestCreated`/
   `ReleaseGrabbed` etc. are audited; approved requests fire a search job via the event→job bridge (stub until M1).
-- **Discovery/Acquisition (demo, in-memory):** configure a demo indexer, search, grab into a demo download client, and
-  watch the monitor job "download + import" a movie — proving the full pipeline with test doubles (M1 swaps in real
-  Newznab/Torznab + SABnzbd/qBittorrent providers behind the same contracts).
+- **Discovery/Acquisition (real, M1):** configure a **Newznab/Torznab** indexer and a **SABnzbd** (usenet) or **qBittorrent**
+  (torrent) download client from the UI; search across live indexers; grab into a live client; the `acquisition.downloadMonitor` job
+  polls clients, mirrors progress into the unified queue, and **imports completed downloads** — locating the finished video under the
+  downloads root, hardlinking/copying it into the library root with the naming template (`{Title} ({Year}).ext`), writing a `media_file`
+  row, and marking the movie/availability available. (The in-memory demo providers still work with zero external services.)
 - **Compatibility layer:** `/api/sonarr/v3/system/status` is translated live; remaining Sonarr/Radarr/Prowlarr/Seerr
-  surfaces are explicit **501** (not silently fake). See [docs/architecture/compatibility.md](docs/architecture/compatibility.md).
-- **Web UI:** dashboard, movies, series, activity, requests, indexers and system pages — dark/light, responsive,
-  loading/empty/error states, real API wiring.
+  surfaces are explicit **501** (not silently fake) until M6. See [docs/architecture/compatibility.md](docs/architecture/compatibility.md).
+- **Web UI:** dashboard, movies, series, activity, requests, indexers (real Newznab/Torznab config), download clients
+  (SABnzbd/qBittorrent config, health check, import paths) and system pages — dark/light, responsive, real API wiring.
 
-Not built yet (roadmap): real provider drivers, TV episode import/monitoring depth, Prowlarr indexer-sync, Seerr
+Not built yet (roadmap): TV episode import/monitoring depth, Prowlarr indexer-sync, Seerr
 Plex/Jellyfin login, PostgreSQL wiring, notifications+SSE, full compat adapters, E2E.
 
 ## Repository layout

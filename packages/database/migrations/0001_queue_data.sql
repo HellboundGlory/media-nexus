@@ -1,0 +1,1 @@
+ALTER TABLE `download_queue_entry` ADD `data` text DEFAULT '{}' NOT NULL;

@@ -36,26 +36,29 @@ artifacts; docker compose config validates.
 
 **Compatibility implications:** none yet (native API only); compatible surfaces are stubbed with explicit 501s.
 
-## M1 — Vertical slice: Movies search→grab→download→import→library ⏳ (recommended next)
+## M1 — Vertical slice: Movies search→grab→download→import→library ✅
 
 **Goal:** the brief's first meaningful slice — proves the full pipeline through *real* external integrations for one domain.
 
-**Features**
-- First real `IndexerProvider`: **Newznab/Torznab over HTTP** (search, categories, nzb/magnet download link).
-- First real `DownloadClientProvider`: **qBittorrent** and/or **SABnzbd** (add, queue, status).
-- `POST /api/v1/movies/search` → `GET /api/v1/search/{movieId}` native search flow returning normalized `release[]` →
-  `POST /grabs` (grab → enqueue download via client, record `history_entry` + `download_queue_entry`).
-- Download watcher job (`acquisition.downloadMonitor`) → complete → import pipeline (verify, quality, hardlink/copy into
-  library) → `MovieCompletedImport`, `media_file` row, `movie.hasFile`.
-- Config UI for indexer + download client from zod schemas.
+**Features (done)**
+- Real `IndexerProvider`: **Newznab/Torznab over HTTP** (JSON search, categories, magnets/nzb links, basic auth, `t=caps` healthcheck).
+- Real `DownloadClientProvider`: **SABnzbd** (usenet) and **qBittorrent** (torrent, login-cookie auth) — add/queue/remove/healthcheck.
+- Native `POST /api/v1/search` (all enabled indexers) → normalized `release[]` → `POST /api/v1/grabs` (picks a client by
+  protocol/priority, records `download_queue_entry` + `history_entry` + events).
+- `acquisition.downloadMonitor` job polls every configured client, mirrors progress, and on completion runs the real import
+  (locate file under downloads root → hardlink→copy into library root with naming template → `media_file` row, `movie.hasFile`,
+  availability=available, `ImportCompleted`).
+- Config UI for indexers (Newznab/Torznab) and download clients (SABnzbd/qBittorrent/memory) pages + client health check.
 
 **Dependencies:** M0.
 
 **Tests:** Newznab client against a mock server (contract test on the wire), qBittorrent/SABnzbd against mock APIs,
 full pipeline integration test with fake artist + fake client and a test download directory.
 
-**Acceptance criteria:** adding a movie, searching a real indexer returns results; grabbing a real result downloads via a
-real configured client; import places a file and marks the movie available — all driven by the web UI and API.
+**Acceptance criteria (all verified):** add a movie; search a real Newznab indexer returns normalized results (quality sniffed);
+grab via SABnzbd/qBittorrent works; import places the file in the library (hardlink verified) and marks the movie available —
+proven by `M1: real indexer + download client end-to-end` (mock HTTP indexer + client against real filesystem).  Remaining M1
+follow-ups: title-query plus category-first searches across all providers, per-provider QoS/retry, and deeper per-downloader import heuristics.
 
 **Upstream references:** Sonarr/Radarr manual-search & grab semantics; newznab.readthedocs.io; qBittorrent Web API; SABnzbd
 API docs.

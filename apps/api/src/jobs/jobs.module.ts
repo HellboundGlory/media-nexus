@@ -4,8 +4,10 @@ import { DrizzleJobStore } from "./drizzle-job.store";
 import { JobsService } from "./jobs.service";
 import { JobHandlers } from "./job.handlers";
 import { JobsController } from "./jobs.controller";
+import { AcquisitionModule } from "../acquisition/acquisition.module";
 
 @Module({
+  imports: [AcquisitionModule],
   providers: [DrizzleJobStore, JobsService, JobHandlers],
   controllers: [JobsController],
   exports: [JobsService],

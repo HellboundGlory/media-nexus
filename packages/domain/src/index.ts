@@ -4,3 +4,4 @@ export * from "./enums";
 export * from "./quality";
 export * from "./release";
 export * from "./inputs";
+export * from "./parser";

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Download } from "lucide-react";
+import { Download } from "lucide-react";
 import { api } from "../api/client";
 import type { IndexerDef, IndexerRow, Release, Paged, Movie } from "../api/types";
 import { Badge, formatBytes, statusTone } from "../lib/ui";
@@ -9,6 +9,9 @@ import { Badge, formatBytes, statusTone } from "../lib/ui";
 export default function Indexers() {
   const qc = useQueryClient();
   const [name, setName] = useState("");
+  const [defKey, setDefKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
   
   const [movieId, setMovieId] = useState("");
   const [releases, setReleases] = useState<Release[] | null>(null);
@@ -19,8 +22,15 @@ export default function Indexers() {
 
   const addIndexer = useMutation({
     mutationFn: (body: { definitionKey: string; name: string; protocol: "torrent" | "usenet"; settings: Record<string, unknown> }) => api.post("/indexers", body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["indexers"] }); setName(""); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["indexers"] }); setName(""); setBaseUrl(""); setApiKey(""); },
   });
+
+  const submitIndexer = (def: IndexerDef) => {
+    const settings: Record<string, unknown> = {};
+    if (def.implementation === "memory") settings.title = "Demo";
+    else { settings.baseUrl = baseUrl; settings.apiKey = apiKey; settings.categories = [2000, 5000, 5010, 5020, 5030, 5040]; }
+    addIndexer.mutate({ definitionKey: def.key, name: name || def.name, protocol: def.protocol as "torrent" | "usenet", settings });
+  };
 
   const search = useMutation({
     mutationFn: ({ mediaType, mediaId, query }: { mediaType: "movie" | "series"; mediaId: string; query: string }) =>
@@ -44,19 +54,45 @@ export default function Indexers() {
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
           <h3 className="mb-3 font-medium">Configure</h3>
-          <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); addIndexer.mutate({ definitionKey: "memory", name, protocol: "torrent", settings: { title: "Demo" } }); }}>
-            <label>
-              <span className="mb-1 block text-xs text-zinc-500">Indexer name</span>
-              <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Demo Search"
+          <div className="space-y-3">
+            <label className="block">
+              <span className="mb-1 block text-xs text-zinc-500">Definition</span>
+              <select value={defKey} onChange={(e) => setDefKey(e.target.value)}
+                className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
+                <option value="">Select…</option>
+                {defs.data?.map((d) => <option key={d.key} value={d.key}>{d.name} ({d.protocol})</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-zinc-500">Name</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My indexer"
                 className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
             </label>
-            <button disabled={addIndexer.isPending} className="flex w-fit items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
-              <Plus className="h-4 w-4" /> Add (in-memory demo)
+            {defs.data?.find((d) => d.key === defKey)?.implementation !== "memory" && defKey && (
+              <>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-zinc-500">Base URL</span>
+                  <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://indexer.example.com"
+                    className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-zinc-500">API key (optional)</span>
+                  <input value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+                </label>
+              </>
+            )}
+            <button
+              disabled={!defKey || addIndexer.isPending}
+              onClick={() => { const def = defs.data?.find((d) => d.key === defKey); if (def) submitIndexer(def); }}
+              className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+            >
+              {addIndexer.isPending ? "Adding…" : "Add indexer"}
             </button>
             {addIndexer.isError && <p className="text-xs text-red-600">{addIndexer.error instanceof Error ? addIndexer.error.message : "Failed"}</p>}
-          </form>
+          </div>
 
-          <h3 className="mb-2 mt-5 text-xs uppercase tracking-wide text-zinc-500">Configured</h3>
+<h3 className="mb-2 mt-5 text-xs uppercase tracking-wide text-zinc-500">Configured</h3>
           {indexers.isLoading ? <p className="text-sm text-zinc-500">Loading…</p> : indexers.data?.length === 0 ? (
             <p className="text-sm text-zinc-500">None configured yet.</p>
           ) : (

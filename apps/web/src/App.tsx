@@ -9,6 +9,7 @@ import Series from "./pages/Series";
 import Activity from "./pages/Activity";
 import Requests from "./pages/Requests";
 import Indexers from "./pages/Indexers";
+import Clients from "./pages/Clients";
 import System from "./pages/System";
 import { applyTheme, useAppStore } from "./store/useAppStore";
 
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="activity" element={<Activity />} />
             <Route path="requests" element={<Requests />} />
             <Route path="indexers" element={<Indexers />} />
+            <Route path="clients" element={<Clients />} />
             <Route path="system" element={<System />} />
           </Route>
         </Routes>
