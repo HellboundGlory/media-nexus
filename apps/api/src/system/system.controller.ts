@@ -2,7 +2,7 @@
 import { Body, Controller, Get, Put } from "@nestjs/common";
 import { ApiBody, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
-import { ApiError } from "@medianexus/shared";
+import { ApiError, runtimeSettingsSchema } from "@medianexus/shared";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { SystemStatusService } from "./system-status.service";
 import { ConfigService } from "./config.service";
@@ -33,14 +33,11 @@ export class SystemController {
   @ApiOperation({ summary: "Update global settings (admin)" })
   @ApiBody({ schema: { type: "object", additionalProperties: true } })
   async putConfig(@Body(new ZodValidationPipe(upsertSchema)) body: Record<string, unknown>) {
-    if (!this.hasAnyValidKey(body)) {
-      throw new ApiError({ code: "VALIDATION_ERROR", message: "No valid setting keys supplied" });
+    const allowedKeys = new Set(Object.keys(runtimeSettingsSchema.shape));
+    const unknownKeys = Object.keys(body).filter((k) => !allowedKeys.has(k));
+    if (unknownKeys.length > 0) {
+      throw new ApiError({ code: "VALIDATION_ERROR", message: `Unknown setting keys: ${unknownKeys.join(", ")}` });
     }
     return this.configSvc.upsert(body as never);
-  }
-
-  private hasAnyValidKey(body: Record<string, unknown>): boolean {
-    const known = new Set(["paths.rootFolders", "paths.downloads", "media.naming", "media.preferredProtocol", "system.timezone", "ui.theme"]);
-    return Object.keys(body).some((k) => known.has(k));
   }
 }

@@ -254,6 +254,45 @@ export const request = sqliteTable("request", {
   updatedAt: iso("updated_at"),
 }, (t) => [index("request_media_idx").on(t.mediaType, t.mediaId), index("request_user_idx").on(t.userRequestorId)]);
 
+
+// ---------- 6b. Requests extras (M4: Seerr parity) ----------
+export const watchlist = sqliteTable("watchlist", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  mediaType: text("media_type").notNull(),
+  mediaId: text("media_id").notNull(),
+  createdAt: iso("created_at"),
+}, (t) => [uniqueIndex("watchlist_unique_idx").on(t.userId, t.mediaType, t.mediaId)]);
+
+export const userContentBlocklist = sqliteTable("user_content_blocklist", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  mediaType: text("media_type").notNull(),
+  mediaId: text("media_id").notNull(),
+  createdAt: iso("created_at"),
+}, (t) => [uniqueIndex("blocklist_unique_idx").on(t.userId, t.mediaType, t.mediaId)]);
+
+/** Per-season (series request) granularity. */
+export const requestItem = sqliteTable("request_item", {
+  id: text("id").primaryKey(),
+  requestId: text("request_id").notNull(),
+  seriesId: text("series_id"),
+  seasonNumber: integer("season_number").notNull(),
+  episodeNumbers: json<number[]>("episode_numbers"),
+  status: text("status").notNull().default("pending"),
+}, (t) => [index("request_item_req_idx").on(t.requestId)]);
+
+export const mediaServer = sqliteTable("media_server", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  implementation: text("implementation").notNull(),
+  kind: text("kind").notNull().default("media"),
+  enabled: bool("enabled", true),
+  settings: text("settings", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+  createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+});
+
 // ---------- 7. Jobs ----------
 export const jobDefinition = sqliteTable("job_definition", {
   id: text("id").primaryKey(),
@@ -321,6 +360,10 @@ export const schema = {
   blocklistEntry,
   mediaAvailability,
   request,
+  requestItem,
+  watchlist,
+  userContentBlocklist,
+  mediaServer,
   jobDefinition,
   jobRun,
   auditLog,

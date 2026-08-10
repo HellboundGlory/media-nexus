@@ -11,6 +11,8 @@ import { EventsService } from "../events/events.service";
 import { AcquisitionService } from "../acquisition/acquisition.service";
 import { RssSyncService } from "../acquisition/rss-sync.service";
 import { IndexersService } from "../indexers/indexers.service";
+import { RequestFulfillmentService } from "../requests/request-fulfillment.service";
+import { MediaServersService } from "../requests/media-servers.service";
 
 /** Registration of the built-in job handlers (kept small; more land per milestone). */
 @Injectable()
@@ -22,6 +24,8 @@ export class JobHandlers implements OnModuleInit {
     private readonly acquisition: AcquisitionService,
     private readonly rssSync: RssSyncService,
     private readonly indexers: IndexersService,
+    private readonly fulfillment: RequestFulfillmentService,
+    private readonly mediaServers: MediaServersService,
   ) {}
 
   onModuleInit(): void {
@@ -30,6 +34,7 @@ export class JobHandlers implements OnModuleInit {
     this.jobs.register("acquisition.downloadMonitor", (ctx) => this.downloadMonitor(ctx));
     this.jobs.register("media.searchForRequest", (ctx) => this.searchForRequest(ctx));
     this.jobs.register("media.rssSync", () => this.rssSync.run());
+    this.jobs.register("media.availabilityRefresh", () => this.mediaServers.refreshAll());
     // event -> job wiring: an approved request kicks a search job (real search in M1)
     this.events.subscribe(EventTypes.RequestApproved, (event) => {
       const payload = (event.payload ?? {}) as { mediaId?: string; mediaType?: string };
@@ -58,8 +63,11 @@ export class JobHandlers implements OnModuleInit {
     return this.acquisition.syncAll();
   }
 
-  /** Stub for M1: proves the approved-request -> search-job pipeline end-to-end. */
+  /** M4: an approved request searches indexers and auto-grabs the best release. */
   private async searchForRequest(ctx: JobContext): Promise<unknown> {
-    return { status: "stubbed", note: "real search wired in M1", payload: ctx.payload };
+    const requestId = (ctx.payload.requestId ?? ctx.requestId) as string | undefined;
+    if (!requestId) return { status: "no-request-id" };
+    const r = await this.fulfillment.fulfillRequest(requestId);
+    return { requestId, ...r };
   }
 }

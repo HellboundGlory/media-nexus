@@ -90,6 +90,7 @@ export interface MediaServerContract {
   getAvailability(mediaType: "movie" | "series", externalId: string): Promise<Availability>;
   importUsers(): Promise<ServerUser[]>;
   scanLibrary(): Promise<{ scanned: number }>;
+  healthcheck(): Promise<HealthResult>;
 }
 
 // ---------- Notifications ----------

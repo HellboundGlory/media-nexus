@@ -54,6 +54,7 @@ export const EventTypes = {
   RequestCreated: "requests.request.created",
   RequestApproved: "requests.request.approved",
   RequestDeclined: "requests.request.declined",
+  RequestFulfilled: "requests.request.fulfilled",
   IndexerFailed: "discovery.indexer.failed",
   DownloadClientFailed: "acquisition.client.failed",
   JobStarted: "system.job.started",

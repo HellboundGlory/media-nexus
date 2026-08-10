@@ -63,6 +63,7 @@ export async function seedStatic(db: Db): Promise<void> {
     { key: "acquisition.downloadMonitor", name: "Download monitor", description: "Poll download clients and import completed downloads", schedule: "*/1 * * * *", timeoutMs: 60_000, maxRetries: 2, priority: 80 },
     { key: "media.searchForRequest", name: "Search for request", description: "Search indexers to fulfill an approved request (event-triggered)", schedule: "0 0 31 12 *", timeoutMs: 120_000, maxRetries: 2, priority: 60 },
     { key: "media.rssSync", name: "RSS sync", description: "Auto-search and grab missing monitored episodes (M2)", schedule: "*/10 * * * *", timeoutMs: 180_000, maxRetries: 2, priority: 60 },
+    { key: "media.availabilityRefresh", name: "Availability refresh", description: "Sync availability from configured media servers (M4)", schedule: "0 */4 * * *", timeoutMs: 120_000, maxRetries: 2, priority: 100 },
   ];
   for (const j of jobs) {
     const existing = await db.select().from(schema.jobDefinition).where(eq(schema.jobDefinition.key, j.key)).limit(1);

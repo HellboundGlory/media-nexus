@@ -572,3 +572,162 @@ describe("M3: indexer health, Cardigann custom definitions, and statistics", () 
     expect(stats.body.some((s: any) => s.name === "M3 Health NZB" || s.name === "M3 Stats Demo")).toBe(true);
   });
 });
+
+
+describe("M4: users, approval->auto-search->fulfillment, notifications, watchlist", () => {
+  let nzUrl: string;
+  let sabUrl: string;
+  let webhookUrl: string;
+  const servers: import("node:http").Server[] = [];
+  const received: { type: string; payload: any }[] = [];
+
+  beforeAll(async () => {
+    const { createServer } = await import("node:http");
+    const nz = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ channel: { title: "m4", item: [{ title: "The.M4.Chronicle.2026.1080p.WEB-DL", guid: "m4-1", link: "https://mock/1.nzb", "newznab:attr": [{ name: "size", value: "4000000000" }] }] } }));
+    });
+    const sab = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      const u = new URL(_req.url ?? "/", "http://x");
+      const mode = u.searchParams.get("mode");
+      if (mode === "addurl") res.end(JSON.stringify({ status: true, nzo_ids: ["NZO-M4"] }));
+      else if (mode === "queue") res.end(JSON.stringify({ queue: { slots: [] } }));
+      else if (mode === "history") res.end(JSON.stringify({ history: { slots: [{ nzo_id: "NZO-M4", filename: "The.M4.Chronicle.2026.1080p.WEB-DL", status: "Completed" }] } }));
+      else res.end(JSON.stringify({ status: false }));
+    });
+    const hook = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => { try { received.push(JSON.parse(body)); } catch { /* ignore */ } res.writeHead(204); res.end(); });
+    });
+    await new Promise<void>((r) => nz.listen(0, "127.0.0.1", () => r()));
+    await new Promise<void>((r) => sab.listen(0, "127.0.0.1", () => r()));
+    await new Promise<void>((r) => hook.listen(0, "127.0.0.1", () => r()));
+    servers.push(nz, sab, hook);
+    nzUrl = `http://127.0.0.1:${(nz.address() as any).port}`;
+    sabUrl = `http://127.0.0.1:${(sab.address() as any).port}`;
+    webhookUrl = `http://127.0.0.1:${(hook.address() as any).port}`;
+
+    // paths + webhook config for THIS describe (idempotent)
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { join: j } = await import("node:path");
+    const { tmpdir: osTmp } = await import("node:os");
+    const base = mkdtempSync(j(osTmp(), "mn-m4-"));
+    const downloadsRoot = j(base, "downloads");
+    const mediaRoot = j(base, "library");
+    mkdirSync(downloadsRoot, { recursive: true });
+    mkdirSync(mediaRoot, { recursive: true });
+    const title = "The.M4.Chronicle.2026.1080p.WEB-DL";
+    const dir = j(downloadsRoot, "complete", title);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(j(dir, `${title}.mkv`), Buffer.alloc(2048));
+    const r = await auth(request(http).put("/api/v1/system/config").send({
+      "paths.downloads": downloadsRoot,
+      "paths.rootFolders": [{ path: mediaRoot }],
+      "notifications.webhooks": [{ url: webhookUrl, eventTypes: ["requests.request.approved", "requests.request.created", "requests.request.fulfilled", "acquisition.import.completed"] }],
+    }));
+    expect(r.status).toBe(200);
+  });
+
+  afterAll(async () => {
+    for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
+  });
+
+  it("enforces roles: restricted user cannot admin, and their requests auto-search on approval", async () => {
+    // admin creates a restricted user + scoped key
+    const user = await auth(request(http).post("/api/v1/users").send({ username: "m4-user", password: "secret-password-1", roles: ["USER"] }));
+    expect(user.status).toBe(201);
+    const uid = user.body.id;
+    const keyRes = await auth(request(http).post(`/api/v1/users/${uid}/api-keys`).send({ name: "m4-key" }));
+    expect(keyRes.status).toBe(201);
+    const userKey = keyRes.body.rawKey;
+    expect(userKey).toBeTruthy();
+    const uk = (r: any) => r.set("X-Api-Key", userKey);
+
+    // restricted user is not admin
+    const whoami = await uk(request(http).get("/api/v1/auth/whoami"));
+    expect(whoami.body.principal.isAdmin).toBe(false);
+    expect((await uk(request(http).get("/api/v1/users"))).status).toBe(403);
+
+    // configure an indexer + client so auto-search can grab
+    await auth(request(http).post("/api/v1/indexers").send({
+      definitionKey: "generic-newznab", name: "M4 NZB", protocol: "usenet",
+      settings: { baseUrl: nzUrl, apiKey: "k" },
+    }));
+    await auth(request(http).post("/api/v1/download-clients").send({
+      name: "M4 SAB", implementation: "sabnzbd", kind: "usenet", priority: 1,
+      settings: { host: sabUrl, apiKey: "k", category: "movies" },
+    }));
+
+    // restricted user creates a request (in library as a movie)
+    const movie = await auth(request(http).post("/api/v1/movies").send({ title: "The M4 Chronicle", tmdbId: 770071, releaseDate: "2026-01-01" }));
+    const created = await uk(request(http).post("/api/v1/requests").send({ mediaType: "movie", mediaId: movie.body.id }));
+    expect(created.status).toBe(201);
+    expect(created.body.status).toBe("pending"); // no auto-approve for USER
+    const requestId = created.body.id;
+
+    // restricted user cannot approve
+    expect((await uk(request(http).post(`/api/v1/requests/${requestId}/approve`).send({}))).status).toBe(403);
+
+    // admin approves -> event->job -> auto-search+grab -> immediately imports via monitor
+    const approved = await auth(request(http).post(`/api/v1/requests/${requestId}/approve`).send({}));
+    expect(approved.status).toBe(201);
+    expect(approved.body.status).toBe("approved");
+
+    // run the download monitor to import the completed sabnzbd download
+    let fulfilled = false;
+    for (let i = 0; i < 30 && !fulfilled; i++) {
+      await auth(request(http).post("/api/v1/system/commands/acquisition.downloadMonitor")).catch(() => {});
+      const rows = await auth(request(http).get("/api/v1/requests"));
+      fulfilled = rows.body.some((r: any) => r.id === requestId && r.status === "fulfilled");
+      if (!fulfilled) {
+        await new Promise((r) => setTimeout(r, 150));
+      }
+    }
+    expect(fulfilled).toBe(true);
+
+    // movie now has a file and availability is available
+    const got = await auth(request(http).get(`/api/v1/movies/${movie.body.id}`));
+    expect(got.body.hasFile).toBe(true);
+
+    // restricted user sees only their own requests
+    const otherMovie = await auth(request(http).post("/api/v1/movies").send({ title: "M4 Other", tmdbId: 770072 }));
+    await auth(request(http).post("/api/v1/requests").send({ mediaType: "movie", mediaId: otherMovie.body.id }));
+    const ownList = await uk(request(http).get("/api/v1/requests"));
+    expect(ownList.body.every((r: any) => r.userRequestorId === uid)).toBe(true);
+
+    // webhook received the workflow events (async delivery — poll briefly)
+    let fulfilledHook = false;
+    let approvedHook = false;
+    let importHook = false;
+    for (let i = 0; i < 20 && !(fulfilledHook && approvedHook && importHook); i++) {
+      fulfilledHook = received.some((r) => r.type === "requests.request.fulfilled" && r.payload.requestId === requestId);
+      approvedHook = received.some((r) => r.type === "requests.request.approved");
+      importHook = received.some((r) => r.type === "acquisition.import.completed");
+      if (!(fulfilledHook && approvedHook && importHook)) await new Promise((r) => setTimeout(r, 100));
+    }
+    // eslint-disable-next-line no-console
+    if (!(fulfilledHook && approvedHook && importHook)) console.error("M4 HOOKS:", JSON.stringify(received.map((r) => r.type)), "fulfilledFlag", fulfilledHook);
+    expect(approvedHook).toBe(true);
+    expect(fulfilledHook).toBe(true);
+    expect(importHook).toBe(true);
+  });
+
+  it("supports watchlist + content blocklist scoped to the requesting user", async () => {
+    const user = await auth(request(http).post("/api/v1/users").send({ username: "m4-watcher", password: "secret-password-2", roles: ["USER"] }));
+    const keyRes = await auth(request(http).post(`/api/v1/users/${user.body.id}/api-keys`).send({ name: "wl" }));
+    const uk = (r: any) => r.set("X-Api-Key", keyRes.body.rawKey);
+
+    const movie = await auth(request(http).post("/api/v1/movies").send({ title: "Watch Me", tmdbId: 882211 }));
+    await uk(request(http).post("/api/v1/watchlist").send({ mediaType: "movie", mediaId: movie.body.id }));
+    const wl = await uk(request(http).get("/api/v1/watchlist"));
+    expect(wl.body.some((w: any) => w.mediaId === movie.body.id)).toBe(true);
+
+    await uk(request(http).post("/api/v1/content-blocklist").send({ mediaType: "movie", mediaId: movie.body.id }));
+    expect((await uk(request(http).get("/api/v1/content-blocklist"))).body.length).toBe(1);
+
+    await uk(request(http).delete(`/api/v1/watchlist/movie/${movie.body.id}`));
+    expect((await uk(request(http).get("/api/v1/watchlist"))).body.length).toBe(0);
+  });
+});

@@ -65,8 +65,9 @@ Configuration schemas (e.g. `sabnzbdSettingsSchema`, `qbittorrentSettingsSchema`
 
 - **Metadata:** TMDB is the primary metadata source for movies *and* series (Seerr's model; TheTVDB retained as secondary
   for TV identity). Normalization into `movie`/`series`/`collection`/`person` rows is a `MetadataProvider` responsibility.
-- **Media servers:** Plex/Jellyfin/Emby for library scan, user list import (requesters), availability reporting. The
-  `media_availability` table (see domain model) is the seam: availability syncs from media servers, requests read it.
+- **Media servers:** first provider implemented — **Jellyfin** over HTTP (`Items`/`Users`/`System/Info`) for library scan
+  + availability by TMDB/TVDB provider ids, plus a memory demo provider. The `media_availability` table is the seam;
+  `media.availabilityRefresh` syncs it. Plex/Emby providers are planned on the same contract.
 - **Notifications:** a `NotificationProvider` receives typed domain events; configuration rows (`notification_provider`)
   subscribe per-`eventType` + `tags`, so users can route "grab" to Discord and "request approved" to email. Concrete sinks
   are roadmap items.

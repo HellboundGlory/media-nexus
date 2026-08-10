@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, X, Plus } from "lucide-react";
+import { Check, X, Plus, Bookmark, Ban } from "lucide-react";
 import { api } from "../api/client";
 import type { RequestRow, Paged, Movie, Series } from "../api/types";
 import { Badge, EmptyState, ErrorState, formatDate, statusTone } from "../lib/ui";
@@ -21,6 +21,15 @@ export default function Requests() {
   });
   const setStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: "approved" | "declined" }) => api.post(`/requests/${id}/${status}`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["requests"] }),
+  });
+
+  const watch = useMutation({
+    mutationFn: (r: RequestRow) => api.post("/watchlist", { mediaType: r.mediaType, mediaId: r.mediaId }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["requests"] }),
+  });
+  const block = useMutation({
+    mutationFn: (r: RequestRow) => api.post("/content-blocklist", { mediaType: r.mediaType, mediaId: r.mediaId }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["requests"] }),
   });
 
@@ -73,6 +82,8 @@ export default function Requests() {
                   <td className="px-4 py-2.5 text-zinc-500">{formatDate(r.requestedAt)}</td>
                   <td className="px-4 py-2.5">
                     <div className="flex justify-end gap-2">
+                      <button onClick={() => watch.mutate(r)} className="rounded p-1 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" title="Add to watchlist"><Bookmark className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => block.mutate(r)} className="rounded p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-950" title="Block content"><Ban className="h-3.5 w-3.5" /></button>
                       {r.status === "pending" && (
                         <>
                           <button onClick={() => setStatus.mutate({ id: r.id, status: "approved" })} className="flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-500"><Check className="h-3 w-3" /> Approve</button>

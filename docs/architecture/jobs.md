@@ -71,5 +71,6 @@ independently of HTTP.
 | `discovery.indexerRefresh` | `0 */6 * * *` | health-check every enabled indexer via its provider (HTTP/Newznab/Cardigann), persist status + lastError, emit IndexerFailed on failure |
 | `media.rssSync` | `*/15 * * * *` | RSS-poll indexers for new content (milestone M2) |
 | `system.metadataCleanup` | `0 4 * * *` | prune stale media_availability/history (planned body) |
+| `media.availabilityRefresh` | `0 */4 * * *` | sync availability from configured media servers (Jellyfin/memory) |
 | `acquisition.downloadMonitor` | `*/1 * * * *` | poll all configured download clients (SABnzbd/qBittorrent/memory), mirror progress into the unified queue, and import completed downloads into the library (M1) |
-| `media.searchForRequest` | event-triggered | search indexers to fulfil an approved request (stub body; real search in M1) |
+| `media.searchForRequest` | event-triggered | on approval: auto-search indexers + grab best release (movies/series) and drive request to fulfilled (M4) |

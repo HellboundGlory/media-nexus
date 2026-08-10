@@ -9,6 +9,21 @@ export const rootFolderSchema = z.object({
   name: z.string().optional(),
 });
 
+export const webhookNotificationSchema = z.object({
+  url: z.string().url(),
+  secret: z.string().optional(),
+  eventTypes: z.array(z.string()).default(["requests.request.approved", "requests.request.fulfilled", "requests.request.created", "requests.request.declined", "acquisition.import.completed", "acquisition.release.grabbed"]),
+});
+export type WebhookNotificationConfig = z.infer<typeof webhookNotificationSchema>;
+
+export const mediaServerConfigSchema = z.object({
+  name: z.string().min(1),
+  implementation: z.enum(["jellyfin", "memory"]).default("jellyfin"),
+  enabled: z.boolean().default(true),
+  settings: z.record(z.string(), z.unknown()).default({}),
+});
+export type MediaServerConfig = z.infer<typeof mediaServerConfigSchema>;
+
 export const namingSchema = z.object({
   movies: z.string().default("{Movie Title} ({Release Year})"),
   episodes: z.string().default("{Series Title} - S{season:00}E{episode:00} - {Episode Title}"),
@@ -23,6 +38,8 @@ export const runtimeSettingsSchema = z.object({
   }),
   "media.preferredProtocol": z.enum(["usenet", "torrent", "any"]).default("any"),
   "discovery.flareSolverrBaseUrl": z.string().default(""),
+  "notifications.webhooks": z.array(webhookNotificationSchema).default([]),
+  "media.servers": z.array(mediaServerConfigSchema).default([]),
   "system.timezone": z.string().default("UTC"),
   "ui.theme": z.enum(["dark", "light"]).default("dark"),
 });

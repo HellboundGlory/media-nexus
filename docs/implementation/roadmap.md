@@ -116,20 +116,25 @@ not here; full Cardigann engine breadth (many tracker defs will need per-definit
 **Compatibility implications:** Prowlarr `indexer` CRUD + **indexer sync to Sonarr/Radarr/Prowlarr surfaces** lands here —
 this is the highest-value interop for existing users.
 
-## M4 — Requests module (Seerr parity)
+## M4 — Requests module (Seerr parity) ✅
 
 **Goal:** full request lifecycle with users: request → approval → auto-search → availability.
 
-**Features:** user accounts + roles/permissions, Plex/Jellyfin login + user import, request creation/approval/denial,
-`request_item` season granularity, watchlist + content blocklist, availability watchers (media servers), notifications on
-state change.
+**Features (done):** user accounts + roles (admin/moderator/USER) with scoped API keys and request authz;
+`request_item` season granularity; **real approval → auto-search → auto-grab** (`media.searchForRequest`, movies + series);
+request lifecycle `pending → approved → processing → fulfilled/failed` with **imports marking requests fulfilled**;
+**webhook notifications** (JSON, secret, per-event subscription) for request/import events; **watchlist + content blocklist**
+(principal-scoped); **Jellyfin media-server provider** (HTTP API) + `media.availabilityRefresh` job; restricted users
+submit + see only their own requests. (Plex login / server-user import deferred to M8; notifications beyond webhook to M5.)
 
 **Dependencies:** M1 (search/grab), M0 (request tables), media-server provider (first: Jellyfin/Plex).
 
 **Tests:** approval state machine, request→search event-to-job mapping, permission tests.
 
-**Acceptance criteria:** a restricted user can submit a request; an approver approves; the system auto-searches and grabs;
-the requester gets a notification when available.
+**Acceptance criteria (verified end-to-end):** a restricted USER submits a request (stays pending, cannot approve, sees only
+own requests); an admin approves → event→job `media.searchForRequest` auto-searches a real Newznab, grabs via SABnzbd,
+downloads+imports, and the request flips to **fulfilled**; a webhook receives created/approved/import/fulfilled events; watchlist + content
+blocklist work per user.
 
 **Compatibility implications:** Seerr-compatible read+write surfaces (`request`, `media`, `discover`, `auth/*`).
 

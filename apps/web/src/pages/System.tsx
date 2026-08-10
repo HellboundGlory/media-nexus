@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Play } from "lucide-react";
+import { KeyRound, Play, UserPlus, Webhook } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { api } from "../api/client";
 import type { JobRun } from "../api/types";
@@ -13,9 +13,22 @@ export default function System() {
   const apiKey = useAppStore((s) => s.apiKey);
   const setApiKey = useAppStore((s) => s.setApiKey);
   const [keyDraft, setKeyDraft] = useState(apiKey);
+  const [users, setUsers] = useState<{ id: string; username: string; isAdmin: boolean; roles: string[] }[]>([]);
+  const [newUser, setNewUser] = useState({ username: "", password: "", isAdmin: false });
+  const [hooks, setHooks] = useState<{ url: string; secret: string; eventTypes: string }>({ url: "", secret: "", eventTypes: "" });
+  const [savedHook, setSavedHook] = useState(false);
 
   const runs = useQuery({ queryKey: ["job-runs"], queryFn: () => api.get<JobRun[]>("/system/jobs/runs") });
   const cfg = useQuery({ queryKey: ["config"], queryFn: () => api.get<Record<string, unknown>>("/system/config") });
+
+  const refreshUsers = async () => {
+    try { setUsers(await api.get("/users")); } catch { /* admin only */ }
+  };
+  useEffect(() => { void refreshUsers(); }, []);
+  const saveHook = useMutation({
+    mutationFn: (body: Record<string, any>) => api.put("/system/config", body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["config"] }); setSavedHook(true); },
+  });
 
   const trigger = useMutation({
     mutationFn: (jobKey: string) => api.post(`/system/commands/${jobKey}`),
@@ -90,6 +103,57 @@ export default function System() {
             </div>
           </label>
           <p className="text-xs text-zinc-500">Settings persist via the <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">setting</code> table. Endpoint inventory below reflects the native + compat API.</p>
+        </section>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <h3 className="mb-3 font-medium">Users</h3>
+          <form
+            className="mb-3 flex flex-wrap items-end gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              api.post("/users", newUser)
+                .then(() => { setNewUser({ username: "", password: "", isAdmin: false }); void refreshUsers(); })
+                .catch((err) => alert(err instanceof Error ? err.message : "failed"));
+            }}
+          >
+            <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-zinc-500">Username</span>
+              <input required value={newUser.username} onChange={(e) => setNewUser({ ...newUser, username: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+            <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-zinc-500">Password</span>
+              <input required type="password" value={newUser.password} onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+            <label className="flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-300"><input type="checkbox" checked={newUser.isAdmin} onChange={(e) => setNewUser({ ...newUser, isAdmin: e.target.checked })} /> admin</label>
+            <button className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500"><UserPlus className="mr-1 inline h-3.5 w-3.5" />Create</button>
+          </form>
+          <ul className="space-y-1 text-sm">
+            {users.map((u) => (
+              <li key={u.id} className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-1.5 dark:border-zinc-700">
+                <span>{u.username}</span>
+                <span className="text-xs text-zinc-500">{u.isAdmin ? "admin" : (u.roles ?? []).join(", ") || "user"}</span>
+              </li>
+            ))}
+          </ul>
+          <button onClick={refreshUsers} className="mt-2 text-xs text-zinc-500 hover:underline">Refresh</button>
+        </section>
+
+        <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <h3 className="mb-1 flex items-center gap-2 font-medium"><Webhook className="h-4 w-4" /> Webhooks</h3>
+          <p className="mb-3 text-xs text-zinc-500">Requests/import events are POSTed to the URL (JSON). Secret sent as x-webhook-secret.</p>
+          <form
+            className="flex flex-col gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const existing = (cfg.data?.["notifications.webhooks"] as any[]) ?? [];
+              const eventTypes = hooks.eventTypes ? hooks.eventTypes.split(",").map((s) => s.trim()).filter(Boolean) : [];
+              saveHook.mutate({ "notifications.webhooks": [...existing, { url: hooks.url, secret: hooks.secret || undefined, eventTypes }] });
+            }}
+          >
+            <input required placeholder="https://hook.example/medianexus" value={hooks.url} onChange={(e) => setHooks({ ...hooks, url: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+            <input placeholder="secret (optional)" value={hooks.secret} onChange={(e) => setHooks({ ...hooks, secret: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+            <input placeholder="event types, comma separated (default: all request/import events)" value={hooks.eventTypes} onChange={(e) => setHooks({ ...hooks, eventTypes: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+            <button className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500">Add webhook</button>
+            {savedHook && <p className="text-xs text-emerald-600">Webhook saved.</p>}
+          </form>
         </section>
       </div>
 

@@ -9,3 +9,4 @@ export * from "./qbittorrent";
 export * from "./local-storage";
 export * from "./proxy";
 export * from "./cardigann";
+export * from "./jellyfin";

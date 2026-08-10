@@ -69,7 +69,12 @@ Implemented in the scaffold (each listed endpoint exists and is covered by tests
 | Series | `GET /api/v1/wanted/missing` | monitored episodes without files (Want/Missing) |
 | Series | `GET /api/v1/calendar` | upcoming air-dated episodes |
 | Auth | `GET /api/v1/auth/whoami` | identity of the API key owner |
-| Requests | `POST /api/v1/requests` | user request (movie/series) → gets `media_availability` + `request` rows |
+| Requests | `POST /api/v1/requests` | user request (movie/series) → `request` + `request_item` rows |
+| Requests | `POST /api/v1/requests/:id/approve|decline` | approve → auto-search job; decline |
+| Users | `GET/POST /api/v1/users`, `DELETE /api/v1/users/:id`, `POST /api/v1/users/:id/api-keys` | user + role management, scoped keys (admin) |
+| Watchlist | `GET/POST /api/v1/watchlist`, `DELETE /api/v1/watchlist/:mediaType/:mediaId` | per-user watchlist |
+| Blocklist | `GET/POST /api/v1/content-blocklist`, `DELETE /api/v1/content-blocklist/:mediaType/:mediaId` | per-user content prefs |
+| Media servers | `GET/PUT /api/v1/media-servers`, `POST /api/v1/media-servers/refresh`, `POST /api/v1/media-servers/:index/test` | Jellyfin/memory availability sources |
 | Requests | `GET /api/v1/requests` | list requests (with status) |
 | Activity | `GET /api/v1/history` | unified history feed |
 | Activity | `GET /api/v1/queue` | download queue |

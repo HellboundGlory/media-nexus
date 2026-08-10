@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Stethoscope, Trash2 } from "lucide-react";
+import { Plus, Stethoscope, Trash2, Server } from "lucide-react";
 import { api } from "../api/client";
 import type { DownloadClient } from "../api/types";
-import { Badge, EmptyState, ErrorState, formatBytes } from "../lib/ui";
+import { Badge, EmptyState, ErrorState } from "../lib/ui";
 
 const IMPL_FIELDS: Record<string, { host: string; apiKey: string; extra?: { key: string; label: string; def: string }[] }> = {
   sabnzbd: { host: "SABnzbd host (http://host:8080)", apiKey: "SABnzbd API key", extra: [{ key: "category", label: "Category", def: "movies" }] },
@@ -25,9 +25,19 @@ export default function Clients() {
   const [extras, setExtras] = useState<Record<string, string>>({});
   const [downloads, setDownloads] = useState("");
   const [rootFolder, setRootFolder] = useState("");
+  const [servers, setServers] = useState<any[]>([]);
+  const [serverDraft, setServerDraft] = useState({ name: "", implementation: "jellyfin", host: "", apiKey: "" });
 
   const clients = useQuery({ queryKey: ["dl-clients"], queryFn: () => api.get<DownloadClient[]>("/download-clients") });
   const cfg = useQuery({ queryKey: ["config"], queryFn: () => api.get<Record<string, any>>("/system/config") });
+  const serversQuery = useQuery({ queryKey: ["media-servers"], queryFn: () => api.get<any[]>("/media-servers") });
+  useEffect(() => { if (serversQuery.data) setServers(serversQuery.data); }, [serversQuery.data]);
+
+  const saveServers = useMutation({
+    mutationFn: (list: any[]) => api.put<any[]>("/media-servers", { servers: list }),
+    onSuccess: () => { serversQuery.refetch(); setServerDraft({ name: "", implementation: "jellyfin", host: "", apiKey: "" }); },
+  });
+  const refreshServers = useMutation({ mutationFn: () => api.post("/media-servers/refresh"), onSuccess: () => qc.invalidateQueries({ queryKey: ["indexer-stats"] }) });
 
   const savePaths = useMutation({
     mutationFn: (body: Record<string, any>) => api.put("/system/config", body),
@@ -48,14 +58,13 @@ export default function Clients() {
     else if (impl === "qbittorrent") { settings.host = host; settings.username = extras.username ?? "admin"; settings.password = apiKey; settings.tag = extras.tag ?? "media-nexus"; }
     addClient.mutate(settings);
   };
-
   const fields = IMPL_FIELDS[impl];
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold tracking-tight">Download Clients</h2>
-        <p className="text-sm text-zinc-500">Real downloads: SABnzbd (usenet) and qBittorrent (torrent) are wired via their HTTP APIs. The demo client needs no external service.</p>
+        <p className="text-sm text-zinc-500">Real downloads: SABnzbd (usenet) and qBittorrent (torrent) via their HTTP APIs. The demo client needs no external service.</p>
       </div>
 
       {clients.isError ? <ErrorState error={clients.error} onRetry={() => clients.refetch()} /> : null}
@@ -137,7 +146,7 @@ export default function Clients() {
           <p className="mb-3 text-xs text-zinc-500">The importer finds completed downloads under the downloads root and hardlinks/copies the file into the library root.</p>
           <div className="space-y-3">
             <label className="block">
-              <span className="mb-1 block text-xs text-zinc-500">Downloads root ({formatBytes(0)} staging)</span>
+              <span className="mb-1 block text-xs text-zinc-500">Downloads root (staging)</span>
               <input defaultValue={downloads || (cfg.data?.["paths.downloads"] as string) || ""} onChange={(e) => setDownloads(e.target.value)} placeholder="/data/downloads" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
             </label>
             <label className="block">
@@ -155,6 +164,40 @@ export default function Clients() {
           </div>
         </section>
       </div>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 font-medium"><Server className="h-4 w-4" /> Media servers</h3>
+          <button disabled={refreshServers.isPending} onClick={() => refreshServers.mutate()} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-200 dark:text-zinc-900">
+            {refreshServers.isPending ? "Refreshing…" : "Refresh availability"}
+          </button>
+        </div>
+        <p className="mb-3 text-xs text-zinc-500">Jellyfin (HTTP API) or in-memory demo. Availability sync feeds request fulfillment.</p>
+        <ul className="mb-3 space-y-2 text-sm">
+          {servers.map((s, i) => (
+            <li key={i} className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+              <span className="font-medium">{s.name}<span className="ml-2 font-mono text-xs text-zinc-500">{s.implementation}</span></span>
+              <button onClick={() => saveServers.mutate(servers.filter((_, j) => j !== i))} className="text-xs text-red-500 hover:underline">Remove</button>
+            </li>
+          ))}
+          {servers.length === 0 && <li className="text-sm text-zinc-500">No media servers configured.</li>}
+        </ul>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="min-w-28"><span className="mb-1 block text-xs text-zinc-500">Name</span>
+            <input value={serverDraft.name} onChange={(e) => setServerDraft({ ...serverDraft, name: e.target.value })} placeholder="Plex#1" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+          <label className="min-w-28"><span className="mb-1 block text-xs text-zinc-500">Type</span>
+            <select value={serverDraft.implementation} onChange={(e) => setServerDraft({ ...serverDraft, implementation: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
+              <option value="jellyfin">Jellyfin</option><option value="memory">Memory (demo)</option>
+            </select></label>
+          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-zinc-500">Host</span>
+            <input value={serverDraft.host} onChange={(e) => setServerDraft({ ...serverDraft, host: e.target.value })} placeholder="http://192.168.1.10:8096" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+          <label className="min-w-32"><span className="mb-1 block text-xs text-zinc-500">API key</span>
+            <input value={serverDraft.apiKey} onChange={(e) => setServerDraft({ ...serverDraft, apiKey: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+          <button disabled={!serverDraft.name} onClick={() => saveServers.mutate([...servers, { name: serverDraft.name, implementation: serverDraft.implementation, enabled: true, settings: serverDraft.implementation === "memory" ? {} : { host: serverDraft.host, apiKey: serverDraft.apiKey } }])}
+            className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">Add server</button>
+        </div>
+        {saveServers.isError && <p className="mt-2 text-xs text-red-600">{saveServers.error instanceof Error ? saveServers.error.message : "Failed"}</p>}
+      </section>
     </div>
   );
 }

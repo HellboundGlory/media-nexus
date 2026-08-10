@@ -243,7 +243,7 @@ export class AcquisitionService {
   ): void {
     this.events.publish(
       EventTypes.ImportCompleted,
-      { mediaId, title, downloadId, path, mediaFileId, ...extra },
+      { mediaType, mediaId, title, downloadId, path, mediaFileId, ...extra },
       { aggType: mediaType as never, aggId: mediaId },
     );
     this.logger.log(`imported "${title}" -> ${path}`);
