@@ -1,0 +1,27 @@
+{
+  "name": "@medianexus/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "zod": "^4.0.0",
+    "drizzle-orm": "^0.45.0",
+    "better-sqlite3": "^13.0.0",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.2",
+    "vitest": "^4.1.10",
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/pg": "^8.15.0",
+    "drizzle-kit": "^0.31.10"
+  }
+}

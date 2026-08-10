@@ -1,0 +1,48 @@
+# MediaNexus — `docker compose up -d`
+# Set MEDIA_NEXUS_SECRET in .env (copy from .env.example) before first run.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 7373
+      DATABASE_URL: file:/data/db/media-nexus.db
+      MEDIA_NEXUS_DATA_DIR: /data/config
+      MEDIA_NEXUS_MEDIA_DIR: /data/media
+      MEDIA_NEXUS_DOWNLOADS_DIR: /data/downloads
+      TZ: ${TZ:-UTC}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      MEDIA_NEXUS_SECRET: ${MEDIA_NEXUS_SECRET:?set MEDIA_NEXUS_SECRET in .env}
+    volumes:
+      - ./data/db:/data/db
+      - ./data/config:/data/config
+      - ./data/media:/data/media
+      - ./data/downloads:/data/downloads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7373/health/ready"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  # ./data/* bind mounts provide persistence for DB, config, media and downloads.
+  # Media + downloads must share a filesystem for hardlinks (import pipeline).

@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: MIT
+import { Global, Injectable, Module, OnModuleDestroy } from "@nestjs/common";
+import { Inject } from "@nestjs/common";
+import { createDb, type Db, type DbHandle } from "@medianexus/database";
+import { seedStatic } from "@medianexus/database";
+import { parseEnv } from "@medianexus/shared";
+
+export const DB_TOKEN = Symbol("DATABASE");
+export const DB_HANDLE_TOKEN = Symbol("DATABASE_HANDLE");
+
+/**
+ * Owns the Drizzle connection + migration + static seed lifecycle.
+ * Reads `DATABASE_URL` (+ `AUTO_MIGRATE`) from the environment at factory time so
+ * tests can inject a temp SQLite database before building the app.
+ */
+/** Closes the connection on app shutdown (graceful drain). */
+@Injectable()
+export class DatabaseLifecycle implements OnModuleDestroy {
+  constructor(@Inject(DB_HANDLE_TOKEN) private readonly handle: DbHandle) {}
+  onModuleDestroy() {
+    this.handle.close();
+  }
+}
+
+@Global()
+@Module({
+  providers: [
+    {
+      provide: DB_HANDLE_TOKEN,
+      useFactory: async (): Promise<DbHandle> => {
+        const env = parseEnv();
+        const handle = createDb(env.DATABASE_URL);
+        if (env.AUTO_MIGRATE) handle.runMigrations();
+        await seedStatic(handle.db);
+        return handle;
+      },
+    },
+    {
+      provide: DB_TOKEN,
+      useFactory: (handle: DbHandle): Db => handle.db,
+      inject: [DB_HANDLE_TOKEN],
+    },
+    DatabaseLifecycle,
+  ],
+  exports: [DB_TOKEN, DB_HANDLE_TOKEN],
+})
+export class DatabaseModule {}
+

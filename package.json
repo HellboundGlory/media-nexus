@@ -1,0 +1,38 @@
+{
+  "name": "media-nexus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MediaNexus \u2014 unified media automation platform (Prowlarr + Sonarr + Radarr + Seerr capabilities in one coherent application).",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint \"apps/**/*.{ts,tsx}\" \"packages/**/*.ts\" --max-warnings 0",
+    "test": "npm run test --workspaces --if-present",
+    "test:unit": "npm run test -w @medianexus/shared -w @medianexus/domain -w @medianexus/events -w @medianexus/integrations -w @medianexus/jobs -w @medianexus/database",
+    "db:generate": "npm run db:generate -w @medianexus/database",
+    "db:migrate": "tsx scripts/db.ts migrate",
+    "dev": "concurrently -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run start:dev -w @medianexus/api",
+    "dev:web": "npm run dev -w @medianexus/web",
+    "build:backend": "npm run build -w @medianexus/shared -w @medianexus/domain -w @medianexus/events -w @medianexus/database -w @medianexus/integrations -w @medianexus/jobs -w @medianexus/compatibility -w @medianexus/api",
+    "db:seed": "tsx scripts/db.ts seed"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.4",
+    "eslint": "^9.39.5",
+    "typescript": "~5.9.2",
+    "@types/node": "^22.20.1",
+    "typescript-eslint": "^8.67.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
+    "@eslint/js": "^9.39.5"
+  }
+}

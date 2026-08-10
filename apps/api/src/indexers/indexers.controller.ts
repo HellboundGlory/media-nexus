@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: MIT
+import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
+import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { z } from "zod";
+import {
+  createIndexerSchema, grabRequestSchema, type CreateIndexer, type GrabRequest,
+} from "@medianexus/domain";
+import { ZodValidationPipe } from "../common/zod.pipe";
+import { IndexersService } from "./indexers.service";
+
+const searchSchema = z.object({
+  mediaType: z.enum(["movie", "series"]),
+  mediaId: z.string(),
+  query: z.string().optional(),
+});
+
+@ApiTags("indexers")
+@Controller("api/v1")
+export class IndexersController {
+  constructor(private readonly indexers: IndexersService) {}
+
+  @Get("indexers/definitions")
+  @ApiOperation({ summary: "Catalog of known indexer definitions" })
+  definitions() {
+    return this.indexers.definitions();
+  }
+
+  @Get("indexers")
+  @ApiOperation({ summary: "Configured indexers" })
+  list() {
+    return this.indexers.list();
+  }
+
+  @Post("indexers")
+  @ApiOperation({ summary: "Configure an indexer" })
+  create(@Body(new ZodValidationPipe(createIndexerSchema)) body: CreateIndexer) {
+    return this.indexers.create(body);
+  }
+
+  @Delete("indexers/:id")
+  @ApiOperation({ summary: "Remove an indexer" })
+  remove(@Param("id") id: string) {
+    return this.indexers.remove(id);
+  }
+
+  @Post("search")
+  @ApiOperation({ summary: "Search configured indexers for a title (M1: real providers)" })
+  search(@Body(new ZodValidationPipe(searchSchema)) body: z.infer<typeof searchSchema>) {
+    return this.indexers.search(body);
+  }
+
+  @Post("grabs")
+  @ApiOperation({ summary: "Grab a release into a download client (demo client today)" })
+  grab(@Body(new ZodValidationPipe(grabRequestSchema)) body: GrabRequest) {
+    return this.indexers.grab(body);
+  }
+}
