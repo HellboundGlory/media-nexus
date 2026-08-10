@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { Body, Controller, Delete, Get, Param, Post, Req } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { Request as ExpressRequest } from "express";
 import { z } from "zod";
@@ -7,6 +7,7 @@ import { ApiError } from "@medianexus/shared";
 import { createRequestSchema, type CreateRequest } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { RequestsService } from "./requests.service";
+import { RateLimitGuard } from "./rate-limit.guard";
 
 const statusSchema = z.object({});
 const mediaRefSchema = z.object({ mediaType: z.enum(["movie", "series"]), mediaId: z.string() });
@@ -23,6 +24,7 @@ export class RequestsController {
   }
 
   @Post("api/v1/requests")
+  @UseGuards(RateLimitGuard)
   @ApiOperation({ summary: "Create a request (movies/series)" })
   create(@Body(new ZodValidationPipe(createRequestSchema)) body: CreateRequest, @Req() req: ExpressRequest) {
     return this.requests.create(body, req.principal);

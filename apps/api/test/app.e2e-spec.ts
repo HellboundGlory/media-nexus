@@ -731,3 +731,90 @@ describe("M4: users, approval->auto-search->fulfillment, notifications, watchlis
     expect((await uk(request(http).get("/api/v1/watchlist"))).body.length).toBe(0);
   });
 });
+
+
+describe("M5: SSE realtime, notification sinks (discord/telegram), metrics, audit", () => {
+  const servers: import("node:http").Server[] = [];
+  const discord: string[] = [];
+  const telegram: string[] = [];
+
+  beforeAll(async () => {
+    const { createServer } = await import("node:http");
+    const d = createServer((req, res) => {
+      let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => { discord.push(b); res.writeHead(204); res.end(); });
+    });
+    const t = createServer((req, res) => {
+      let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => { telegram.push(b); res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true })); });
+    });
+    await new Promise<void>((r) => d.listen(0, "127.0.0.1", () => r()));
+    await new Promise<void>((r) => t.listen(0, "127.0.0.1", () => r()));
+    servers.push(d, t);
+    const dUrl = `http://127.0.0.1:${(d.address() as any).port}`;
+    const tUrl = `http://127.0.0.1:${(t.address() as any).port}`;
+
+    const r = await auth(request(http).put("/api/v1/system/config").send({
+      "notifications.discord": [{ webhookUrl: dUrl, eventTypes: ["requests.request.created", "acquisition.release.grabbed"] }],
+      "notifications.telegram": [{ botToken: "TEST", chatId: "1", baseUrl: tUrl, eventTypes: ["requests.request.created", "acquisition.release.grabbed"] }],
+    }));
+    expect(r.status).toBe(200);
+  });
+
+  afterAll(async () => {
+    for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
+  });
+
+  it("streams domain events over SSE and both sinks receive a request event", async () => {
+    // start the underlying http server on an ephemeral port so we can open a raw SSE fetch
+    await app.listen(0);
+    const port = (app.getHttpServer().address() as any).port as number;
+    const ctrl = new AbortController();
+    const movie = await auth(request(http).post("/api/v1/movies").send({ title: "M5 Event Movie", tmdbId: 990077 }));
+    const url = `http://127.0.0.1:${port}/api/v1/events`;
+    const res = await fetch(url, { headers: { "x-api-key": API_KEY }, signal: ctrl.signal });
+    const reader = (res.body as ReadableStream).getReader();
+    const dec = new TextDecoder();
+
+    // trigger an event after the stream is open
+    await auth(request(http).post("/api/v1/requests").send({ mediaType: "movie", mediaId: movie.body.id }));
+
+    let buf = "";
+    const deadline = Date.now() + 6000;
+    let saw = false;
+    try {
+      while (Date.now() < deadline && !saw) {
+        const { value, done } = await Promise.race([
+          reader.read(),
+          new Promise<{ value: undefined; done: true }>((r2) => setTimeout(() => r2({ value: undefined as never, done: true as never }), 1500)),
+        ]);
+        if (done && !value) continue;
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        if (buf.includes("requests.request.created")) saw = true;
+      }
+    } finally {
+      ctrl.abort();
+    }
+    expect(saw).toBe(true);
+
+    // sinks received the event (async — poll briefly)
+    let got = false;
+    for (let i = 0; i < 20 && !got; i++) {
+      got = discord.some((b) => b.includes("requests.request.created")) && telegram.some((b) => b.includes("New request"));
+      if (!got) await new Promise((r2) => setTimeout(r2, 100));
+    }
+    expect(got).toBe(true);
+  });
+
+  it("exposes Prometheus metrics and audit log", async () => {
+    const metrics = await request(http).get("/metrics");
+    expect(metrics.status).toBe(200);
+    expect(metrics.text).toContain("http_requests_total");
+    expect(metrics.text).toMatch(/uptime_seconds \d+/);
+
+    const audit = await auth(request(http).get("/api/v1/system/audit"));
+    expect(audit.status).toBe(200);
+    expect(Array.isArray(audit.body)).toBe(true);
+    expect(audit.body.length).toBeGreaterThan(0);
+    expect(audit.body.some((e: any) => e.action === "media.movie.added")).toBe(true);
+  });
+});

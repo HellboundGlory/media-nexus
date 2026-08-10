@@ -16,6 +16,35 @@ export const webhookNotificationSchema = z.object({
 });
 export type WebhookNotificationConfig = z.infer<typeof webhookNotificationSchema>;
 
+export const discordNotificationSchema = z.object({
+  webhookUrl: z.string().url(),
+  eventTypes: z.array(z.string()).default([]),
+});
+export type DiscordNotificationConfig = z.infer<typeof discordNotificationSchema>;
+
+export const telegramNotificationSchema = z.object({
+  botToken: z.string().min(1),
+  chatId: z.string().min(1),
+  /** test/dev override — defaults to https://api.telegram.org */
+  baseUrl: z.string().optional(),
+  eventTypes: z.array(z.string()).default([]),
+});
+export type TelegramNotificationConfig = z.infer<typeof telegramNotificationSchema>;
+
+export const emailNotificationSchema = z.object({
+  from: z.string().email(),
+  to: z.array(z.string().email()).min(1),
+  transport: z.object({
+    host: z.string().min(1),
+    port: z.number().int().default(587),
+    secure: z.boolean().default(false),
+    auth: z.object({ user: z.string(), pass: z.string() }).optional(),
+  }),
+  subject: z.string().default("MediaNexus notification"),
+  eventTypes: z.array(z.string()).default([]),
+});
+export type EmailNotificationConfig = z.infer<typeof emailNotificationSchema>;
+
 export const mediaServerConfigSchema = z.object({
   name: z.string().min(1),
   implementation: z.enum(["jellyfin", "memory"]).default("jellyfin"),
@@ -39,6 +68,9 @@ export const runtimeSettingsSchema = z.object({
   "media.preferredProtocol": z.enum(["usenet", "torrent", "any"]).default("any"),
   "discovery.flareSolverrBaseUrl": z.string().default(""),
   "notifications.webhooks": z.array(webhookNotificationSchema).default([]),
+  "notifications.discord": z.array(discordNotificationSchema).default([]),
+  "notifications.telegram": z.array(telegramNotificationSchema).default([]),
+  "notifications.email": z.array(emailNotificationSchema).default([]),
   "media.servers": z.array(mediaServerConfigSchema).default([]),
   "system.timezone": z.string().default("UTC"),
   "ui.theme": z.enum(["dark", "light"]).default("dark"),

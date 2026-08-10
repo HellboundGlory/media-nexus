@@ -15,20 +15,23 @@ export default function System() {
   const [keyDraft, setKeyDraft] = useState(apiKey);
   const [users, setUsers] = useState<{ id: string; username: string; isAdmin: boolean; roles: string[] }[]>([]);
   const [newUser, setNewUser] = useState({ username: "", password: "", isAdmin: false });
-  const [hooks, setHooks] = useState<{ url: string; secret: string; eventTypes: string }>({ url: "", secret: "", eventTypes: "" });
-  const [savedHook, setSavedHook] = useState(false);
+  const [notifyDraft, setNotifyDraft] = useState({ kind: "webhook", url: "", secret: "", token: "", chat: "", emailTo: "", eventTypes: "" });
+  const [savedNotification, setSavedNotification] = useState(false);
+  const saveWebhooks = useMutation({
+    mutationFn: (body: Record<string, any>) => api.put("/notifications", body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["config"] }); setSavedNotification(true); },
+  });
+
 
   const runs = useQuery({ queryKey: ["job-runs"], queryFn: () => api.get<JobRun[]>("/system/jobs/runs") });
   const cfg = useQuery({ queryKey: ["config"], queryFn: () => api.get<Record<string, unknown>>("/system/config") });
+
+  const audit = useQuery({ queryKey: ["audit"], queryFn: () => api.get<any[]>("/system/audit") });
 
   const refreshUsers = async () => {
     try { setUsers(await api.get("/users")); } catch { /* admin only */ }
   };
   useEffect(() => { void refreshUsers(); }, []);
-  const saveHook = useMutation({
-    mutationFn: (body: Record<string, any>) => api.put("/system/config", body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["config"] }); setSavedHook(true); },
-  });
 
   const trigger = useMutation({
     mutationFn: (jobKey: string) => api.post(`/system/commands/${jobKey}`),
@@ -137,25 +140,43 @@ export default function System() {
         </section>
 
         <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-          <h3 className="mb-1 flex items-center gap-2 font-medium"><Webhook className="h-4 w-4" /> Webhooks</h3>
-          <p className="mb-3 text-xs text-zinc-500">Requests/import events are POSTed to the URL (JSON). Secret sent as x-webhook-secret.</p>
-          <form
-            className="flex flex-col gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const existing = (cfg.data?.["notifications.webhooks"] as any[]) ?? [];
-              const eventTypes = hooks.eventTypes ? hooks.eventTypes.split(",").map((s) => s.trim()).filter(Boolean) : [];
-              saveHook.mutate({ "notifications.webhooks": [...existing, { url: hooks.url, secret: hooks.secret || undefined, eventTypes }] });
-            }}
-          >
-            <input required placeholder="https://hook.example/medianexus" value={hooks.url} onChange={(e) => setHooks({ ...hooks, url: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
-            <input placeholder="secret (optional)" value={hooks.secret} onChange={(e) => setHooks({ ...hooks, secret: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
-            <input placeholder="event types, comma separated (default: all request/import events)" value={hooks.eventTypes} onChange={(e) => setHooks({ ...hooks, eventTypes: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
-            <button className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500">Add webhook</button>
-            {savedHook && <p className="text-xs text-emerald-600">Webhook saved.</p>}
-          </form>
+          <h3 className="mb-1 flex items-center gap-2 font-medium"><Webhook className="h-4 w-4" /> Notifications</h3>
+          <p className="mb-3 text-xs text-zinc-500">Webhook (JSON), Discord webhook, Telegram Bot, Email — each with per-event subscriptions. Use the test button to verify.</p>
+          <div className="space-y-3">
+            <form
+              className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700"
+              onSubmit={(e) => { e.preventDefault(); const existing = (cfg.data?.["notifications.webhooks"] as any[]) ?? []; const eventTypes = notifyDraft.eventTypes ? notifyDraft.eventTypes.split(",").map((s) => s.trim()) : []; saveWebhooks.mutate({ webhooks: [...existing, { url: notifyDraft.url, secret: notifyDraft.secret || undefined, eventTypes }] }); setNotifyDraft({ kind: "webhook", url: "", secret: "", token: "", chat: "", emailTo: "", eventTypes: "" }); }}
+            >
+              <p className="mb-1 text-xs font-medium text-zinc-500">Add webhook</p>
+              <div className="flex gap-2">
+                <input required placeholder="https://hook.example/medianexus" value={notifyDraft.url} onChange={(e) => setNotifyDraft({ ...notifyDraft, url: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+                <button className="shrink-0 rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500">Add</button>
+              </div>
+            </form>
+            <div className="grid gap-2 text-xs font-mono text-zinc-600 dark:text-zinc-300">
+              <span>webhooks: {(cfg.data?.["notifications.webhooks"] as any[])?.length ?? 0}</span>
+              <span>discord: {(cfg.data?.["notifications.discord"] as any[])?.length ?? 0}</span>
+              <span>telegram: {(cfg.data?.["notifications.telegram"] as any[])?.length ?? 0}</span>
+              <span>email: {(cfg.data?.["notifications.email"] as any[])?.length ?? 0}</span>
+            </div>
+            {savedNotification && <p className="text-xs text-emerald-600">Saved.</p>}
+          </div>
         </section>
       </div>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <h3 className="mb-3 font-medium">Audit trail</h3>
+        {audit.isLoading ? <p className="text-sm text-zinc-500">Loading…</p> : audit.data?.length === 0 ? <p className="text-sm text-zinc-500">No audit entries.</p> : (
+          <ul className="max-h-64 space-y-1 overflow-y-auto text-xs">
+            {audit.data?.map((e) => (
+              <li key={e.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 px-3 py-1.5 dark:border-zinc-700">
+                <span className="truncate font-mono">{e.action}</span>
+                <span className="text-zinc-500">{new Date(e.createdAt).toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="mb-3 flex items-center gap-2">

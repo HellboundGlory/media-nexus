@@ -6,8 +6,10 @@ import { UsersService } from "./users.service";
 import { UsersController } from "./users.controller";
 import { RequestFulfillmentService } from "./request-fulfillment.service";
 import { NotificationService } from "./notifications.service";
+import { NotificationsController } from "./notifications.controller";
 import { MediaServersService } from "./media-servers.service";
 import { MediaServersController } from "./media-servers.controller";
+import { RateLimitGuard } from "./rate-limit.guard";
 import { IndexersModule } from "../indexers/indexers.module";
 import { AuthModule } from "../auth/auth.module";
 
@@ -19,8 +21,9 @@ import { AuthModule } from "../auth/auth.module";
     RequestFulfillmentService,
     NotificationService,
     MediaServersService,
+    RateLimitGuard,
   ],
-  controllers: [RequestsController, UsersController, MediaServersController],
-  exports: [RequestsService, RequestFulfillmentService, NotificationService, MediaServersService],
+  controllers: [RequestsController, UsersController, MediaServersController, NotificationsController],
+  exports: [RequestsService, RequestFulfillmentService, NotificationService, MediaServersService, RateLimitGuard],
 })
 export class RequestsModule {}

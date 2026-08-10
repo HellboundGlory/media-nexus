@@ -48,7 +48,7 @@ async-flow debuggability (Rule/observability).
 | Consumer | Behavior |
 |---|---|
 | Audit log | persist `AdminAction`/`Security` and selected media/request events |
-| Notifications | `NotificationProvider` subscriptions match `eventType` (+tags); dispatch async |
+| Notifications | webhook / Discord / Telegram / Email sinks (M5) subscribe per event type; dispatch async with error isolation + manual `test` endpoint |
 | Jobs | event→job mapping (e.g. `RequestApproved` → enqueue search) |
 | Compatibility/webhooks | future push webhooks subscribed to events |
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useEffect } from "react";
 import { HashRouter, Routes, Route } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Movies from "./pages/Movies";
@@ -14,10 +14,38 @@ import SeriesDetail from "./pages/SeriesDetail";
 import Calendar from "./pages/Calendar";
 import System from "./pages/System";
 import { applyTheme, useAppStore } from "./store/useAppStore";
+import { subscribeEvents, eventTypeToQueryKeys } from "./api/events";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 15_000 } },
 });
+
+/** Live SSE subscriber: refreshes affected queries when domain events arrive. */
+function EventBridge() {
+  const qc = useQueryClient();
+  const apiKeyActive = useAppStore((s) => s.apiKey);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    let timer: number | undefined;
+    const loop = async () => {
+      if (ctrl.signal.aborted) return;
+      try {
+        await subscribeEvents({
+          signal: ctrl.signal,
+          onEvent: (event) => {
+            for (const key of eventTypeToQueryKeys(event.type)) void qc.invalidateQueries({ queryKey: [key] });
+          },
+        });
+      } catch { /* stream closed */ }
+      if (!ctrl.signal.aborted) {
+        timer = window.setTimeout(() => void loop(), 4000);
+      }
+    };
+    void loop();
+    return () => { if (timer) clearTimeout(timer); ctrl.abort(); };
+  }, [qc, apiKeyActive]);
+  return null;
+}
 
 export default function App() {
   const theme = useAppStore((s) => s.theme);
@@ -25,6 +53,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <HashRouter>
+        <EventBridge />
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<Dashboard />} />

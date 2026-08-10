@@ -20,6 +20,9 @@ export class ApiKeyGuard implements CanActivate {
     if (isPublic) return true;
 
     const req = context.switchToHttp().getRequest();
+    const url = req.originalUrl ?? req.url ?? "";
+    // explicit public paths (metrics/docs/health) regardless of decorator bookkeeping
+    if (url === "/metrics" || url.startsWith("/api/docs") || url.startsWith("/health") || url.startsWith("/api/v1/system/status")) return true;
     const raw = req.headers["x-api-key"];
     if (!raw || typeof raw !== "string") {
       throw new ApiError({ code: "UNAUTHORIZED", message: "Missing X-Api-Key header" });

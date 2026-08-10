@@ -15,7 +15,8 @@ export class EventsService {
   }
 
   subscribe(type: string, handler: (event: DomainEvent<any>) => void | Promise<void>, async = true): () => void {
-    return this.bus.on(type, handler as never, { async });
+    const off = this.bus.on(type, handler as never, { async });
+    return off;
   }
 
   getBus(): EventBus {

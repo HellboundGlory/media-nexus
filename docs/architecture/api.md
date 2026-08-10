@@ -75,6 +75,10 @@ Implemented in the scaffold (each listed endpoint exists and is covered by tests
 | Watchlist | `GET/POST /api/v1/watchlist`, `DELETE /api/v1/watchlist/:mediaType/:mediaId` | per-user watchlist |
 | Blocklist | `GET/POST /api/v1/content-blocklist`, `DELETE /api/v1/content-blocklist/:mediaType/:mediaId` | per-user content prefs |
 | Media servers | `GET/PUT /api/v1/media-servers`, `POST /api/v1/media-servers/refresh`, `POST /api/v1/media-servers/:index/test` | Jellyfin/memory availability sources |
+| Realtime | `GET /api/v1/events` | Server-Sent Events stream of domain events (auth via X-Api-Key header) |
+| Observability | `GET /metrics` | Prometheus text metrics (public) |
+| Observability | `GET /api/v1/system/audit` | recent audit-log entries |
+| Notifications | `GET/PUT /api/v1/notifications`, `POST /api/v1/notifications/:kind/:index/test` | webhook/discord/telegram/email config + test delivery |
 | Requests | `GET /api/v1/requests` | list requests (with status) |
 | Activity | `GET /api/v1/history` | unified history feed |
 | Activity | `GET /api/v1/queue` | download queue |

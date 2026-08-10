@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import {
@@ -7,6 +7,7 @@ import {
 } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { IndexersService } from "./indexers.service";
+import { RateLimitGuard } from "../requests/rate-limit.guard";
 
 const createDefinitionBody = z.object({
   key: z.string().regex(/^[a-z0-9_-]+$/, "key must be lowercase alphanumeric + -/_"),
@@ -77,7 +78,8 @@ export class IndexersController {
   }
 
   @Post("grabs")
-  @ApiOperation({ summary: "Grab a release into a download client (demo client today)" })
+  @UseGuards(RateLimitGuard)
+  @ApiOperation({ summary: "Grab a release into a download client" })
   grab(@Body(new ZodValidationPipe(grabRequestSchema)) body: GrabRequest) {
     return this.indexers.grab(body);
   }
