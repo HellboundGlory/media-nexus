@@ -66,23 +66,30 @@ API docs.
 **Compatibility implications:** first compat targets (read paths `GET series`, `GET movie`, `system/status`) can begin in
 parallel; Prowlarr-style `search?t=...` proxy becomes reachable once Newznab search exists.
 
-## M2 — Series domain equivalence
+## M2 — Series domain equivalence ✅
 
-**Goal:** TV parity with movies: seasons, episodes, monitoring, episode files, season-pass, calendar.
+**Goal:** TV parity with movies: seasons, episodes, monitoring, episode files, Want/Missing, calendar, RSS auto-grab.
 
-**Features:** series detail (seasons/episodes grid), per-episode monitoring, episode import (multi-episode packs),
-Want/Missing list, calendar, RSS sync job (`media.rssSync`) for automated grabs, quality profile editor shared with movies,
-episode search.
+**Features (done):**
+- Episode release parser + matcher (SxxExx, multi-episode `-E17`/`E17`, "Season X - Episode Y"; article-tolerant series-name matching) in `packages/domain`.
+- Episode API: list per season, bulk-create, monitor toggle; `GET /api/v1/wanted/missing`; `GET /api/v1/calendar`.
+- **Series grab + episode-mapped import:** `Series/Season N/SxxExx` naming, `media_file.episodeIds`, `episode.hasFile`,
+  availability = available when all monitored episodes have files, else partially_available.
+- **`media.rssSync` auto-grab job:** searches monitored missing episodes with an SxxExx tag, filters by exact SxxExx +
+  series name, picks best quality (then seeders), auto-grabs — duplicate-safe (active-queue + recent-grab guards), bounded per run.
+- Web: series detail page (episode grid, monitor toggles, per-episode search & grab, one-click RSS sync), Wanted tab in
+  Activity, Calendar page.
 
-**Dependencies:** M1 (search/grab/import primitive reuse).
+**Tests:** episode parser/matcher units; M2 e2e — series + episodes, `media.rssSync` auto-grabs S01E01 from a mock Newznab,
+mutates through a mock SABnzbd, imports into a real filesystem as `Season 1/...S01E01...`, Wanted drops to the still-missing
+S01E02, Calendar lists the upcoming episode, monitor toggle removes from Wanted. (59 tests green total.)
 
-**Tests:** episode parser/matching unit tests (release title → episode mapping), RSS sync integration.
+**Acceptance criteria (verified):** a monitored series automatically RSS-grabs a missing episode and imports it.
 
-**Acceptance criteria:** a monitored series automatically RSS-grabs a new episode matching its profile and imports it.
+**Remaining M2 follow-ups:** season-pass UX, shared quality-profile editor (movies+TV), scene-numbering + anime absolute
+episode handling, per-downloader import-layout heuristics, and TMDB/TVDB metadata import to auto-populate episodes.
 
-**Upstream references:** Sonarr monitoring/scene-numbering behavior, episode file matching.
-
-**Compatibility implications:** Sonarr `series/episode/episodefile/wanted/calendar` read+write surfaces here.
+**Compatibility implications:** Sonarr `series/episode/episodefile/wanted/calendar` read surfaces have native equivalents.
 
 ## M3 — Indexer management (Prowlarr parity)
 

@@ -45,6 +45,35 @@ export interface Season {
   monitored: boolean;
 }
 
+export interface Episode {
+  id: string;
+  seriesId: string;
+  seasonId: string;
+  episodeNumber: number;
+  absoluteNumber: number | null;
+  title: string;
+  airDateUtc: string | null;
+  monitored: boolean;
+  hasFile: boolean;
+}
+
+export interface WantedEpisode extends Episode {
+  seasonNumber: number;
+  seriesTitle: string;
+}
+
+export interface CalendarEntry {
+  id: string;
+  seriesId: string;
+  seriesTitle: string;
+  seasonNumber: number;
+  episodeNumber: number;
+  title: string;
+  airDateUtc: string;
+  hasFile: boolean;
+  monitored: boolean;
+}
+
 export interface Paged<T> {
   items: T[];
   total: number;

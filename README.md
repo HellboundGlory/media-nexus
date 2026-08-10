@@ -5,7 +5,7 @@ in one coherent, self-hostable application: one UI, one backend, one domain mode
 architecture, one API, Docker-first deployment — with an explicit **compatibility layer** so existing _arr ecosystem
 clients keep working.
 
-> Status: **M0 foundations ✅ + M1 vertical slice ✅** (see [Roadmap](docs/implementation/roadmap.md)). The full pipeline
+> Status: **M0 foundations ✅ + M1 vertical slice ✅ + M2 series automation ✅** (see [Roadmap](docs/implementation/roadmap.md)). The full pipeline
 > now runs against **real indexer + download clients over HTTP** (Newznab/Torznab, SABnzbd, qBittorrent) with a real
 > filesystem import (hardlink→copy), proven by a mock-HTTP + real-files end-to-end test. The in-memory demo providers
 > remain for zero-dependency development.
@@ -67,10 +67,14 @@ See [docs/development/setup.md](docs/development/setup.md) for the full walkthro
   row, and marking the movie/availability available. (The in-memory demo providers still work with zero external services.)
 - **Compatibility layer:** `/api/sonarr/v3/system/status` is translated live; remaining Sonarr/Radarr/Prowlarr/Seerr
   surfaces are explicit **501** (not silently fake) until M6. See [docs/architecture/compatibility.md](docs/architecture/compatibility.md).
+- **TV (M2):** episode release parser + series/episode matcher (SxxExx, multi-episode packs, "Season X - Episode Y"),
+  episode API (list/monitor/bulk-create), Want/Missing + Calendar, series grab with episode-mapped import
+  ("Season N/SxxExx" naming, episode.hasFile, partially-available tracking), and the media.rssSync auto-grab job —
+  monitored missing episodes are searched with an SxxExx tag and the best release is grabbed automatically.
 - **Web UI:** dashboard, movies, series, activity, requests, indexers (real Newznab/Torznab config), download clients
   (SABnzbd/qBittorrent config, health check, import paths) and system pages — dark/light, responsive, real API wiring.
 
-Not built yet (roadmap): TV episode import/monitoring depth, Prowlarr indexer-sync, Seerr
+Not built yet (roadmap): metadata import (TMDB/TVDB) to auto-populate episodes, Prowlarr indexer-sync, Seerr
 Plex/Jellyfin login, PostgreSQL wiring, notifications+SSE, full compat adapters, E2E.
 
 ## Repository layout

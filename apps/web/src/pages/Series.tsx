@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { Search, Plus } from "lucide-react";
 import { api } from "../api/client";
 import type { Series as SeriesRow, Paged } from "../api/types";
@@ -76,7 +77,7 @@ export default function Series() {
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
               {series.data?.items.map((s) => (
                 <tr key={s.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/60">
-                  <td className="px-4 py-2.5 font-medium">{s.title}</td>
+                  <td className="px-4 py-2.5 font-medium"><Link to={`/series/${s.id}`} className="hover:text-violet-600 dark:hover:text-violet-400">{s.title}</Link></td>
                   <td className="px-4 py-2.5 text-zinc-500">{s.firstAirYear ?? "—"}</td>
                   <td className="px-4 py-2.5"><Badge tone="neutral">{s.seriesType}</Badge></td>
                   <td className="px-4 py-2.5"><Badge tone={s.monitored ? "ok" : "warn"}>{s.monitored ? "monitored" : "unmonitored"}</Badge></td>

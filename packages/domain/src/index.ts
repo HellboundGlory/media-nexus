@@ -5,3 +5,4 @@ export * from "./quality";
 export * from "./release";
 export * from "./inputs";
 export * from "./parser";
+export * from "./episodes";

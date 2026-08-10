@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import { extname, join, relative, resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { ApiError, newEntityId } from "@medianexus/shared";
@@ -14,6 +14,7 @@ import { EventTypes } from "@medianexus/events";
 import { ProvidersService, type ConfiguredClient } from "../providers/demo.providers";
 import { LocalStorageProvider, findLargestVideo } from "@medianexus/integrations";
 import type { ClientQueueItem, DownloadClientContract } from "@medianexus/integrations";
+import { parseEpisodeRelease, episodeQueryTag } from "@medianexus/domain";
 
 /**
  * Acquisition: drives download clients, mirrors their queues into download_queue_entry,
@@ -88,19 +89,12 @@ export class AcquisitionService {
     return rows[0] ?? null;
   }
 
-  /** Import a completed download into the library. */
+  /** Import a completed download into the library (movies: single file; series: episode-mapped). */
   async importCompletedEntry(
     entry: (typeof schema.downloadQueueEntry.$inferSelect),
     item: ClientQueueItem,
     provider: DownloadClientContract,
-  ): Promise<{ mediaFileId: string; path: string; size: number; hardlinked: boolean }> {
-    if (entry.mediaType !== "movie") {
-      // series import (episode parsing + media_file-per-episode) is M2
-      throw new ApiError({ code: "UNPROCESSABLE", message: "Series import not implemented until M2" });
-    }
-    const movie = await this.db.select().from(schema.movie).where(eq(schema.movie.id, entry.mediaId)).limit(1);
-    if (!movie[0]) throw ApiError.notFound("movie", entry.mediaId);
-
+  ): Promise<{ mediaFileId: string; path: string; size: number; hardlinked: boolean; episodes?: string[] }> {
     const cfg = await this.config.get();
     const downloadsRoot = cfg["paths.downloads"] || resolve(process.cwd(), "data", "downloads");
     const source = await this.resolveSource(item, entry, downloadsRoot);
@@ -108,57 +102,151 @@ export class AcquisitionService {
       throw new Error(`No video file found for "${entry.title}" under ${downloadsRoot}`);
     }
 
-    const root = this.resolveRoot(cfg, movie[0].rootFolderPath, downloadsRoot);
+    if (entry.mediaType === "movie") return this.importMovie(entry, source, cfg, item, provider);
+    return this.importSeries(entry, source, cfg, provider, item);
+  }
+
+  private async importMovie(
+    entry: (typeof schema.downloadQueueEntry.$inferSelect),
+    source: { path: string; size: number },
+    cfg: RuntimeSettings,
+    item: ClientQueueItem,
+    provider: DownloadClientContract,
+  ): Promise<{ mediaFileId: string; path: string; size: number; hardlinked: boolean }> {
+    const movie = await this.db.select().from(schema.movie).where(eq(schema.movie.id, entry.mediaId)).limit(1);
+    if (!movie[0]) throw ApiError.notFound("movie", entry.mediaId);
+
+    const root = movie[0].rootFolderPath || cfg["paths.rootFolders"]?.[0]?.path || resolve(process.cwd(), "data", "media", "movies");
     const parsed = parseTitleForFolder(movie[0].title, movie[0].releaseDate ?? undefined);
     const targetDir = join(root, `${parsed.title} (${parsed.year})`);
     await this.storage.ensureDir(targetDir);
     const targetFile = join(targetDir, `${parsed.title} (${parsed.year})${extname(source.path)}`);
     const hardlinked = await this.storage.hardlink(source.path, targetFile);
-    if (!existsSync(targetFile)) {
-      // fallback: plain copy (hardlink impl copies as fallback, so this is defensive)
-      await this.storage.copy(source.path, targetFile);
-    }
+    if (!existsSync(targetFile)) await this.storage.copy(source.path, targetFile);
     const size = statSync(targetFile).size;
 
     const now = new Date().toISOString();
     const mediaFileId = newEntityId("mf");
-    const quality = (entry.data as Record<string, unknown>)?.quality
-      ? ((entry.data as Record<string, unknown>).quality as { source: string; resolution: string; edition: string })
-      : { source: "unknown", resolution: "unknown", edition: "" };
+    const quality = spQuality(entry);
 
     await this.db.insert(schema.mediaFile).values({
-      id: mediaFileId,
-      mediaType: "movie",
-      mediaId: movie[0].id,
-      episodeIds: [],
-      relativePath: relative(root, targetFile),
-      size,
-      quality,
-      dateAdded: now,
+      id: mediaFileId, mediaType: "movie", mediaId: movie[0].id, episodeIds: [],
+      relativePath: relative(root, targetFile), size, quality, dateAdded: now,
     });
     await this.db.update(schema.movie).set({ hasFile: true, updatedAt: now }).where(eq(schema.movie.id, movie[0].id));
-    await this.db.update(schema.mediaAvailability)
-      .set({ status: "available", lastAvailabilitySyncAt: now })
-      .where(eq(schema.mediaAvailability.mediaId, movie[0].id))
-      .catch(() => {});
-    await this.db.insert(schema.historyEntry).values({
-      id: newEntityId("hist"),
-      mediaType: "movie",
-      mediaId: movie[0].id,
-      action: "import_completed",
-      data: { title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked },
-      createdAt: now,
+    await this.markAvailability("movie", movie[0].id, now);
+    await this.insertHistory("movie", movie[0].id, now, { title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked });
+    await this.removeQueueEntry(entry, item, provider, now);
+    this.emitImport("movie", movie[0].id, movie[0].title, item.downloadId, targetFile, mediaFileId);
+    return { mediaFileId, path: targetFile, size, hardlinked };
+  }
+
+  private async importSeries(
+    entry: (typeof schema.downloadQueueEntry.$inferSelect),
+    source: { path: string; size: number },
+    cfg: RuntimeSettings,
+    provider: DownloadClientContract,
+    item: ClientQueueItem,
+  ): Promise<{ mediaFileId: string; path: string; size: number; hardlinked: boolean; episodes: string[] }> {
+    const series = await this.db.select().from(schema.series).where(eq(schema.series.id, entry.mediaId)).limit(1);
+    if (!series[0]) throw ApiError.notFound("series", entry.mediaId);
+
+    const releaseTitle = (entry.data as { releaseTitle?: string })?.releaseTitle ?? entry.title;
+    const match = parseEpisodeRelease(releaseTitle);
+    const root = series[0].rootFolderPath || cfg["paths.rootFolders"]?.[0]?.path || resolve(process.cwd(), "data", "media", "tv");
+    const safeSeries = series[0].title.replace(/[^A-Za-z0-9 _()[\]-]/g, "").trim() || "Series";
+
+    let episodeIds: string[] = [];
+    let targetDir: string;
+    let baseName: string;
+
+    if (match.season !== undefined && match.episodes.length > 0) {
+      // resolve matching episode rows (any existing episode with those numbers)
+      const rows = await this.db.select().from(schema.episode).where(and(
+        eq(schema.episode.seriesId, series[0].id),
+        inArray(sql`${schema.episode.episodeNumber}`, match.episodes),
+      ));
+      episodeIds = rows
+        .filter((r) => r.monitored || !episodeIds.length || true)
+        .map((r) => r.id);
+      // season folder from matched season number
+      targetDir = join(root, safeSeries, `Season ${match.season}`);
+      const tag = episodeQueryTag(match.season, match.episodes[0]) + (match.episodes.length > 1 ? `-E${pad2(match.episodes[match.episodes.length - 1])}` : "");
+      baseName = `${safeSeries} - ${tag}`;
+    } else {
+      targetDir = join(root, safeSeries, "Season Unknown");
+      baseName = safeSeries;
+    }
+
+    await this.storage.ensureDir(targetDir);
+    const targetFile = join(targetDir, `${baseName}${extname(source.path)}`);
+    const hardlinked = await this.storage.hardlink(source.path, targetFile);
+    if (!existsSync(targetFile)) await this.storage.copy(source.path, targetFile);
+    const size = statSync(targetFile).size;
+
+    const now = new Date().toISOString();
+    const mediaFileId = newEntityId("mf");
+    await this.db.insert(schema.mediaFile).values({
+      id: mediaFileId, mediaType: "series", mediaId: series[0].id, episodeIds,
+      relativePath: relative(root, targetFile), size, quality: spQuality(entry), dateAdded: now,
     });
+
+    const updatedEps: string[] = [];
+    for (const epId of episodeIds) {
+      await this.db.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, epId));
+      updatedEps.push(epId);
+    }
+    await this.markAvailability("series", series[0].id, now);
+    await this.insertHistory("series", series[0].id, now, {
+      title: releaseTitle, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked,
+      episodeMatched: episodeIds.length > 0, episodes: match.episodes, season: match.season,
+    });
+    await this.removeQueueEntry(entry, item, provider, now);
+    this.emitImport("series", series[0].id, series[0].title, item.downloadId, targetFile, mediaFileId, { episodes: match.episodes, season: match.season });
+    return { mediaFileId, path: targetFile, size, hardlinked, episodes: updatedEps };
+  }
+
+  private async markAvailability(mediaType: "movie" | "series", mediaId: string, now: string): Promise<void> {
+    if (mediaType === "movie") {
+      await this.db.update(schema.mediaAvailability)
+        .set({ status: "available", lastAvailabilitySyncAt: now })
+        .where(eq(schema.mediaAvailability.mediaId, mediaId)).catch(() => {});
+      return;
+    }
+    const missing = await this.db.select({ n: count() }).from(schema.episode)
+      .where(and(eq(schema.episode.seriesId, mediaId), eq(schema.episode.monitored, true), eq(schema.episode.hasFile, false)));
+    const status = Number(missing[0]?.n ?? 0) === 0 ? "available" : "partially_available";
+    await this.db.update(schema.mediaAvailability)
+      .set({ status, lastAvailabilitySyncAt: now })
+      .where(eq(schema.mediaAvailability.mediaId, mediaId)).catch(() => {});
+  }
+
+  private async insertHistory(mediaType: string, mediaId: string, now: string, data: Record<string, unknown>): Promise<void> {
+    await this.db.insert(schema.historyEntry).values({
+      id: newEntityId("hist"), mediaType, mediaId, action: "import_completed", data, createdAt: now,
+    });
+  }
+
+  private async removeQueueEntry(
+    entry: (typeof schema.downloadQueueEntry.$inferSelect),
+    item: ClientQueueItem,
+    provider: DownloadClientContract,
+    now: string,
+  ): Promise<void> {
     await this.db.update(schema.downloadQueueEntry).set({ status: "imported", progress: 100, updatedAt: now }).where(eq(schema.downloadQueueEntry.id, entry.id));
     await provider.remove(item.downloadId).catch(() => {});
+  }
 
+  private emitImport(
+    mediaType: string, mediaId: string, title: string, downloadId: string, path: string, mediaFileId: string,
+    extra: Record<string, unknown> = {},
+  ): void {
     this.events.publish(
       EventTypes.ImportCompleted,
-      { mediaId: movie[0].id, title: movie[0].title, downloadId: item.downloadId, path: targetFile, mediaFileId },
-      { aggType: "movie", aggId: movie[0].id },
+      { mediaId, title, downloadId, path, mediaFileId, ...extra },
+      { aggType: mediaType as never, aggId: mediaId },
     );
-    this.logger.log(`imported "${movie[0].title}" -> ${targetFile}${hardlinked ? " (hardlink)" : " (copy)"}`);
-    return { mediaFileId, path: targetFile, size, hardlinked };
+    this.logger.log(`imported "${title}" -> ${path}`);
   }
 
   /** Locate the completed video file for an item across known layouts. */
@@ -215,4 +303,14 @@ function isVideo(path: string): boolean {
 
 function statSyncSafe(path: string): number {
   try { return statSync(path).size; } catch { return 0; }
+}
+
+function spQuality(entry: { data: Record<string, unknown> }): { source: string; resolution: string; edition: string } {
+  const q = entry.data?.quality as { source?: string; resolution?: string; edition?: string } | undefined;
+  return q ? { source: q.source ?? "unknown", resolution: q.resolution ?? "unknown", edition: q.edition ?? "" }
+           : { source: "unknown", resolution: "unknown", edition: "" };
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
 }

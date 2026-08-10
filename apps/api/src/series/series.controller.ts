@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: MIT
-import { Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Put, Query } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import { createSeriesSchema, type CreateSeries } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { SeriesService } from "./series.service";
+
+const episodesQuery = z.object({ season: z.coerce.number().int().min(0).optional() });
+const createEpisodesBody = z.object({
+  seasonNumber: z.number().int().min(0),
+  episodeNumbers: z.array(z.number().int().min(1)).min(1),
+  title: z.string().optional(),
+  airDateUtc: z.string().optional(),
+});
+const setMonitoredBody = z.object({ monitored: z.boolean() });
 
 const listQuerySchema = z.object({
   search: z.string().optional(),
@@ -45,5 +54,23 @@ export class SeriesController {
   @ApiOperation({ summary: "Remove a series" })
   remove(@Param("id") id: string) {
     return this.series.remove(id);
+  }
+
+  @Get(":id/episodes")
+  @ApiOperation({ summary: "Episodes of a series (optional season filter)" })
+  episodes(@Param("id") id: string, @Query(new ZodValidationPipe(episodesQuery)) q: { season?: number }) {
+    return this.series.episodes(id, q.season);
+  }
+
+  @Post(":id/episodes")
+  @ApiOperation({ summary: "Bulk-create episodes for a season (manual; metadata import automates later)" })
+  createEpisodes(@Param("id") id: string, @Body(new ZodValidationPipe(createEpisodesBody)) body: z.infer<typeof createEpisodesBody>) {
+    return this.series.createEpisodes(id, body);
+  }
+
+  @Put(":id/episodes/:episodeId")
+  @ApiOperation({ summary: "Monitor/unmonitor an episode" })
+  setMonitored(@Param("id") id: string, @Param("episodeId") episodeId: string, @Body(new ZodValidationPipe(setMonitoredBody)) body: { monitored: boolean }) {
+    return this.series.setEpisodeMonitored(id, episodeId, body.monitored);
   }
 }

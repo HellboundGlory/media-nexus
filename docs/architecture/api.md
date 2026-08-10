@@ -65,6 +65,9 @@ Implemented in the scaffold (each listed endpoint exists and is covered by tests
 | Movies | `GET /api/v1/movies`, `GET /api/v1/movies/:id`, `POST /api/v1/movies`, `DELETE /api/v1/movies/:id` | movie library CRUD |
 | Series | `GET /api/v1/series`, `GET /api/v1/series/:id`, `POST /api/v1/series`, `DELETE /api/v1/series/:id` | series library CRUD |
 | Series | `GET /api/v1/series/:id/seasons` | seasons for a series |
+| Series | `GET /api/v1/series/:id/episodes`, `POST /api/v1/series/:id/episodes`, `PUT /api/v1/series/:id/episodes/:episodeId` | episode list / bulk-create / monitor toggle (M2) |
+| Series | `GET /api/v1/wanted/missing` | monitored episodes without files (Want/Missing) |
+| Series | `GET /api/v1/calendar` | upcoming air-dated episodes |
 | Auth | `GET /api/v1/auth/whoami` | identity of the API key owner |
 | Requests | `POST /api/v1/requests` | user request (movie/series) → gets `media_availability` + `request` rows |
 | Requests | `GET /api/v1/requests` | list requests (with status) |

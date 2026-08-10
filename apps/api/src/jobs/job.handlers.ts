@@ -9,6 +9,7 @@ import type { Db } from "@medianexus/database";
 import { JobsService } from "./jobs.service";
 import { EventsService } from "../events/events.service";
 import { AcquisitionService } from "../acquisition/acquisition.service";
+import { RssSyncService } from "../acquisition/rss-sync.service";
 
 /** Registration of the built-in job handlers (kept small; more land per milestone). */
 @Injectable()
@@ -18,6 +19,7 @@ export class JobHandlers implements OnModuleInit {
     private readonly jobs: JobsService,
     private readonly events: EventsService,
     private readonly acquisition: AcquisitionService,
+    private readonly rssSync: RssSyncService,
   ) {}
 
   onModuleInit(): void {
@@ -25,6 +27,7 @@ export class JobHandlers implements OnModuleInit {
     this.jobs.register("discovery.indexerRefresh", () => this.indexerRefresh());
     this.jobs.register("acquisition.downloadMonitor", (ctx) => this.downloadMonitor(ctx));
     this.jobs.register("media.searchForRequest", (ctx) => this.searchForRequest(ctx));
+    this.jobs.register("media.rssSync", () => this.rssSync.run());
     // event -> job wiring: an approved request kicks a search job (real search in M1)
     this.events.subscribe(EventTypes.RequestApproved, (event) => {
       const payload = (event.payload ?? {}) as { mediaId?: string; mediaType?: string };

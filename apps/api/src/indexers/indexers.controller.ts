@@ -12,6 +12,8 @@ const searchSchema = z.object({
   mediaType: z.enum(["movie", "series"]),
   mediaId: z.string(),
   query: z.string().optional(),
+  seasons: z.array(z.number().int().min(0)).optional(),
+  episodes: z.array(z.number().int().min(1)).optional(),
 });
 
 @ApiTags("indexers")

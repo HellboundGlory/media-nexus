@@ -32,6 +32,9 @@ export const searchQuerySchema = z.object({
   mediaType: z.enum(["movie", "series"]),
   mediaId: z.string(),
   query: z.string().optional(),
+  /** for series: restrict to specific seasons/episodes (builds an "SxxExx" query) */
+  seasons: z.array(z.number().int().min(0)).optional(),
+  episodes: z.array(z.number().int().min(1)).optional(),
   categories: z.array(z.number()).default([]),
   limit: z.number().int().positive().max(100).default(20),
 });

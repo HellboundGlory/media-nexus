@@ -195,6 +195,8 @@ describe("M1: real indexer + download client end-to-end (mock HTTP + real filesy
   let newznabUrl: string;
   let sabUrl: string;
   let mediaRoot: string;
+  let m1IdxId: string;
+  let m1DcId: string;
   const servers: import("node:http").Server[] = [];
 
   beforeAll(async () => {
@@ -252,6 +254,8 @@ describe("M1: real indexer + download client end-to-end (mock HTTP + real filesy
 
   afterAll(async () => {
     for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
+    if (m1IdxId) await auth(request(http).delete(`/api/v1/indexers/${m1IdxId}`)).catch(() => {});
+    if (m1DcId) await auth(request(http).delete(`/api/v1/download-clients/${m1DcId}`)).catch(() => {});
   });
 
   it("searches a real newznab indexer, grabs via SABnzbd, and imports into the library", async () => {
@@ -264,6 +268,7 @@ describe("M1: real indexer + download client end-to-end (mock HTTP + real filesy
       settings: { baseUrl: newznabUrl, apiKey: "mock-api-key", categories: [2000, 5000] },
     }));
     expect(idx.status).toBe(201);
+    m1IdxId = idx.body.id;
 
     const dc = await auth(request(http).post("/api/v1/download-clients").send({
       name: "Mock SABnzbd", implementation: "sabnzbd", kind: "usenet", priority: 1,
@@ -271,6 +276,7 @@ describe("M1: real indexer + download client end-to-end (mock HTTP + real filesy
     }));
     expect(dc.status).toBe(201);
     const dcId = dc.body.id;
+    m1DcId = dcId;
 
     const dcOk = await auth(request(http).post(`/api/v1/download-clients/${dcId}/test`));
     expect(dcOk.status).toBe(201);
@@ -319,5 +325,148 @@ describe("M1: real indexer + download client end-to-end (mock HTTP + real filesy
 
     const q2 = await auth(request(http).get("/api/v1/queue"));
     expect(q2.body.items.find((i: any) => i.downloadId === "NZO-M1")?.status).toBe("imported");
+  });
+});
+
+
+describe("M2: series auto-grab via RSS sync + episode import (mock HTTP + real filesystem)", () => {
+  let newznabUrl: string;
+  let sabUrl: string;
+  let mediaRoot: string;
+  let m2IdxId: string;
+  let m2DcId: string;
+  const servers: import("node:http").Server[] = [];
+
+  beforeAll(async () => {
+    const { mkdtempSync, writeFileSync, mkdirSync } = await import("node:fs");
+    const { createServer } = await import("node:http");
+    const { join: j } = await import("node:path");
+    const { tmpdir: osTmp } = await import("node:os");
+    const base = mkdtempSync(j(osTmp(), "mn-m2-"));
+    const downloadsRoot = j(base, "downloads");
+    mediaRoot = j(base, "library");
+    mkdirSync(downloadsRoot, { recursive: true });
+    mkdirSync(mediaRoot, { recursive: true });
+
+    const releaseTitle = "The.Test.NS.S01E01.720p.WEB-DL.x264-GROUP";
+    const nz = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        channel: { title: "mock", item: [{
+          title: releaseTitle, guid: "nz-m2-1", link: "https://mock/getnzb/1.nzb",
+          "newznab:attr": [{ name: "size", value: "2200000000" }, { name: "seeders", value: "9" }],
+        }] },
+      }));
+    });
+    const sab = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      const u = new URL(_req.url ?? "/", "http://x");
+      const mode = u.searchParams.get("mode");
+      if (mode === "addurl") res.end(JSON.stringify({ status: true, nzo_ids: ["NZO-M2"] }));
+      else if (mode === "queue") res.end(JSON.stringify({ queue: { slots: [] } }));
+      else if (mode === "history") res.end(JSON.stringify({ history: { slots: [{ nzo_id: "NZO-M2", filename: releaseTitle, status: "Completed" }] } }));
+      else res.end(JSON.stringify({ status: false }));
+    });
+    await new Promise<void>((r) => nz.listen(0, "127.0.0.1", () => r()));
+    await new Promise<void>((r) => sab.listen(0, "127.0.0.1", () => r()));
+    servers.push(nz, sab);
+    newznabUrl = `http://127.0.0.1:${(nz.address() as any).port}`;
+    sabUrl = `http://127.0.0.1:${(sab.address() as any).port}`;
+
+    // a "downloaded" file for the importer to pick up
+    const dir = j(downloadsRoot, "complete", releaseTitle);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(j(dir, `${releaseTitle}.mkv`), Buffer.alloc(2048));
+
+    const r = await auth(request(http).put("/api/v1/system/config").send({
+      "paths.downloads": downloadsRoot,
+      "paths.rootFolders": [{ path: mediaRoot }],
+    }));
+    expect(r.status).toBe(200);
+  });
+
+  afterAll(async () => {
+    for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
+    if (m2IdxId) await auth(request(http).delete(`/api/v1/indexers/${m2IdxId}`)).catch(() => {});
+    if (m2DcId) await auth(request(http).delete(`/api/v1/download-clients/${m2DcId}`)).catch(() => {});
+  });
+
+  it("auto-grabs a missing episode via rssSync, imports it, and updates want/missing + availability", async () => {
+    // configure indexer + download client
+    const idx = await auth(request(http).post("/api/v1/indexers").send({
+      definitionKey: "generic-newznab", name: "Mock NZB M2", protocol: "usenet",
+      settings: { baseUrl: newznabUrl, apiKey: "k", categories: [5000] },
+    }));
+    expect(idx.status).toBe(201);
+    m2IdxId = idx.body.id;
+    const dc = await auth(request(http).post("/api/v1/download-clients").send({
+      name: "Mock SAB M2", implementation: "sabnzbd", kind: "usenet", priority: 1,
+      settings: { host: sabUrl, apiKey: "k", category: "tv" },
+    }));
+    expect(dc.status).toBe(201);
+    m2DcId = dc.body.id;
+
+    // series with episodes: S01E01 (to grab) and S01E02 (to stay missing; upcoming)
+    const series = await auth(request(http).post("/api/v1/series").send({ title: "The Test NS", tvdbId: 999001, firstAirYear: 2026 }));
+    expect(series.status).toBe(201);
+    const sid = series.body.id;
+
+    const ep1 = await auth(request(http).post(`/api/v1/series/${sid}/episodes`).send({ seasonNumber: 1, episodeNumbers: [1], airDateUtc: new Date(Date.now() - 86400000).toISOString() }));
+    expect(ep1.status).toBe(201);
+    const tom = new Date(Date.now() + 86400000).toISOString();
+    const ep2 = await auth(request(http).post(`/api/v1/series/${sid}/episodes`).send({ seasonNumber: 1, episodeNumbers: [2], airDateUtc: tom }));
+    expect(ep2.status).toBe(201);
+
+    // wanted/missing lists both episodes
+    const wantedBefore = await auth(request(http).get("/api/v1/wanted/missing"));
+    expect(wantedBefore.body.filter((e: any) => e.seriesId === sid).length).toBe(2);
+
+    // run RSS sync -> should auto-grab S01E01 (mock returns only that release)
+    const rss = await auth(request(http).post("/api/v1/system/commands/media.rssSync"));
+    expect(rss.status).toBe(201);
+
+    // run the download monitor to import the completed download
+    await auth(request(http).post("/api/v1/system/commands/acquisition.downloadMonitor"));
+
+    let ep1File = false;
+    for (let i = 0; i < 30 && !ep1File; i++) {
+      const eps = await auth(request(http).get(`/api/v1/series/${sid}/episodes`));
+      ep1File = eps.body.find((e: any) => e.episode.episodeNumber === 1)?.episode.hasFile === true;
+      if (!ep1File) { await auth(request(http).post("/api/v1/system/commands/acquisition.downloadMonitor")); await new Promise((rq) => setTimeout(rq, 150)); }
+    }
+    expect(ep1File).toBe(true);
+
+    // availability is observable via wanted/missing: only S01E02 remains
+    const wantedAfter = await auth(request(http).get("/api/v1/wanted/missing"));
+    const remaining = wantedAfter.body.filter((e: any) => e.seriesId === sid);
+    expect(remaining.length).toBe(1);
+    expect(remaining[0].episodeNumber).toBe(2);
+
+    // history has grabbed + import_completed; media file tied to the episode
+    const hist = await auth(request(http).get("/api/v1/history"));
+    const actions = hist.body.items.map((h: any) => h.action);
+    expect(actions).toContain("grabbed");
+    expect(actions).toContain("import_completed");
+
+    // physical file landed in <mediaRoot>/The Test NS/Season 1/
+    const { readdirSync, existsSync } = await import("node:fs");
+    const { join: j } = await import("node:path");
+    const seasonDir = j(mediaRoot, "The Test NS", "Season 1");
+    expect(existsSync(seasonDir)).toBe(true);
+    const files = readdirSync(seasonDir);
+    expect(files.length).toBe(1);
+    expect(files[0]).toContain("S01E01");
+
+    // calendar includes the upcoming episode
+    const cal = await auth(request(http).get(`/api/v1/calendar?start=${new Date(Date.now() - 86400000).toISOString()}&end=${new Date(Date.now() + 30 * 86400000).toISOString()}`));
+    expect(cal.body.some((e: any) => e.seriesId === sid && e.episodeNumber === 2)).toBe(true);
+
+    // monitor toggle: unmonitor S01E02 -> removed from wanted
+    const epRows = await auth(request(http).get(`/api/v1/series/${sid}/episodes`));
+    const ep2Id = epRows.body.find((e: any) => e.episode.episodeNumber === 2).episode.id;
+    const mono = await auth(request(http).put(`/api/v1/series/${sid}/episodes/${ep2Id}`).send({ monitored: false }));
+    expect(mono.status).toBe(200);
+    const wantedFinal = await auth(request(http).get("/api/v1/wanted/missing"));
+    expect(wantedFinal.body.some((e: any) => e.id === ep2Id)).toBe(false);
   });
 });

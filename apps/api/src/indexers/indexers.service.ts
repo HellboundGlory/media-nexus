@@ -14,6 +14,7 @@ import { newznabSettingsSchema, torznabSettingsSchema, memoryIndexerSettingsSche
 import { ConfigService } from "../system/config.service";
 import { join, resolve } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
+import { episodeQueryTag } from "@medianexus/domain";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   memory: memoryIndexerSettingsSchema,
@@ -82,18 +83,16 @@ export class IndexersService {
     return { removed: id };
   }
 
-  /** Search all enabled indexers through their providers (real HTTP for newznab/torznab). */
-  async search(input: { mediaType: "movie" | "series"; mediaId: string; query?: string }) {
+  /** Search all enabled indexers through their providers (real HTTP for newznab/torznab).
+   *  For series, an optional episode target augments the query with an SxxExx tag. */
+  async search(input: { mediaType: "movie" | "series"; mediaId: string; query?: string; seasons?: number[]; episodes?: number[]; limit?: number }) {
+    const limit = input.limit ?? 20;
+    const query = this.buildQuery(input.query, input.seasons, input.episodes);
     const configured = await this.providers.configuredIndexers();
     const results: Release[] = [];
     for (const { row, provider } of configured) {
       try {
-        const releases = await provider.search({
-          mediaType: input.mediaType,
-          query: input.query,
-          categories: undefined,
-          limit: 20,
-        });
+        const releases = await provider.search({ mediaType: input.mediaType, query, categories: undefined, limit });
         for (const r of releases) {
           results.push({ ...r, indexerId: row.id, indexerName: row.name });
         }
@@ -101,30 +100,40 @@ export class IndexersService {
         this.events.publish(EventTypes.IndexerFailed, { indexerId: row.id, error: (err as Error).message }, { aggType: "indexer", aggId: row.id });
       }
     }
-    return { mediaType: input.mediaType, mediaId: input.mediaId, releases: results };
+    return { mediaType: input.mediaType, mediaId: input.mediaId, query, releases: results };
   }
 
-  /** Grab a release: choose a download client by protocol, add it, and mirror into the unified queue. */
-  async grab(input: { mediaType: "movie" | "series"; mediaId: string; releaseId: string; indexerId?: string; downloadClientId?: string }) {
-    // locate the release by searching configured indexers
-    // Re-run the search (using the media title as the query) to resolve the release id.
-    const configured = await this.providers.configuredIndexers();
-    const query = await this.mediaTitle(input.mediaType, input.mediaId);
-    let release: Release | null = null;
-    for (const { row, provider } of configured) {
-      let found: Release | null = null;
-      if (row.id === input.indexerId || !input.indexerId) {
-        const releases = await provider.search({ mediaType: input.mediaType, query }).catch(() => []);
-        found = releases.find((r) => r.id === input.releaseId) ?? null;
-        if (!found) {
-          // fall back to catalog/RSS search (some providers only return the release there)
-          const all = await provider.search({ mediaType: input.mediaType, query: "" }).catch(() => []);
-          found = all.find((r) => r.id === input.releaseId) ?? null;
+  private buildQuery(base: string | undefined, seasons?: number[], episodes?: number[]): string {
+    const parts = [base?.trim()].filter(Boolean);
+    const s = seasons?.[0];
+    const e = episodes?.[0];
+    if (s !== undefined && e !== undefined) parts.push(episodeQueryTag(s, e));
+    return parts.join(" ");
+  }
+
+  /** Grab a release: choose a download client by protocol, add it, and mirror into the unified queue.
+   *  When `release` is supplied (RSS auto-grab) the search round-trip to re-resolve the id is skipped. */
+  async grab(input: { mediaType: "movie" | "series"; mediaId: string; releaseId: string; indexerId?: string; downloadClientId?: string; release?: Release }) {
+    let release: Release | null = input.release ?? null;
+    if (!release) {
+      // Re-run the search (using the media title as the query) to resolve the release id.
+      const configured = await this.providers.configuredIndexers();
+      const query = await this.mediaTitle(input.mediaType, input.mediaId);
+      for (const { row, provider } of configured) {
+        let found: Release | null = null;
+        if (row.id === input.indexerId || !input.indexerId) {
+          const releases = await provider.search({ mediaType: input.mediaType, query }).catch(() => []);
+          found = releases.find((r) => r.id === input.releaseId) ?? null;
+          if (!found) {
+            // fall back to catalog/RSS search (some providers only return the release there)
+            const all = await provider.search({ mediaType: input.mediaType, query: "" }).catch(() => []);
+            found = all.find((r) => r.id === input.releaseId) ?? null;
+          }
         }
+        if (found) { release = { ...found, indexerId: row.id, indexerName: row.name }; break; }
       }
-      if (found) { release = { ...found, indexerId: row.id, indexerName: row.name }; break; }
+      if (!release) throw ApiError.notFound("release", input.releaseId);
     }
-    if (!release) throw ApiError.notFound("release", input.releaseId);
 
     const client = await this.providers.pickDownloadClient(release.protocol as "usenet" | "torrent", input.downloadClientId);
     const { downloadId } = await client.provider.addRelease({ release, category: input.mediaType });
