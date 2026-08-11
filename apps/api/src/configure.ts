@@ -19,7 +19,7 @@ export function configureApp(app: INestApplication): void {
   const config = new DocumentBuilder()
     .setTitle("MediaNexus API")
     .setDescription("Unified media automation platform — native API (compat APIs are separate).")
-    .setVersion("1.0.0")
+    .setVersion("1.1.0")
     .addApiKey({ type: "apiKey", name: "x-api-key", in: "header" }, "X-Api-Key")
     .build();
   const document = SwaggerModule.createDocument(app, config);

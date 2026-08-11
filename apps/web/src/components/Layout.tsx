@@ -61,7 +61,7 @@ export default function Layout() {
         </nav>
         <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
           <div className="flex items-center justify-between rounded-lg px-2 py-1">
-            <span className="flex items-center gap-2 text-xs text-zinc-500"><KeyRound className="h-3.5 w-3.5" /> v1.0.0</span>
+            <span className="flex items-center gap-2 text-xs text-zinc-500"><KeyRound className="h-3.5 w-3.5" /> v1.1.0</span>
             <button
               onClick={() => { const next = theme === "dark" ? "light" : "dark"; setTheme(next); applyTheme(next); }}
               className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
