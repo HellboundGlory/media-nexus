@@ -6,7 +6,7 @@ import { APP_NAME, parseEnv } from "@medianexus/shared";
 export class SystemStatusService {
   readonly startedAt: Date;
   readonly appName = APP_NAME;
-  readonly version = "1.1.1";
+  readonly version = "1.1.2";
 
   constructor() {
     this.startedAt = new Date();

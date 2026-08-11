@@ -1,6 +1,6 @@
 {
   "name": "media-nexus",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": true,
   "description": "MediaNexus \u2014 unified media automation platform (Prowlarr + Sonarr + Radarr, plus TMDB discover/Plex watchlist from Seerr, in one coherent application).",
   "license": "MIT",
@@ -36,5 +36,8 @@
     "prettier": "^3.9.6",
     "tsx": "^4.23.12",
     "@eslint/js": "^10.0.1"
+  },
+  "overrides": {
+    "js-yaml": "^5.2.2"
   }
 }

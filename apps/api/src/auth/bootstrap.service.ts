@@ -8,7 +8,8 @@ import { AuthService } from "./auth.service";
 
 /**
  * First-run bootstrap: mints the single system API key used to access the app.
- * Only its hash is persisted; the raw value is printed once to logs.
+ * The raw value is printed once to logs; it can also be revealed later via
+ * System → API key (see AuthService.revealApiKey).
  * Tests/dev may pin MEDIA_NEXUS_BOOTSTRAP_KEY.
  */
 @Injectable()
@@ -30,7 +31,7 @@ export class BootstrapService implements OnModuleInit {
     this.logger.warn("=====================================================");
     this.logger.warn(" MediaNexus first-run bootstrap");
     this.logger.warn(`   API key : ${rawKey}   (send as X-Api-Key header)`);
-    this.logger.warn(" Store securely. Only its hash is persisted.");
+    this.logger.warn(" Store securely. You can view/copy it again later from System → API key.");
     this.logger.warn("=====================================================");
   }
 }

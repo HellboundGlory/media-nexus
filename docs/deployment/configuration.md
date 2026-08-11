@@ -38,6 +38,9 @@ Settings are validated against a zod schema in `packages/shared/src/config.ts` b
 
 ## Secrets handling
 
-- API keys: hashed (SHA-256) at rest; fetched by hash lookup at request time; never returned.
-- Provider credentials (indexers/download clients/notifications): encrypted with `MEDIA_NEXUS_SECRET` before persistence.
+- API keys: hashed (SHA-256) at rest for auth lookups, plus an AES-256-GCM copy encrypted with `MEDIA_NEXUS_SECRET`
+  so the raw value can be revealed again later (System → API key) without rotating it.
+- Provider credentials (indexers/download clients/notifications): **not encrypted at rest** — stored as plain JSON in
+  the `settings` column (see [docs/security.md](../security.md) hardening checklist). Redacted in native API
+  *responses*, but readable directly from the database file.
 - Log redaction: structured logger redacts fields matching `/key|token|pass|secret|api/` in `settings` payloads.

@@ -37,12 +37,15 @@ Paths in the deploy are **environment-driven**: `DATABASE_URL`, `MEDIA_NEXUS_DAT
 - Compose `stop_grace_period` gives jobs time to settle; jobs are claim-lease based so a killed worker is recoverable on
   restart.
 
+## Debugging: no shell in the runtime image
+
+The runtime stage is a [distroless](https://github.com/GoogleContainerTools/distroless) image (no shell, no package
+manager) to keep the published image's vulnerability surface small — `docker exec -it app sh` (or `bash`) will not
+work. Use `docker logs app`, the `/health/live` and `/health/ready` endpoints, and `/metrics` (Prometheus) instead.
+
 ## Do not put this behind a public reverse proxy
 
 MediaNexus has no login beyond a single system API key (see [docs/security.md](../security.md)) — it is designed for
 LAN/private-network use, not for public exposure. There is deliberately no reverse-proxy/HTTPS-termination example in
 this repo; if you choose to expose it anyway (VPN endpoint, Tailscale, etc.), that is an operator decision outside the
 scope of what MediaNexus documents or supports.
-
-> Note: the current dev environment has no Docker daemon; the Dockerfile/compose are authored and `docker compose
-> config`-validation-compatible, and exercised by the CI container build before we claim them verified end-to-end.

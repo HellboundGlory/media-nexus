@@ -23,9 +23,13 @@ This is the security guide + hardening baseline. **This is an engineering docume
 
 ## Secrets handling (implemented)
 
-- API keys stored **hashed (SHA-256)**; raw key shown once at creation. There are no passwords to hash — no user
-  accounts exist.
-- `MEDIA_NEXUS_SECRET` (encryption key) from env or `MEDIA_NEXUS_SECRET_FILE` (Docker secrets).
+- API keys stored **hashed (SHA-256)** for auth lookups, plus an **AES-256-GCM encrypted copy** (keyed from
+  `MEDIA_NEXUS_SECRET`) so the raw value can be revealed again later from System → API key without rotating it
+  (`GET /api/v1/auth/key`, returns the calling key's own value only). There are no passwords to hash — no user
+  accounts exist. Keys minted before this existed have no encrypted copy and must be regenerated once to enable reveal.
+- `MEDIA_NEXUS_SECRET` (encryption key) from env or `MEDIA_NEXUS_SECRET_FILE` (Docker secrets). Currently only the API
+  key uses it for at-rest encryption; indexer/download-client/notification credentials are **not yet encrypted at
+  rest** (stored as plain JSON in `settings`) — see the hardening checklist below.
 - **Native API responses redact credentials**: `redactDeep()`/`redactSettings()` mask field names matching
   `api.?key | apikey | token | secret | password | pass | credential | user | username | chatid` in
   `/indexers`, `/download-clients`, `/system/config` and `/media-servers` responses (compat surfaces that need the
@@ -55,7 +59,10 @@ This is the security guide + hardening baseline. **This is an engineering docume
 - [x] Security response headers
 - [x] Rate limit sensitive writes
 - [x] Correlation IDs + audit log
-- [ ] Refreshable/rotatable API keys + scope enforcement beyond `*`
+- [x] Rotatable API keys (`POST /api/v1/auth/regenerate-key`)
+- [x] Revealable API key without rotation (`GET /api/v1/auth/key`, AES-256-GCM at rest)
+- [ ] Scope enforcement beyond `*` (all keys remain full-access system keys)
+- [ ] Encrypt indexer/download-client/notification credentials at rest (currently plain JSON in `settings`)
 - [ ] Secrets manager integration (e.g., Vault) for `MEDIA_NEXUS_SECRET`
 - [ ] Third-party dependency auditing (`npm audit` / Dependabot) as part of CI
 

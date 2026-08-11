@@ -23,7 +23,8 @@ const json = <T,>(name: string, def: SQL = sql`'[]'`) =>
 export const apiKey = sqliteTable("api_key", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  keyHash: text("key_hash").notNull(), // sha256 of the raw key — never stored plain
+  keyHash: text("key_hash").notNull(), // sha256 of the raw key — used for O(1) auth lookups
+  encryptedKey: text("encrypted_key"), // raw key, AES-256-GCM encrypted with MEDIA_NEXUS_SECRET — lets System settings reveal it later without regenerating; null for keys minted before this column existed
   scopes: json<string[]>("scopes", sql`'[]'`),
   lastUsedAt: nullableIso("last_used_at"),
   expiresAt: nullableIso("expires_at"),

@@ -24,4 +24,11 @@ export class AuthController {
     await this.auth.deleteApiKey(req.principal!.keyId);
     return { rawKey };
   }
+
+  @Get("key")
+  @ApiOperation({ summary: "Reveal the calling API key's raw value, for viewing/copying without rotating it" })
+  async revealKey(@Req() req: Request) {
+    const rawKey = await this.auth.revealApiKey(req.principal!.keyId);
+    return { rawKey };
+  }
 }

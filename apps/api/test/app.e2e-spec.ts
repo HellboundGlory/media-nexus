@@ -16,7 +16,7 @@ import { configureApp } from "../src/configure";
 import { MEMORY_DOWNLOAD_CLIENT } from "../src/providers/demo.providers";
 import type { MemoryDownloadClientProvider } from "@medianexus/integrations";
 
-const API_KEY = "test-bootstrap-key-123";
+let API_KEY = "test-bootstrap-key-123";
 let app: INestApplication;
 let http: any;
 let memClient: MemoryDownloadClientProvider;
@@ -60,6 +60,25 @@ describe("MediaNexus API (e2e)", () => {
     const res = await auth(request(http).get("/api/v1/auth/whoami"));
     expect(res.status).toBe(200);
     expect(res.body.principal.isAdmin).toBe(true);
+  });
+
+  it("reveals the calling key's raw value", async () => {
+    const res = await auth(request(http).get("/api/v1/auth/key"));
+    expect(res.status).toBe(200);
+    expect(res.body.rawKey).toBe(API_KEY);
+  });
+
+  it("regenerating a key invalidates the old one and makes the new one revealable", async () => {
+    const oldKey = API_KEY;
+    const regenerated = await auth(request(http).post("/api/v1/auth/regenerate-key"));
+    expect(regenerated.status).toBe(201);
+    API_KEY = regenerated.body.rawKey; // `auth()` picks this up for every test that follows
+
+    expect((await request(http).get("/api/v1/movies").set("X-Api-Key", oldKey)).status).toBe(401);
+
+    const revealed = await auth(request(http).get("/api/v1/auth/key"));
+    expect(revealed.status).toBe(200);
+    expect(revealed.body.rawKey).toBe(API_KEY);
   });
 
   // ---- system ----

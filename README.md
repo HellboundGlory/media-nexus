@@ -1,7 +1,7 @@
 # MediaNexus
 
 [![CI](https://github.com/HellboundGlory/media-nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/HellboundGlory/media-nexus/actions/workflows/ci.yml)
-[![Docker Image](https://img.shields.io/badge/ghcr.io-v1.1.1-blue?logo=docker&logoColor=white)](https://github.com/users/HellboundGlory/packages/container/package/media-nexus%2Fapp)
+[![Docker Image](https://img.shields.io/badge/ghcr.io-v1.1.2-blue?logo=docker&logoColor=white)](https://github.com/users/HellboundGlory/packages/container/package/media-nexus%2Fapp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Unified media automation platform** — the combined capabilities of **Prowlarr**, **Sonarr**, **Radarr**, plus a
@@ -32,9 +32,6 @@ docker compose up -d
 One container serves both the API and the web UI. The first boot mints a one-time **system API key** and prints it
 to the logs (`docker compose logs app`). Open **System → API key** in the UI and paste that key (stored in the
 browser); in local dev you can instead set `VITE_MEDIA_NEXUS_API_KEY` in `apps/web/.env`/`.env.example`.
-
-> Note: Docker is not available in this dev environment; the image is authored and CI builds it before we claim
-> "verified in Docker" — local run + tests below are fully verified.
 
 ### Local development
 
@@ -97,7 +94,7 @@ See [docs/development/setup.md](docs/development/setup.md) for the full walkthro
 **Not built yet (roadmap):** Plex account/watchlist integration (the other piece of Seerr this project wants — the
 `media-servers` module is the intended seed for it), Postgres-exports migration (currently SQLite upstreams), TVDB as a
 secondary metadata source, full Prowlarr sync (indexer push to Sonarr/Radarr native — the search-proxy read side is
-done), realtime polish, Docker-container verification here.
+done), realtime polish.
 
 ## Repository layout
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Play, Webhook, Database, Copy, Check, RotateCw } from "lucide-react";
+import { KeyRound, Play, Webhook, Database, Copy, Check, RotateCw, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { api } from "../api/client";
 import type { JobRun } from "../api/types";
@@ -19,8 +19,15 @@ export default function System() {
     onSuccess: (res) => {
       setApiKey(res.rawKey);
       setKeyDraft(res.rawKey);
+      setRevealedKey(undefined);
       setTimeout(() => qc.invalidateQueries(), 150);
     },
+  });
+  const [revealedKey, setRevealedKey] = useState<string | null | undefined>(undefined); // undefined = not fetched, null = fetched but unavailable (pre-dates reveal support)
+  const [revealCopied, setRevealCopied] = useState(false);
+  const revealKey = useMutation({
+    mutationFn: () => api.get<{ rawKey: string | null }>("/auth/key"),
+    onSuccess: (res) => setRevealedKey(res.rawKey),
   });
   const [notifyDraft, setNotifyDraft] = useState({ url: "", secret: "", eventTypes: "" });
   const [savedNotification, setSavedNotification] = useState(false);
@@ -56,7 +63,7 @@ export default function System() {
     ["GET", "/api/v1/series/:id/seasons"], ["POST", "/api/v1/search"], ["POST", "/api/v1/grabs"],
     ["GET", "/api/v1/indexers"], ["POST", "/api/v1/indexers"], ["GET", "/api/v1/indexers/definitions"],
     ["GET", "/api/v1/history"], ["GET", "/api/v1/queue"], ["GET", "/api/v1/auth/whoami"],
-    ["POST", "/api/v1/auth/regenerate-key"],
+    ["GET", "/api/v1/auth/key"], ["POST", "/api/v1/auth/regenerate-key"],
     ["GET", "/health/live"], ["GET", "/health/ready"], ["GET", "/api/sonarr/v3/system/status"],
   ];
 
@@ -226,6 +233,50 @@ export default function System() {
         </button>
         {regenerateKey.isSuccess && <p className="mt-1 text-xs text-emerald-600">New key generated and saved to this browser.</p>}
         {regenerateKey.isError && <p className="mt-1 text-xs text-red-600">{regenerateKey.error instanceof Error ? regenerateKey.error.message : "Failed to regenerate"}</p>}
+
+        <div className="mt-4 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+          <p className="mb-2 text-xs text-zinc-500">
+            Setting up a client on another device? Reveal the key currently stored on the server — no regeneration
+            needed.
+          </p>
+          {revealedKey === undefined ? (
+            <button
+              onClick={() => revealKey.mutate()}
+              disabled={revealKey.isPending}
+              className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-800 disabled:opacity-50 dark:hover:text-zinc-200"
+            >
+              <Eye className="h-3 w-3" /> Reveal current key
+            </button>
+          ) : revealedKey === null ? (
+            <p className="text-xs text-amber-600 dark:text-amber-500">
+              This key predates reveal support — regenerate it once above to enable revealing it later.
+            </p>
+          ) : (
+            <div className="flex gap-2">
+              <input
+                readOnly
+                value={revealedKey}
+                className="flex-1 rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm dark:border-zinc-700"
+              />
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(revealedKey).then(() => { setRevealCopied(true); setTimeout(() => setRevealCopied(false), 1500); });
+                }}
+                title="Copy to clipboard"
+                className="flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                {revealCopied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+              <button
+                onClick={() => setRevealedKey(undefined)}
+                title="Hide"
+                className="flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                <EyeOff className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">

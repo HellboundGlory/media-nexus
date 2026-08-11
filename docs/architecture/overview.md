@@ -145,7 +145,9 @@ media-nexus/
 └── README.md
 ```
 
-> **Status accuracy:** the scaffold is verified **native** (build, test, run). Docker image/compose are authored and I ran `docker compose config`-valid checks, but they are **not executed** here (no Docker daemon in this environment) — CI builds the single image before we claim Docker-verified. PostgreSQL is a planned driver (M1.1); SQLite is the live default.
+> **Status accuracy:** the scaffold is verified **native** (build, test, run) and the Docker image is verified end-to-end
+> (build, boot, `/health/live` + `/health/ready`, SPA, API-key auth) — both locally and via CI's publish-on-tag build.
+> PostgreSQL is a planned driver (M1.1); SQLite is the live default.
 
 ## 6. Decision summary (details in `technology-decisions.md`)
 
