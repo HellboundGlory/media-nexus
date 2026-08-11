@@ -1015,3 +1015,47 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
     expect(lookup.body[0].externalId).toBe("9");
   });
 });
+
+
+describe("M8 hardening: secrets redaction, authz gating, security headers", () => {
+  it("redacts credentials in native indexer + download-client responses", async () => {
+    const idx = await auth(request(http).post("/api/v1/indexers").send({
+      definitionKey: "generic-newznab", name: "Sec NZB", protocol: "usenet",
+      settings: { baseUrl: "https://nzb.invalid", apiKey: "supersecret-123" },
+    }));
+    expect(idx.status).toBe(201);
+    const list = await auth(request(http).get("/api/v1/indexers"));
+    const mine = list.body.find((i: any) => i.name === "Sec NZB");
+    expect(mine.settings.apiKey).toBe("[REDACTED]");
+    expect(String(list.text)).not.toContain("supersecret-123");
+
+    const dc = await auth(request(http).post("/api/v1/download-clients").send({
+      name: "Sec SAB", implementation: "sabnzbd", kind: "usenet", priority: 1,
+      settings: { host: "https://sab.invalid", apiKey: "sab-secret-999" },
+    }));
+    expect(dc.status).toBe(201);
+    const dcs = await auth(request(http).get("/api/v1/download-clients"));
+    const mineDc = dcs.body.find((d: any) => d.name === "Sec SAB");
+    expect(mineDc.settings.apiKey).toBe("[REDACTED]");
+    expect(String(dcs.text)).not.toContain("sab-secret-999");
+  });
+
+  it("gates global config + metadata behind admin", async () => {
+    const user = await auth(request(http).post("/api/v1/users").send({ username: "sec-user", password: "secret-password-9", roles: ["USER"] }));
+    const key = (await auth(request(http).post(`/api/v1/users/${user.body.id}/api-keys`).send({ name: "sec" }))).body.rawKey;
+    const uk = (r: any) => r.set("X-Api-Key", key);
+
+    expect((await uk(request(http).get("/api/v1/system/config"))).status).toBe(403);
+    expect((await uk(request(http).put("/api/v1/system/config").send({ "ui.theme": "light" }))).status).toBe(403);
+    // admin still works + no secrets in config
+    const adminCfg = await auth(request(http).get("/api/v1/system/config"));
+    expect(adminCfg.status).toBe(200);
+    expect(String(adminCfg.text)).not.toContain("supersecret-123");
+  });
+
+  it("sets security response headers", async () => {
+    const res = await request(http).get("/api/v1/movies").set("X-Api-Key", API_KEY);
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["x-frame-options"]).toBe("SAMEORIGIN");
+  });
+});

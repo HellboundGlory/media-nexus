@@ -22,6 +22,7 @@ import { MetadataModule } from "./metadata/metadata.module";
 import { CompatModule } from "./compat/compat.module";
 import { RequestIdMiddleware } from "./common/request-id.middleware";
 import { MetricsMiddleware } from "./observability/metrics.middleware";
+import { SecurityHeadersMiddleware } from "./common/security-headers.middleware";
 
 @Module({
   imports: [
@@ -48,6 +49,6 @@ import { MetricsMiddleware } from "./observability/metrics.middleware";
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(RequestIdMiddleware, MetricsMiddleware).forRoutes("*");
+    consumer.apply(SecurityHeadersMiddleware, RequestIdMiddleware, MetricsMiddleware).forRoutes("*");
   }
 }

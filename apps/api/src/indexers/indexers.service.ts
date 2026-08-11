@@ -7,6 +7,7 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import type { Release, CreateIndexer } from "@medianexus/domain";
 import { ProvidersService } from "../providers/demo.providers";
+import { redactSettings } from "../common/redact";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 import { z } from "zod";
@@ -75,7 +76,9 @@ export class IndexersService {
   }
 
   list() {
-    return this.db.select().from(schema.indexer).orderBy(desc(schema.indexer.createdAt));
+    return this.db.select().from(schema.indexer).orderBy(desc(schema.indexer.createdAt)).then((rows) =>
+      rows.map((r) => ({ ...r, settings: redactSettings(r.settings), proxy: r.proxy ? redactSettings(r.proxy) : null })),
+    );
   }
 
   async get(id: string) {

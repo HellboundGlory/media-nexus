@@ -24,7 +24,8 @@
     "dev:web": "npm run dev -w @medianexus/web",
     "build:backend": "npm run build -w @medianexus/shared -w @medianexus/domain -w @medianexus/events -w @medianexus/database -w @medianexus/integrations -w @medianexus/jobs -w @medianexus/compatibility -w @medianexus/api",
     "db:seed": "tsx scripts/db.ts seed",
-    "import:upstream": "tsx scripts/import-upstream.ts"
+    "import:upstream": "tsx scripts/import-upstream.ts",
+    "test:e2e": "npm run test:e2e -w @medianexus/web"
   },
   "devDependencies": {
     "concurrently": "^9.2.4",

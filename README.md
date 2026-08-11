@@ -5,7 +5,7 @@ in one coherent, self-hostable application: one UI, one backend, one domain mode
 architecture, one API, Docker-first deployment — with an explicit **compatibility layer** so existing _arr ecosystem
 clients keep working.
 
-> Status: **M0 scaffold ✅ · M1–M6 ✅ (acquisition, series, indexers, requests, notifications/realtime, compatibility+Seerr) · Metadata import ✅ · M7 data migration ✅**
+> Status: **M0–M7 ✅ (acquisition · series · indexers · requests · notifications/realtime · compatibility+Seerr · metadata · migration) · M8 hardening ✅**
 > (see [Roadmap](docs/implementation/roadmap.md)).
 
 ## Quick start
@@ -79,6 +79,8 @@ See [docs/development/setup.md](docs/development/setup.md) for the full walkthro
   seasons+episodes); `POST /api/v1/series/:id/metadata` **auto-creates seasons + episodes** (M2 no longer needs manual
   seeding), `POST /api/v1/movies/:id/metadata` enriches overview/genres/releaseDate, `GET /api/v1/metadata/search` finds
   candidates, `media.metadataRefresh` job, and UI buttons (Series detail "Import from TMDB", Movies refresh).
+
+- **Hardening (M8):** security headers, credential redaction in native API responses, admin-gated config/metadata, **Playwright browser E2E** for critical journeys (config + spec + CI job), **CI publish-on-tag** (GHCR image push on `v*` tags), plus `docs/security.md` and an upgrade/migration runbook.
 
 **Not built yet (roadmap):** Postgres-exports migration (currently SQLite upstreams), TVDB as a secondary metadata source, Plex login/server-user import, Seerr-compatible surface,
 full Prowlarr sync (indexer push to Sonarr/Radarr native — the search-proxy read side is done), realtime polish, E2E

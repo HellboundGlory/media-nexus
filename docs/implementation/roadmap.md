@@ -216,6 +216,14 @@ indexer configs; importing Seerr preserves users, requests, watchlists.
 
 ## M8 — Release hardening
 
+**M8 (done):** security hardening (redact credentials in native API responses for indexers/
+download-clients/config/media-servers; admin-gate config-PUT + metadata refresh; security response headers middleware),
+a security doc (`docs/security.md` + authz matrix + hardening checklist), Playwright browser E2E for critical journeys
+(config + spec + CI job), a CI publish-on-tag GHCR job, and an upgrade/migration runbook. The browser run is gated to CI
+(this dev environment has no reliable dual-server/browser autoboot); everything else is locally verified.
+Remaining follow-ups: JWT/Plex login sessions, refreshable scoped API keys, CSRF review when cookie sessions land,
+Postgres support, load-smoke/performance pass, Docker-container verification here.
+
 **Goal:** production-ready distribution.
 
 **Features:** full docs pass, E2E (Playwright) on critical journeys, security review (authz, secrets, proxy headers),

@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
-import { Controller, Get, Param, Post, Query } from "@nestjs/common";
+import { Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { MetadataService } from "./metadata.service";
+import { AdminGuard } from "../requests/admin.guard";
 
 const lookupQuery = z.object({ query: z.string().min(1), type: z.enum(["movie", "series"]).default("movie") });
 
 @ApiTags("metadata")
+@UseGuards(AdminGuard)
 @Controller()
 export class MetadataController {
   constructor(private readonly metadata: MetadataService) {}

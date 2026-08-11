@@ -3,7 +3,10 @@ import { Body, Controller, Get, Put } from "@nestjs/common";
 import { ApiBody, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import { ApiError, runtimeSettingsSchema } from "@medianexus/shared";
+import { UseGuards } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod.pipe";
+import { redactDeep } from "../common/redact";
+import { AdminGuard } from "../requests/admin.guard";
 import { SystemStatusService } from "./system-status.service";
 import { ConfigService } from "./config.service";
 
@@ -24,12 +27,14 @@ export class SystemController {
   }
 
   @Get("config")
-  @ApiOperation({ summary: "Global settings (admin)" })
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "Global settings (admin; credentials masked)" })
   async getConfig() {
-    return this.configSvc.get();
+    return redactDeep(await this.configSvc.get()) as never;
   }
 
   @Put("config")
+  @UseGuards(AdminGuard)
   @ApiOperation({ summary: "Update global settings (admin)" })
   @ApiBody({ schema: { type: "object", additionalProperties: true } })
   async putConfig(@Body(new ZodValidationPipe(upsertSchema)) body: Record<string, unknown>) {

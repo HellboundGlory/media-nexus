@@ -7,6 +7,7 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import type { CreateDownloadClient } from "@medianexus/domain";
 import { ProvidersService } from "../providers/demo.providers";
+import { redactSettings } from "../common/redact";
 import {
   sabnzbdSettingsSchema,
   qbittorrentSettingsSchema,
@@ -30,7 +31,9 @@ export class DownloadClientsService {
   ) {}
 
   list() {
-    return this.db.select().from(schema.downloadClient).orderBy(desc(schema.downloadClient.priority));
+    return this.db.select().from(schema.downloadClient).orderBy(desc(schema.downloadClient.priority)).then((rows) =>
+      rows.map((r) => ({ ...r, settings: redactSettings(r.settings) })),
+    );
   }
 
   async get(id: string) {

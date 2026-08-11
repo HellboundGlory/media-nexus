@@ -5,6 +5,7 @@ import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import { ConfigService } from "../system/config.service";
+import { redactDeep } from "../common/redact";
 import type { MediaServerConfig } from "@medianexus/shared";
 import { JellyfinMediaServerProvider, MemoryMediaServerProvider } from "@medianexus/integrations";
 import type { MediaServerContract } from "@medianexus/integrations";
@@ -43,7 +44,7 @@ export class MediaServersService {
   }
 
   listConfigured() {
-    return this.config.get().then((c) => (c["media.servers"] ?? []) as MediaServerConfig[]);
+    return this.config.get().then((c) => redactDeep(c["media.servers"] ?? []) as MediaServerConfig[]);
   }
 
   async saveConfigured(list: MediaServerConfig[]): Promise<MediaServerConfig[]> {
