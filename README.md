@@ -1,5 +1,9 @@
 # MediaNexus
 
+[![CI](https://github.com/HellboundGlory/media-nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/HellboundGlory/media-nexus/actions/workflows/ci.yml)
+[![Docker Image](https://img.shields.io/badge/ghcr.io-v1.0.0-blue?logo=docker&logoColor=white)](https://github.com/users/HellboundGlory/packages/container/package/media-nexus%2Fapp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **Unified media automation platform** — the combined capabilities of **Prowlarr**, **Sonarr**, **Radarr**, plus a
 narrow slice of **Seerr** (TMDB discover browsing, and eventually Plex watchlist integration — no requests/approvals,
 no user accounts/login), in one coherent, self-hostable application: one UI, one backend, one domain model, one job/event
