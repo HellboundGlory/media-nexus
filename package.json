@@ -23,7 +23,8 @@
     "dev:api": "npm run start:dev -w @medianexus/api",
     "dev:web": "npm run dev -w @medianexus/web",
     "build:backend": "npm run build -w @medianexus/shared -w @medianexus/domain -w @medianexus/events -w @medianexus/database -w @medianexus/integrations -w @medianexus/jobs -w @medianexus/compatibility -w @medianexus/api",
-    "db:seed": "tsx scripts/db.ts seed"
+    "db:seed": "tsx scripts/db.ts seed",
+    "import:upstream": "tsx scripts/import-upstream.ts"
   },
   "devDependencies": {
     "concurrently": "^9.2.4",

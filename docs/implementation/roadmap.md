@@ -192,6 +192,16 @@ against MediaNexus; Sonarr can add MediaNexus-as-Prowlarr indexer and search thr
 
 ## M7 — Data migration from live apps
 
+**M7 (done):** a migration tool reads live upstream SQLite databases and maps them into the unified
+model:
+- **Sonarr** — series, seasons, episodes (monitoring/air-dates), quality profiles, history (EventType→action), indexers
+- **Radarr** — movies, quality profiles, history, indexers
+- **Prowlarr** — indexers (settings JSON passthrough)
+- **Seerr/Overseerr** — users, media availability, requests (status mapped to ours), watchlists
+Idempotent via upstream-id-derived keys; reports per-entity counts + un-mapped rows. CLI `npm run import:upstream --
+--kind <x> --db <upstream.db> [--target <media-nexus.db>]` plus a programmatic `runImport`; Postgres-exports migration
+and a web-UI migration wizard are follow-ups. Verified: fixture DBs for all four upstreams + CLI smoke + idempotency.
+
 **Goal:** users migrate existing Sonarr/Radarr/Prowlarr/Seerr installs without data loss.
 
 **Features:** CLI import from SQLite/Postgres exports (or live API) mapping upstream entities → unified model; idempotent
