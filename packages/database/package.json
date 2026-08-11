@@ -12,16 +12,16 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "zod": "^4.0.0",
-    "drizzle-orm": "^0.45.0",
-    "better-sqlite3": "^13.0.0",
+    "zod": "^4.4.3",
+    "drizzle-orm": "^0.45.2",
+    "better-sqlite3": "^13.0.3",
     "pg": "^8.23.0"
   },
   "devDependencies": {
-    "typescript": "~5.9.2",
+    "typescript": "~5.9.3",
     "vitest": "^4.1.10",
-    "@types/better-sqlite3": "^7.6.0",
-    "@types/pg": "^8.15.0",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/pg": "^8.21.0",
     "drizzle-kit": "^0.31.10"
   }
 }

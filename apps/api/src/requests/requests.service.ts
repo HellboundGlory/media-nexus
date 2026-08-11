@@ -76,7 +76,7 @@ export class RequestsService {
       : await this.db.select().from(schema.request).where(opts.principal?.userId ? eq(schema.request.userRequestorId, opts.principal.userId) : undefined).orderBy(desc(schema.request.requestedAt)).limit(200);
     const out = [];
     for (const r of rows) {
-      let title: string | null = null;
+      let title: string | null;
       if (r.mediaType === "movie") {
         const m = await this.db.select({ t: schema.movie.title }).from(schema.movie).where(eq(schema.movie.id, r.mediaId)).limit(1);
         title = m[0]?.t ?? null;
@@ -133,7 +133,7 @@ export class RequestsService {
     const rows = await this.db.select().from(table).where(eq(table.userId, userId)).orderBy(desc(table.createdAt));
     const out = [];
     for (const r of rows) {
-      let title: string | null = null;
+      let title: string | null;
       if (r.mediaType === "movie") { const m = await this.db.select({ t: schema.movie.title }).from(schema.movie).where(eq(schema.movie.id, r.mediaId)).limit(1); title = m[0]?.t ?? null; }
       else { const s = await this.db.select({ t: schema.series.title }).from(schema.series).where(eq(schema.series.id, r.mediaId)).limit(1); title = s[0]?.t ?? null; }
       out.push({ ...r, title });

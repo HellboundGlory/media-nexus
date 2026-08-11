@@ -10,6 +10,7 @@ import { AdminGuard } from "../requests/admin.guard";
 import { SystemStatusService } from "./system-status.service";
 import { ConfigService } from "./config.service";
 
+// eslint-disable-next-line no-useless-assignment  -- referenced only inside a NestJS decorator; ESLint 10 doesn't count decorator usage
 const upsertSchema = z.record(z.string(), z.unknown());
 
 @ApiTags("system")

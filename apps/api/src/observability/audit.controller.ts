@@ -9,6 +9,7 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import { ZodValidationPipe } from "../common/zod.pipe";
 
+// eslint-disable-next-line no-useless-assignment  -- referenced only inside a NestJS decorator; ESLint 10 doesn't count decorator usage
 const auditQuery = z.object({ limit: z.coerce.number().int().positive().max(500).default(100) });
 
 @ApiTags("system")

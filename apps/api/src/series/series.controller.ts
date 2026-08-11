@@ -13,6 +13,7 @@ const createEpisodesBody = z.object({
   title: z.string().optional(),
   airDateUtc: z.string().optional(),
 });
+// eslint-disable-next-line no-useless-assignment  -- referenced only inside a NestJS decorator; ESLint 10 doesn't count decorator usage
 const setMonitoredBody = z.object({ monitored: z.boolean() });
 
 const listQuerySchema = z.object({

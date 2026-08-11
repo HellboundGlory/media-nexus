@@ -6,6 +6,7 @@ import { ZodValidationPipe } from "../common/zod.pipe";
 import { SeriesService } from "./series.service";
 
 const wantedQuery = z.object({ limit: z.coerce.number().int().positive().max(200).default(50) });
+// eslint-disable-next-line no-useless-assignment  -- referenced only inside a NestJS decorator; ESLint 10 doesn't count decorator usage
 const calendarQuery = z.object({ start: z.string().optional(), end: z.string().optional() });
 
 @ApiTags("series")
