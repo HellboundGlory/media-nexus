@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { clsx } from "clsx";
-import { Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, ListTree, ScrollText, KeyRound, Download, CalendarDays } from "lucide-react";
+import { Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, ListTree, ScrollText, LogOut, Download, CalendarDays } from "lucide-react";
 import { useAppStore, applyTheme } from "../store/useAppStore";
+import { api } from "../api/client";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -18,6 +19,11 @@ const nav = [
 export default function Layout() {
   const theme = useAppStore((s) => s.theme);
   const setTheme = useAppStore((s) => s.setTheme);
+  const navigate = useNavigate();
+  const logout = async () => {
+    await api.post("/auth/logout").catch(() => {});
+    navigate("/login", { replace: true });
+  };
 
   return (
     <div className="flex min-h-screen">
@@ -60,8 +66,14 @@ export default function Layout() {
           </NavLink>
         </nav>
         <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
+          <button
+            onClick={logout}
+            className="mb-2 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          >
+            <LogOut className="h-3.5 w-3.5" /> Logout
+          </button>
           <div className="flex items-center justify-between rounded-lg px-2 py-1">
-            <span className="flex items-center gap-2 text-xs text-zinc-500"><KeyRound className="h-3.5 w-3.5" /> v1.1.2</span>
+            <span className="text-xs text-zinc-500">v1.2.0</span>
             <button
               onClick={() => { const next = theme === "dark" ? "light" : "dark"; setTheme(next); applyTheme(next); }}
               className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"

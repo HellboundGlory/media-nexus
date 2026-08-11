@@ -41,6 +41,8 @@ Settings are validated against a zod schema in `packages/shared/src/config.ts` b
 
 - API keys: hashed (SHA-256) at rest for auth lookups, plus an AES-256-GCM copy encrypted with `MEDIA_NEXUS_SECRET`
   so the raw value can be revealed again later (System → API key) without rotating it.
+- Admin password (browser login): scrypt-hashed, random salt per password. Session cookies are signed (HMAC-SHA256),
+  not stored server-side — see [docs/security.md](../security.md) for the full session-auth design.
 - Provider credentials (indexers/download clients/notifications): **not encrypted at rest** — stored as plain JSON in
   the `settings` column (see [docs/security.md](../security.md) hardening checklist). Redacted in native API
   *responses*, but readable directly from the database file.

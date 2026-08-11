@@ -13,9 +13,10 @@ docker compose ps      # health check turns green (start_period)
 | `app` | `${WEB_PORT:-8080}` → container `7373` | single container: NestJS API serves the built web UI directly (static assets + SPA fallback) and swagger at `/api/docs` |
 | *(planned)* `postgres` | n/a | PostgreSQL wired when the PG driver lands (roadmap M1.1); today the default is SQLite on a volume |
 
-This is **one container, one port** — there is no separate `web`/nginx container and no reverse proxy. See
-[docs/security.md](../security.md): the app has no login beyond a single system API key, so it is meant for
-LAN/private-network use only, never exposed directly to the public internet.
+This is **one container, one port** — there is no separate `web`/nginx container and no reverse proxy. The first
+time you open it, you'll be walked through creating a single admin login (see [docs/security.md](../security.md)) —
+no API key to copy out of logs. It's still meant for LAN/private-network use only, never exposed directly to the
+public internet.
 
 ## Volumes / persistence
 
@@ -49,7 +50,7 @@ work. Use `docker logs app`, the `/health/live` and `/health/ready` endpoints, a
 
 ## Do not put this behind a public reverse proxy
 
-MediaNexus has no login beyond a single system API key (see [docs/security.md](../security.md)) — it is designed for
-LAN/private-network use, not for public exposure. There is deliberately no reverse-proxy/HTTPS-termination example in
-this repo; if you choose to expose it anyway (VPN endpoint, Tailscale, etc.), that is an operator decision outside the
-scope of what MediaNexus documents or supports.
+MediaNexus has a single admin login, not multi-user accounts or roles (see [docs/security.md](../security.md)) — it
+is designed for LAN/private-network use, not for public exposure. There is deliberately no reverse-proxy/HTTPS-termination
+example in this repo; if you choose to expose it anyway (VPN endpoint, Tailscale, etc.), that is an operator decision
+outside the scope of what MediaNexus documents or supports.

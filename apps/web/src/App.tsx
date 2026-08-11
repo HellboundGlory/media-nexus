@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-import { useEffect } from "react";
-import { HashRouter, Routes, Route } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
+import { HashRouter, Routes, Route, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
@@ -13,8 +13,11 @@ import Clients from "./pages/Clients";
 import SeriesDetail from "./pages/SeriesDetail";
 import Calendar from "./pages/Calendar";
 import System from "./pages/System";
+import Login from "./pages/Login";
+import Setup from "./pages/Setup";
 import { applyTheme, useAppStore } from "./store/useAppStore";
 import { subscribeEvents, eventTypeToQueryKeys } from "./api/events";
+import { api } from "./api/client";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 15_000 } },
@@ -23,7 +26,6 @@ const queryClient = new QueryClient({
 /** Live SSE subscriber: refreshes affected queries when domain events arrive. */
 function EventBridge() {
   const qc = useQueryClient();
-  const apiKeyActive = useAppStore((s) => s.apiKey);
   useEffect(() => {
     const ctrl = new AbortController();
     let timer: number | undefined;
@@ -43,8 +45,33 @@ function EventBridge() {
     };
     void loop();
     return () => { if (timer) clearTimeout(timer); ctrl.abort(); };
-  }, [qc, apiKeyActive]);
+  }, [qc]);
   return null;
+}
+
+/** Gates the main app tree: redirects to /setup (no admin account yet) or /login (not authenticated). */
+function AuthGate({ children }: { children: ReactNode }) {
+  const [ready, setReady] = useState(false);
+  const navigate = useNavigate();
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await api.get<{ setupRequired: boolean }>("/auth/status");
+        if (cancelled) return;
+        if (status.setupRequired) { navigate("/setup", { replace: true }); return; }
+        // throws (and is redirected to /login by client.ts's global 401 handler) if not authenticated
+        await api.get("/auth/whoami");
+        if (cancelled) return;
+        setReady(true);
+      } catch {
+        // handled above, or a genuine network error either way — don't render the authenticated tree
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [navigate]);
+  if (!ready) return null;
+  return <>{children}</>;
 }
 
 export default function App() {
@@ -53,9 +80,17 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <HashRouter>
-        <EventBridge />
         <Routes>
-          <Route element={<Layout />}>
+          <Route path="/setup" element={<Setup />} />
+          <Route path="/login" element={<Login />} />
+          <Route
+            element={
+              <AuthGate>
+                <EventBridge />
+                <Layout />
+              </AuthGate>
+            }
+          >
             <Route index element={<Dashboard />} />
             <Route path="discover" element={<Discover />} />
             <Route path="movies" element={<Movies />} />

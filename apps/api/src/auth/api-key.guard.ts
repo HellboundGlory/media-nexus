@@ -4,6 +4,7 @@ import { Reflector } from "@nestjs/core";
 import { ApiError } from "@medianexus/shared";
 import { AuthService } from "./auth.service";
 import { IS_PUBLIC_KEY } from "../common/public.decorator";
+import { readSessionCookie } from "./session-cookie";
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
@@ -24,14 +25,25 @@ export class ApiKeyGuard implements CanActivate {
     // explicit public paths (metrics/docs/health) regardless of decorator bookkeeping
     if (url === "/metrics" || url.startsWith("/api/docs") || url.startsWith("/health") || url.startsWith("/api/v1/system/status")) return true;
     const raw = req.headers["x-api-key"];
-    if (!raw || typeof raw !== "string") {
-      throw new ApiError({ code: "UNAUTHORIZED", message: "Missing X-Api-Key header" });
+    if (raw && typeof raw === "string") {
+      const principal = await this.auth.authenticateKey(raw.trim());
+      if (!principal) {
+        throw new ApiError({ code: "UNAUTHORIZED", message: "Invalid API key" });
+      }
+      req.principal = principal;
+      return true;
     }
-    const principal = await this.auth.authenticateKey(raw.trim());
-    if (!principal) {
-      throw new ApiError({ code: "UNAUTHORIZED", message: "Invalid API key" });
+
+    // no X-Api-Key header — fall back to a browser session cookie
+    const sessionValue = readSessionCookie(req);
+    if (sessionValue) {
+      const principal = await this.auth.verifySessionCookie(sessionValue);
+      if (principal) {
+        req.principal = principal;
+        return true;
+      }
     }
-    req.principal = principal;
-    return true;
+
+    throw new ApiError({ code: "UNAUTHORIZED", message: "Missing X-Api-Key header" });
   }
 }

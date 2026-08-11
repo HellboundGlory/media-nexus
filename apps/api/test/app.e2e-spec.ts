@@ -81,6 +81,113 @@ describe("MediaNexus API (e2e)", () => {
     expect(revealed.body.rawKey).toBe(API_KEY);
   });
 
+  // ---- browser login/session (separate from the api_key mechanism above) ----
+  let sessionCookie: string;
+
+  it("reports setup required before any admin account exists", async () => {
+    const res = await request(http).get("/api/v1/auth/status");
+    expect(res.status).toBe(200);
+    expect(res.body.setupRequired).toBe(true);
+  });
+
+  it("creates the admin account on first setup and logs the caller in", async () => {
+    const res = await request(http).post("/api/v1/auth/setup").send({ username: "admin", password: "correct-horse-battery" });
+    expect(res.status).toBe(201);
+    const setCookie = res.headers["set-cookie"] as unknown as string[];
+    expect(setCookie?.[0]).toMatch(/^mn_session=/);
+    sessionCookie = setCookie[0].split(";")[0];
+
+    expect((await request(http).get("/api/v1/auth/status")).body.setupRequired).toBe(false);
+  });
+
+  it("rejects a second setup attempt once an admin account exists", async () => {
+    const res = await request(http).post("/api/v1/auth/setup").send({ username: "someone-else", password: "another-password" });
+    expect(res.status).toBe(409);
+  });
+
+  it("authenticates API calls via the session cookie, with no X-Api-Key header", async () => {
+    const res = await request(http).get("/api/v1/auth/whoami").set("Cookie", sessionCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.principal.isAdmin).toBe(true);
+    expect(res.body.principal.keyId).toBe("session:admin");
+  });
+
+  it("rejects login with the wrong password", async () => {
+    const res = await request(http).post("/api/v1/auth/login").send({ username: "admin", password: "wrong-password" });
+    expect(res.status).toBe(401);
+  });
+
+  it("logs in with the correct password and issues a fresh session cookie", async () => {
+    const res = await request(http).post("/api/v1/auth/login").send({ username: "admin", password: "correct-horse-battery" });
+    expect(res.status).toBe(201);
+    const setCookie = res.headers["set-cookie"] as unknown as string[];
+    expect(setCookie?.[0]).toMatch(/^mn_session=/);
+  });
+
+  it("rate-limits repeated failed login attempts", async () => {
+    // distinct fake IP so this doesn't exhaust the login bucket for other tests sharing the real test-runner IP
+    let sawRateLimited = false;
+    for (let i = 0; i < 8; i++) {
+      const res = await request(http)
+        .post("/api/v1/auth/login")
+        .set("X-Forwarded-For", "203.0.113.42")
+        .send({ username: "admin", password: "wrong-password" });
+      if (res.status === 429) { sawRateLimited = true; break; }
+    }
+    expect(sawRateLimited).toBe(true);
+  });
+
+  it("logout clears the session cookie", async () => {
+    const res = await request(http).post("/api/v1/auth/logout").set("Cookie", sessionCookie);
+    expect(res.status).toBe(201);
+    const setCookie = res.headers["set-cookie"] as unknown as string[];
+    expect(setCookie?.[0]).toMatch(/Max-Age=0/);
+  });
+
+  it("changing the password invalidates previously-issued sessions", async () => {
+    const login = await request(http).post("/api/v1/auth/login").send({ username: "admin", password: "correct-horse-battery" });
+    const oldCookie = (login.headers["set-cookie"] as unknown as string[])[0].split(";")[0];
+    expect((await request(http).get("/api/v1/auth/whoami").set("Cookie", oldCookie)).status).toBe(200);
+
+    const changed = await request(http)
+      .put("/api/v1/auth/password")
+      .set("Cookie", oldCookie)
+      .send({ currentPassword: "correct-horse-battery", newPassword: "a-brand-new-password" });
+    expect(changed.status).toBe(200);
+    const newCookie = (changed.headers["set-cookie"] as unknown as string[])[0].split(";")[0];
+
+    // the cookie issued before the password change no longer authenticates...
+    expect((await request(http).get("/api/v1/auth/whoami").set("Cookie", oldCookie)).status).toBe(401);
+    // ...but the freshly re-issued one (for the browser making the change) still does
+    expect((await request(http).get("/api/v1/auth/whoami").set("Cookie", newCookie)).status).toBe(200);
+
+    // restore the original password so later runs/tests relying on the fixed credentials aren't affected
+    await request(http)
+      .put("/api/v1/auth/password")
+      .set("Cookie", newCookie)
+      .send({ currentPassword: "a-brand-new-password", newPassword: "correct-horse-battery" });
+  });
+
+  it("reveals and regenerates the system API key from a session-authenticated (not X-Api-Key) request", async () => {
+    // regression: revealApiKey/regenerateApiKey used to key off req.principal.keyId, which for a session
+    // principal is a synthetic "session:admin" — not a real api_key row id — so this returned null/no-op'd.
+    const login = await request(http).post("/api/v1/auth/login").send({ username: "admin", password: "correct-horse-battery" });
+    const cookie = (login.headers["set-cookie"] as unknown as string[])[0].split(";")[0];
+
+    const revealed = await request(http).get("/api/v1/auth/key").set("Cookie", cookie);
+    expect(revealed.status).toBe(200);
+    expect(revealed.body.rawKey).toBe(API_KEY);
+
+    const regenerated = await request(http).post("/api/v1/auth/regenerate-key").set("Cookie", cookie);
+    expect(regenerated.status).toBe(201);
+    API_KEY = regenerated.body.rawKey; // `auth()` picks this up for every test that follows
+
+    // the old key is dead, and the new one is revealable — and there's still exactly one api_key row (old one was deleted)
+    expect((await request(http).get("/api/v1/movies").set("X-Api-Key", regenerated.body.rawKey)).status).toBe(200);
+    const revealedAgain = await request(http).get("/api/v1/auth/key").set("Cookie", cookie);
+    expect(revealedAgain.body.rawKey).toBe(API_KEY);
+  });
+
   // ---- system ----
   it("exposes system status + settings round-trip", async () => {
     const status = await auth(request(http).get("/api/v1/system/status"));

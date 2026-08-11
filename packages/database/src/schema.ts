@@ -31,6 +31,17 @@ export const apiKey = sqliteTable("api_key", {
   createdAt: iso("created_at"),
 }, (t) => [uniqueIndex("api_key_hash_idx").on(t.keyHash)]);
 
+// Single admin credential (login/session auth for the browser, arr-style Forms auth).
+// Singleton row (id is always "admin"); separate from apiKey, which stays for external/compat clients.
+export const adminCredential = sqliteTable("admin_credential", {
+  id: text("id").primaryKey(),
+  username: text("username").notNull(),
+  passwordHash: text("password_hash").notNull(), // scrypt: "salt:hash" hex
+  passwordVersion: integer("password_version").notNull().default(1), // bumped on password change; embedded in session cookies to invalidate old sessions
+  createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+});
+
 // ---------- 2. Configuration ----------
 export const setting = sqliteTable("setting", {
   key: text("key").primaryKey(),
@@ -294,6 +305,7 @@ export const auditLog = sqliteTable("audit_log", {
 // ---------- exported schema ----------
 export const schema = {
   apiKey,
+  adminCredential,
   setting,
   qualityProfile,
   movie,

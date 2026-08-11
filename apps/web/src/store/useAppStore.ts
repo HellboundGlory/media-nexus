@@ -4,18 +4,14 @@ import { persist } from "zustand/middleware";
 
 interface AppState {
   theme: "dark" | "light";
-  apiKey: string;
   setTheme: (theme: "dark" | "light") => void;
-  setApiKey: (key: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       theme: "dark",
-      apiKey: "",
       setTheme: (theme) => set({ theme }),
-      setApiKey: (apiKey) => set({ apiKey }),
     }),
     { name: "medianexus-ui" },
   ),

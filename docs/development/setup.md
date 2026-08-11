@@ -16,10 +16,11 @@ npm run dev:api          # NestJS API on :7373 with watch+swagger at /api/docs
 npm run dev:web          # Vite web on :5173 (proxies /api to :7373)
 ```
 
-First-run bootstrap mints one system API key and prints it once to the API logs — there is no user account, login or
-password. The key is stored hashed in the DB and is the value for the `X-Api-Key` header in every API request (and for
-`VITE_MEDIA_NEXUS_API_KEY` so the web app can talk to the API in dev). Set `MEDIA_NEXUS_BOOTSTRAP_KEY` to pin it instead
-of generating a random one.
+Open `http://localhost:5173` — first run walks you through creating a single admin account (username/password), same
+as production; Vite's dev proxy (`/api` → `:7373`) keeps the session cookie same-origin so it works identically to the
+built single-container image. Separately, first-run bootstrap also mints one system API key and prints it once to the
+API logs — that one's for the `X-Api-Key` header (external/compat clients, scripts), not the browser. Set
+`MEDIA_NEXUS_BOOTSTRAP_KEY` to pin it instead of generating a random one (e.g. for CI/tests).
 
 ## Workspace layout & key scripts (root)
 

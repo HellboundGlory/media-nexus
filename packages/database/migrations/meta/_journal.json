@@ -43,6 +43,13 @@
       "when": 1786462968664,
       "tag": "0005_perfect_komodo",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786467104279,
+      "tag": "0006_dapper_thanos",
+      "breakpoints": true
     }
   ]
 }

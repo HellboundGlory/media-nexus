@@ -7,3 +7,5 @@ export * from "./env";
 export * from "./settings";
 export * from "./correlation";
 export * from "./crypto";
+export * from "./password";
+export * from "./session";

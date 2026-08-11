@@ -127,3 +127,11 @@ compatibility, Docker-first, strong typing, strong testing, long-term maintainab
   − not intended for multi-tenant or internet-facing use — the app is meant to stay on a trusted LAN/private network (see
   `docs/security.md`). A future TMDB discover view and Plex watchlist integration (the remaining Seerr-derived roadmap
   scope) do not require reintroducing per-user accounts.
+
+> **Superseded in part:** "no login screen" no longer holds. The browser now gets a real username/password login
+> (Sonarr/Radarr-style Forms auth) issuing a signed session cookie, instead of a human having to copy an API-key
+> value out of container logs on every fresh browser/device. This does **not** reintroduce per-user accounts or
+> roles — it's still exactly one admin identity, just reachable two ways now (session cookie for the browser,
+> `X-Api-Key` header for external/compat clients, both resolving to the same full-access `Principal`). The
+> `X-Api-Key` mechanism itself, and everything else in this ADR, is otherwise unchanged. See `docs/security.md`'s
+> trust-model section for the current shape.

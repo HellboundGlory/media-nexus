@@ -44,10 +44,16 @@ that was deliberately removed (no user accounts to scope it to) and has no equiv
 
 ### 3.1 Identity & access
 
-- **`api_key`** *(implemented)* — `id, name, keyHash (sha256), scopes (text[]), lastUsedAt, expiresAt, createdAt`. Only
-  the hash is stored; the raw key is shown once at creation. There is no `user` table and no login — every key is a
-  global, full-access system key (`_arr`-style, like Sonarr/Radarr/Prowlarr's own API-key auth); `isAdmin` is always
-  `true` for a valid key (see `api.md` §2).
+- **`api_key`** *(implemented)* — `id, name, keyHash (sha256), encryptedKey (AES-256-GCM, nullable), scopes (text[]),
+  lastUsedAt, expiresAt, createdAt`. The hash is used for auth lookups; the encrypted copy lets the raw value be
+  revealed again later (System → API key) without rotating it. Every key is a global, full-access system key
+  (`_arr`-style, like Sonarr/Radarr/Prowlarr's own API-key auth); `isAdmin` is always `true` for a valid key (see
+  `api.md` §2). Meant for external/compat clients, not the browser.
+- **`admin_credential`** *(implemented)* — singleton row: `id, username, passwordHash (scrypt), passwordVersion,
+  createdAt, updatedAt`. Not a `user` table in the traditional sense — there's exactly one admin identity, not
+  multi-user accounts. Backs the browser's session-cookie login (Sonarr/Radarr-style Forms auth); bumping
+  `passwordVersion` on a password change invalidates every previously-issued session cookie (see `api.md` §2 and
+  `docs/security.md`).
 
 ### 3.2 Configuration
 
@@ -132,8 +138,8 @@ that was deliberately removed (no user accounts to scope it to) and has no equiv
   (text[]), tags, created/updated`. Event subscriptions are explicit so future notification sinks receive only relevant
   domain events.
 - **`audit_log`** *(implemented)* — `id, correlationId, actor (text, defaults to 'system'), action, entityType, entityId,
-  details (json), ip, createdAt`. There is no user id to attribute actions to (no user accounts); every security-relevant
-  or admin action is still recorded (Rule 7/observability).
+  details (json), ip, createdAt`. There's no per-user id to attribute actions to — one admin identity, not multi-user
+  accounts — but every security-relevant or admin action is still recorded (Rule 7/observability).
 
 ## 4. Relationships (subset)
 

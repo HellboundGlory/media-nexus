@@ -1,18 +1,18 @@
 # MediaNexus
 
 [![CI](https://github.com/HellboundGlory/media-nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/HellboundGlory/media-nexus/actions/workflows/ci.yml)
-[![Docker Image](https://img.shields.io/badge/ghcr.io-v1.1.2-blue?logo=docker&logoColor=white)](https://github.com/users/HellboundGlory/packages/container/package/media-nexus%2Fapp)
+[![Docker Image](https://img.shields.io/badge/ghcr.io-v1.2.0-blue?logo=docker&logoColor=white)](https://github.com/users/HellboundGlory/packages/container/package/media-nexus%2Fapp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Unified media automation platform** — the combined capabilities of **Prowlarr**, **Sonarr**, **Radarr**, plus a
 narrow slice of **Seerr** (TMDB discover browsing, and eventually Plex watchlist integration — no requests/approvals,
-no user accounts/login), in one coherent, self-hostable application: one UI, one backend, one domain model, one job/event
+no multi-user accounts), in one coherent, self-hostable application: one UI, one backend, one domain model, one job/event
 architecture, one API, Docker-first deployment — with an explicit **compatibility layer** so existing _arr ecosystem
 clients keep working.
 
-> **Not public-facing.** This app is meant for LAN/private-network use only. There are no user accounts and no
-> login — a single system API key grants full access. Never put it behind a public reverse proxy or expose it to
-> the internet.
+> **Not public-facing.** This app is meant for LAN/private-network use only. There's a single admin login (like
+> Sonarr/Radarr's own Forms auth) for the browser, plus an API key for external tools/scripts — no multi-user
+> accounts or roles. Never put it behind a public reverse proxy or expose it to the internet.
 
 > Status: **M0–M7 ✅ (acquisition · series · indexers · notifications/realtime · compatibility · metadata · migration) · M8 hardening ✅**
 > (see [Roadmap](docs/implementation/roadmap.md)).
@@ -29,9 +29,9 @@ docker compose up -d
 # API base    → http://localhost:8080/api/v1
 ```
 
-One container serves both the API and the web UI. The first boot mints a one-time **system API key** and prints it
-to the logs (`docker compose logs app`). Open **System → API key** in the UI and paste that key (stored in the
-browser); in local dev you can instead set `VITE_MEDIA_NEXUS_API_KEY` in `apps/web/.env`/`.env.example`.
+One container serves both the API and the web UI. Open it and the first screen walks you through **creating your
+admin account** (username + password) — no key-copying required. An API key for external tools/scripts is minted on
+first boot too, viewable any time from System → API key once you're logged in.
 
 ### Local development
 
@@ -69,7 +69,8 @@ See [docs/development/setup.md](docs/development/setup.md) for the full walkthro
   Events** at `/api/v1/events` with UI live-refresh; **Prometheus `/metrics`**; **audit trail** endpoint + UI (movie/series
   add/remove, manual job runs); System page: Notifications, Audit.
 - **Foundations (M0).** NestJS API + Vite/React web monorepo, unified Drizzle schema (SQLite; PG planned), native
-  `/api/v1`, single-tier `X-Api-Key` auth + first-run bootstrap (no user accounts/login), DB-backed jobs + domain event bus.
+  `/api/v1`, single-admin session login for the browser plus `X-Api-Key` auth for external/compat clients, DB-backed
+  jobs + domain event bus.
 - **Compatibility (M6).** Real adapters under `/api/sonarr/v3`, `/api/radarr/v3`, `/api/prowlarr/v1`:
   Sonarr — series list/get/add/delete, qualityprofile, episode, `command` (maps SeriesSearch/RefreshSeries to native jobs);
   Radarr — movie list/get/add/delete, qualityprofile, command; **Prowlarr — configured indexers + an indexer search proxy**,

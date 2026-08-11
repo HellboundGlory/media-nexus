@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { apiKey, API_BASE } from "./client";
+import { API_BASE } from "./client";
 
 export interface DomainEvent {
   id: string;
@@ -20,12 +20,13 @@ export function eventTypeToQueryKeys(type: string): string[] {
 }
 
 /**
- * SSE reader implemented over fetch (so the X-Api-Key header is sent).
- * Reconnects with backoff while the app is mounted; one consumer keeps the stream open.
+ * SSE reader implemented over fetch (gives raw stream-body access native EventSource doesn't).
+ * Session cookie flows automatically (same-origin fetch). Reconnects with backoff while the app
+ * is mounted; one consumer keeps the stream open.
  */
 export async function subscribeEvents(opts: { onEvent: (event: DomainEvent) => void; signal: AbortSignal; onStatus?: (connected: boolean) => void }): Promise<void> {
   try {
-    const res = await fetch(`${API_BASE}/events`, { headers: { "x-api-key": apiKey() }, signal: opts.signal });
+    const res = await fetch(`${API_BASE}/events`, { signal: opts.signal });
     if (!res.ok || !res.body) throw new Error(`SSE ${res.status}`);
     opts.onStatus?.(true);
     const reader = res.body.getReader();

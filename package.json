@@ -1,6 +1,6 @@
 {
   "name": "media-nexus",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "private": true,
   "description": "MediaNexus \u2014 unified media automation platform (Prowlarr + Sonarr + Radarr, plus TMDB discover/Plex watchlist from Seerr, in one coherent application).",
   "license": "MIT",

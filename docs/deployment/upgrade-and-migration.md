@@ -16,6 +16,11 @@
 > Migrations run automatically on start. To run them manually (e.g. before a blue-green cutover):
 > `npm run db:migrate`.
 
+**Upgrading from before browser login existed?** The next time you open the web UI, you'll land on a one-time
+"create your admin account" screen instead of the dashboard — this is expected (no admin credential exists yet in
+your database). Nothing else about your data changes; the existing API key mechanism for external/compat clients is
+untouched. See [docs/security.md](../security.md).
+
 ## Migrating data from an existing *arr setup
 
 Use the built-in importer to bring a **live SQLite database** from Sonarr, Radarr or Prowlarr into MediaNexus:

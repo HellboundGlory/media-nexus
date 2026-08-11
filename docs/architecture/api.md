@@ -16,14 +16,20 @@ apps, the future plugin system, and the compatibility layer.
 
 ## 2. Authentication
 
-- **API keys:** header `X-Api-Key` with the value's SHA-256 hash looked up in `api_key`. Any valid key is a full-access
-  system key, `_arr`-style (like Sonarr/Radarr/Prowlarr's own API-key auth) — there is no login, no per-user accounts, and
-  no roles/permission tiers. `Principal` is `{ keyId, isAdmin, scopes }`, and `isAdmin` is always `true` for a valid key.
-- **Bootstrap:** on first run, the API mints one system API key and prints it once to logs/startup banner
-  (`MEDIA_NEXUS_BOOTSTRAP_KEY` can set it deterministically, e.g. for CI/tests). Default credentials are never hard-coded.
-- **Guard policy (security by default):** *all* `/api/v1/*` routes require a valid API key unless explicitly marked
-  `@Public()` (health and `/metrics` are the only public areas). The web app stores its key in `localStorage` (injected
-  via `VITE_MEDIA_NEXUS_API_KEY` during dev).
+Two paths, one trust tier — still no per-user accounts or roles/permission tiers, just two ways to prove you're the
+one admin identity:
+
+- **API keys** (external/compat clients, scripts): header `X-Api-Key` with the value's SHA-256 hash looked up in
+  `api_key`. `_arr`-style, like Sonarr/Radarr/Prowlarr's own API-key auth. On first run, the API mints one system
+  key and prints it once to logs/startup banner (`MEDIA_NEXUS_BOOTSTRAP_KEY` can set it deterministically, e.g. for
+  CI/tests); it can be revealed again later (not just at creation) via `GET /api/v1/auth/key`.
+- **Session cookie** (the browser): `POST /api/v1/auth/login` (username/password, `admin_credential` table, scrypt)
+  issues a signed `httpOnly`, `SameSite=Strict` cookie — no key to copy anywhere. First run is a one-time "create
+  your account" screen instead (`POST /api/v1/auth/setup`, only works once).
+- Either path resolves to the same `Principal` shape: `{ keyId, isAdmin, scopes }`, `isAdmin` always `true`.
+  `ApiKeyGuard` tries the `X-Api-Key` header first, falls back to the session cookie if absent.
+- **Guard policy (security by default):** *all* `/api/v1/*` routes require one of the two unless explicitly marked
+  `@Public()` (health, `/metrics`, and the login/setup/status endpoints themselves are the public areas).
 
 ## 3. Observability of the API
 

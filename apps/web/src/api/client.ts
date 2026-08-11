@@ -1,13 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { useAppStore } from "../store/useAppStore";
-
 export const API_BASE = (import.meta.env.VITE_MEDIA_NEXUS_API_URL as string | undefined) ?? "/api/v1";
-
-export function apiKey(): string {
-  const fromStore = useAppStore.getState().apiKey;
-  const fromEnv = (import.meta.env.VITE_MEDIA_NEXUS_API_KEY as string | undefined) ?? "";
-  return fromStore || fromEnv;
-}
 
 export class ApiClientError extends Error {
   constructor(
@@ -22,6 +14,9 @@ export class ApiClientError extends Error {
 }
 
 async function handle<T>(res: Response): Promise<T> {
+  if (res.status === 401 && !window.location.hash.startsWith("#/login") && !window.location.hash.startsWith("#/setup")) {
+    window.location.hash = "#/login";
+  }
   if (res.status === 204) return undefined as T;
   let body: unknown = null;
   try { body = await res.json(); } catch { /* empty */ }
@@ -32,28 +27,23 @@ async function handle<T>(res: Response): Promise<T> {
   return body as T;
 }
 
-function headers(): Record<string, string> {
-  const h: Record<string, string> = { "Content-Type": "application/json" };
-  const key = apiKey();
-  if (key) h["X-Api-Key"] = key;
-  return h;
-}
+const headers = { "Content-Type": "application/json" };
 
 export const api = {
   async get<T>(path: string): Promise<T> {
-    const res = await fetch(`${API_BASE}${path}`, { headers: headers() });
+    const res = await fetch(`${API_BASE}${path}`, { headers });
     return handle<T>(res);
   },
   async post<T>(path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${API_BASE}${path}`, { method: "POST", headers: headers(), body: body === undefined ? undefined : JSON.stringify(body) });
+    const res = await fetch(`${API_BASE}${path}`, { method: "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) });
     return handle<T>(res);
   },
   async put<T>(path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${API_BASE}${path}`, { method: "PUT", headers: headers(), body: body === undefined ? undefined : JSON.stringify(body) });
+    const res = await fetch(`${API_BASE}${path}`, { method: "PUT", headers, body: body === undefined ? undefined : JSON.stringify(body) });
     return handle<T>(res);
   },
   async del<T>(path: string): Promise<T> {
-    const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers: headers() });
+    const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers });
     return handle<T>(res);
   },
 };
