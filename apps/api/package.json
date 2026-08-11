@@ -37,7 +37,6 @@
   },
   "devDependencies": {
     "@nestjs/testing": "^11.1.29",
-    "@types/bcryptjs": "^3.0.0",
     "@types/express": "^5.0.6",
     "@types/node": "^26.2.0",
     "@types/supertest": "^7.2.1",
