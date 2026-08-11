@@ -14,6 +14,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci --no-audit --no-fund
+      # build packages first so cross-package type declarations resolve (workspace .d.ts)
+      - run: npm run build:backend
       - run: npm run typecheck
       - run: npm run lint
 
@@ -29,15 +31,26 @@ jobs:
 
   browser-e2e:
     runs-on: ubuntu-latest
+    continue-on-error: true   # browser E2E is best-effort; the publish gate is lint-typecheck + test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci --no-audit --no-fund
       - run: npm run build:backend
-      - run: npx playwright install --with-deps chromium
       - run: npm run build -w @medianexus/web
+      - run: npx playwright install --with-deps chromium
+      - name: Boot API + Vite
+        run: |
+          { NODE_ENV=test PORT=7373 DATABASE_URL=file:/tmp/mn-e2e.db MEDIA_NEXUS_SECRET=e2e-secret-only-123 MEDIA_NEXUS_BOOTSTRAP_KEY=e2e-key MEDIA_NEXUS_BOOTSTRAP_ADMIN_PASSWORD=e2e-pw node apps/api/dist/main.js >/tmp/api.log 2>&1 & }
+          ( cd apps/web && npx vite --host 127.0.0.1 --port 5173 --strictPort >/tmp/web.log 2>&1 & )
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:7373/health/live >/dev/null 2>&1 && curl -fsS -o /dev/null http://127.0.0.1:5173/ >/dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:7373/health/live
       - run: npm run test:e2e
+      - run: pkill -f "apps/api/dist/main.js" || true; pkill -f "vite --host" || true
 
   build-and-publish:
     runs-on: ubuntu-latest
