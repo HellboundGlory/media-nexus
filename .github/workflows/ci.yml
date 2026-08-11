@@ -56,18 +56,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Meta
         id: meta
-        run: echo "TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+        run: |
+          echo "TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+          echo "IMAGE_REPO=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
       - name: Build & publish api
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/api.Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository }}/api:${{ env.TAG }},ghcr.io/${{ github.repository }}/api:latest
+          tags: ghcr.io/${{ env.IMAGE_REPO }}/api:${{ env.TAG }},ghcr.io/${{ env.IMAGE_REPO }}/api:latest
       - name: Build & publish web
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/web.Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository }}/web:${{ env.TAG }},ghcr.io/${{ github.repository }}/web:latest
+          tags: ghcr.io/${{ env.IMAGE_REPO }}/web:${{ env.TAG }},ghcr.io/${{ env.IMAGE_REPO }}/web:latest

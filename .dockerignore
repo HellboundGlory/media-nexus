@@ -1,0 +1,14 @@
+# build context must not include these (keeps image context small + avoids stale artifacts)
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+data
+.git
+.github
+dist
+coverage
+*.log
+.env
+.env.local
+.e2e-cache
