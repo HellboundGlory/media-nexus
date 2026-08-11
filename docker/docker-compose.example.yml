@@ -18,7 +18,7 @@ name: media-nexus
 services:
   app:
     image: ghcr.io/hellboundglory/media-nexus/app:latest
-    container_name: media-nexus
+    container_name: media-nexus-app
     restart: unless-stopped
     env_file:
       - ${MN_ENV_FILE:-.env}
