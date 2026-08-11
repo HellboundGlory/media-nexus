@@ -6,9 +6,7 @@ export interface EventAggregate {
   /** mediaType-like kind of the affected aggregate. */
   aggType?: string;
   aggId?: string;
-  requestId?: string;
   jobRunId?: string;
-  userId?: string;
 }
 
 /** The durable, versioned envelope MediaNexus uses for all domain events. */
@@ -51,10 +49,6 @@ export const EventTypes = {
   DownloadCompleted: "acquisition.download.completed",
   ImportCompleted: "acquisition.import.completed",
   DownloadFailed: "acquisition.download.failed",
-  RequestCreated: "requests.request.created",
-  RequestApproved: "requests.request.approved",
-  RequestDeclined: "requests.request.declined",
-  RequestFulfilled: "requests.request.fulfilled",
   IndexerFailed: "discovery.indexer.failed",
   DownloadClientFailed: "acquisition.client.failed",
   JobStarted: "system.job.started",

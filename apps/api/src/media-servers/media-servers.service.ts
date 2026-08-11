@@ -11,9 +11,9 @@ import { JellyfinMediaServerProvider, MemoryMediaServerProvider } from "@mediane
 import type { MediaServerContract } from "@medianexus/integrations";
 
 /**
- * Media server availability (M4): builds configured providers (Jellyfin/memory),
- * refreshes `media_availability` so requests resolve "available" against a real
- * library server. Config lives in `media.servers` (validated in config).
+ * Media server availability: builds configured providers (Jellyfin/memory),
+ * refreshes `media_availability` against a real library server so the app knows
+ * what's already available. Config lives in `media.servers` (validated in config).
  */
 @Injectable()
 export class MediaServersService {

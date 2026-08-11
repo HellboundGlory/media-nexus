@@ -5,4 +5,3 @@ export * from "./sonarr";
 export * from "./wire-shapes";
 export * from "./radarr";
 export * from "./prowlarr";
-export * from "./seerr";

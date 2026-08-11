@@ -11,7 +11,6 @@ export interface DomainEvent {
 /** Map an event type to TanStack query keys that should refresh. */
 export function eventTypeToQueryKeys(type: string): string[] {
   if (type.startsWith("acquisition")) return ["queue", "history", "wanted", "movies", "series", "job-runs", "indexer-stats"];
-  if (type.startsWith("requests")) return ["requests", "queue"];
   if (type.startsWith("media.movie")) return ["movies"];
   if (type.startsWith("media.series")) return ["series", "wanted"];
   if (type.startsWith("system.job")) return ["job-runs"];

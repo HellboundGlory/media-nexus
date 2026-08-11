@@ -9,8 +9,6 @@ export const envSchema = z.object({
   DATABASE_URL: z.string().default("file:./data/media-nexus.db"),
   MEDIA_NEXUS_SECRET: z.string().min(8, "MEDIA_NEXUS_SECRET must be set (min 8 chars)"),
   MEDIA_NEXUS_SECRET_FILE: z.string().optional(),
-  CORS_ORIGINS: z.string().default(""),
-  TRUST_PROXY: z.coerce.number().int().min(0).default(0),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   JOB_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
   TZ: z.string().default("UTC"),

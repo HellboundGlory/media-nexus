@@ -11,11 +11,17 @@ All configuration flows through environment variables (secrets via `_FILE` suffi
 | `PORT` | `7373` | API listen port |
 | `DATABASE_URL` | `file:./data/media-nexus.db` | Drizzle connection string. SQLite fully supported now; `postgres://…` detected but raises a clear error until PG driver lands (M1.1) |
 | `MEDIA_NEXUS_SECRET` | *(required, generate `openssl rand -hex 32`)* | encryption key for stored credentials |
-| `CORS_ORIGINS` | `` | comma-separated allowed origins |
+| `MEDIA_NEXUS_SECRET_FILE` | — | path to read `MEDIA_NEXUS_SECRET` from (Docker secrets) |
+| `MEDIA_NEXUS_BOOTSTRAP_KEY` | *(generated if unset)* | pins the first-run system API key instead of generating one (e.g. for CI/tests) |
+| `AUTO_MIGRATE` | `true` | run pending Drizzle migrations automatically on boot |
 | `JOB_CONCURRENCY` | `2` | running job workers |
 | `LOG_LEVEL` | `info` | structured log level |
 | `PUID` / `PGID` | `1000` | container UID/GID (docker) |
 | `TZ` | `UTC` | timezone |
+| `WEB_PORT` | `8080` | (compose only) host port mapped to the container's port 7373 |
+
+There is no `CORS_ORIGINS` or `TRUST_PROXY` — the API serves the web UI itself (same-origin, one process, one port), and
+this app is not meant to sit behind a reverse proxy (see [docs/security.md](../security.md)).
 
 ## Runtime settings (`setting` table, admin-editable via `PUT /api/v1/system/config`)
 

@@ -2,8 +2,6 @@
 /** Authenticated identity attached to the request by the API key guard. */
 export interface Principal {
   keyId: string;
-  userId: string | null;
-  username: string | null;
   isAdmin: boolean;
   scopes: string[];
 }

@@ -7,9 +7,11 @@
 ## 1. Purpose
 
 MediaNexus is a single, self-hostable media-automation platform that provides the combined capabilities of **Prowlarr**
-(indexers), **Sonarr** (TV), **Radarr** (movies) and **Seerr** (user requests) through **one coherent application**: one UI,
-one backend, one domain model, one auth system, one job/event architecture, one configuration system, one API surface,
-Docker-first deployment, and strong interoperability with the surrounding _arr ecosystem.
+(indexers), **Sonarr** (TV) and **Radarr** (movies) through **one coherent application**: one UI, one backend, one domain
+model, one auth system, one job/event architecture, one configuration system, one API surface, Docker-first deployment,
+and strong interoperability with the surrounding _arr ecosystem. A TMDB-backed discovery view and Plex watchlist
+integration — the only capabilities carried forward from **Seerr** — are planned but not yet built; see
+[docs/implementation/roadmap.md](../implementation/roadmap.md).
 
 This is **not** a skin that embeds the four existing UIs, and it is **not** four cloned apps behind one login. It is a new
 codebase with a unified model, where movie and TV automation share infrastructure, and where compatibility with the
@@ -17,9 +19,10 @@ existing ecosystem is provided by explicit, isolated adapters.
 
 ## 2. Research basis and verified facts
 
-The companion deep-research report (`deep-research-report.md`) was reviewed in full and used as an *input*, not as
-unquestionable truth. Its claims were verified against the upstream repositories (licenses, SDK versions, frontend
-frameworks, package manifests, source layout). Corrected/confirmed findings:
+An initial deep-research report scoping Sonarr/Radarr/Prowlarr/Seerr (no longer kept in-repo) was reviewed in full and
+used as an *input*, not as unquestionable truth, during the earliest planning of this project. Its claims were verified
+against the upstream repositories (licenses, SDK versions, frontend frameworks, package manifests, source layout).
+Corrected/confirmed findings:
 
 | Project | Backend | Frontend | Public API | Real-time | DB | Auth | License |
 |---|---|---|---|---|---|---|---|
@@ -41,7 +44,9 @@ Corrections to the research document, verified from source:
 5. Sonarr v4 now ships **two API generations (v3 and v5)** in one process — evidence that the ecosystem treats API
    versions as coexisting surfaces that must keep working.
 6. The _arr apps authenticate every API call with a header API key (`X-Api-Key`); Seerr uses an entirely different model
-   (Plex/Jellyfin identity + JWT). The unified app must reconcile both.
+   (Plex/Jellyfin identity + JWT). MediaNexus resolved this by adopting the simpler _arr model only — a single-tier
+   `X-Api-Key` — rather than reconciling both (see ADR-010 in `technology-decisions.md`); Seerr's identity model was
+   built once for the request workflow and removed along with it.
 
 ### Architectural conclusions drawn from research
 
@@ -54,8 +59,7 @@ Corrections to the research document, verified from source:
 - The _arr "one big Core project + service locator" internal structure is **not** the architecture to imitate; its
   *capability set* is. This justifies the modular-monolith design below.
 - Shared/reusable infrastructure across all four: indexers/search, download clients, scheduler, notifications, metadata,
-  a unified quality-profile concept, and a users/permissions model (only Seerr has one — it must become the unified
-  default).
+  and a unified quality-profile concept.
 
 ## 3. Architecture principles
 
@@ -66,12 +70,14 @@ Corrections to the research document, verified from source:
    same; domain differences are preserved where they are real (episode vs movie file import, season monitoring).
 3. **API-first.** A documented, versioned `/api/v1` surface is a first-class product for the web UI, mobile, automation,
    and third parties.
-4. **Explicit compatibility layer.** Existing-ecosystem APIs (Sonarr/Radarr/Prowlarr/Seerr) are served by isolated
-   adapters that translate into the native domain model; they never dictate internal architecture.
+4. **Explicit compatibility layer.** Existing-ecosystem APIs (Sonarr/Radarr/Prowlarr) are served by isolated
+   adapters that translate into the native domain model; they never dictate internal architecture. (A Seerr-compatible
+   surface was built and later removed along with the request/user-accounts workflow it depended on — see
+   [docs/implementation/roadmap.md](../implementation/roadmap.md).)
 5. **Contract-first integrations.** External systems (indexers, download clients, metadata, media servers, notification
    sinks) implement explicit TypeScript interfaces behind provider registries — never ad-hoc calls scattered in core code.
 6. **Docker-first** deployment with persistent volumes, health checks, graceful shutdown, secrets via environment.
-7. **Security by default.** API keys/JWT, never log or expose credentials, correlation IDs, audit log for admin actions.
+7. **Security by default.** API keys, never log or expose credentials, correlation IDs, audit log for admin actions.
 8. **Observability from day one.** Structured logs, request IDs, job IDs, health/readiness endpoints, metrics-friendly
    design.
 9. **Every major decision is documented** (this directory), **tests accompany meaningful functionality**, and the repo
@@ -90,8 +96,8 @@ Corrections to the research document, verified from source:
        ┌─────────────────────────────┼───────────────────────────────┐
        │              │              │              │                │
  ┌─────▼─────┐  ┌──────▼──────┐  ┌───▼─────┐  ┌─────▼─────┐   ┌──────▼──────┐
- │ media     │  │ discovery   │  │ requests│  │ system    │   │ users/auth  │
- │ movies/ser│  │ indexers    │  │ (seerr) │  │ commands  │   │ api keys    │
+ │ media     │  │ discovery   │  │ acquisi-│  │ system    │   │ auth        │
+ │ movies/ser│  │ indexers    │  │ tion    │  │ commands  │   │ api keys    │
  └───────────┘  └─────────────┘  └─────────┘  └───────────┘   └─────────────┘
        │              │              │                │               │
        └──────────────┴──────────────┴────────────────┴───────────────┘
@@ -121,26 +127,25 @@ Corrections to the research document, verified from source:
 ```text
 media-nexus/
 ├── apps/
-│   ├── api/            NestJS API (modules: system, media, discovery, acquisition, requests, users, jobs, notifications)
-│   └── web/            React/Vite UI (dashboard, library, activity, requests, system shells)
+│   ├── api/            NestJS API (modules: system, media, discovery, acquisition, media-servers, auth, jobs, notifications)
+│   └── web/            React/Vite UI (dashboard, library, activity, calendar, system shells)
 ├── packages/
 │   ├── domain/         Unified domain model: entity types, zod validation schemas, domain constants
 │   ├── database/       Drizzle schema (full intended model), client factory, migrations, seeds
 │   ├── integrations/   Provider contracts: Indexer, DownloadClient, Metadata, Notification, MediaServer, Auth, Storage
 │   ├── jobs/           DB-backed job framework: definitions, runs, queue, retries, progress
 │   ├── events/         Domain event envelope + in-process bus + audit listener
-│   ├── compatibility/  Compatibility-layer framework + adapter scaffolding (sonarr/radarr/prowlarr/seerr)
+│   ├── compatibility/  Compatibility-layer framework + adapter scaffolding (sonarr/radarr/prowlarr)
 │   └── shared/         Config/env schemas, error model, API constants, logger, IDs
 ├── docs/               architecture / implementation / development / deployment / legal
-├── docker/             compose files, nginx conf, env templates, entrypoints
-├── scripts/            dev/ops helpers (db migrate, seed, healthcheck)
+├── docker/             Dockerfile (single-container image), compose example, env templates
+├── scripts/            dev/ops helpers (db migrate, seed, healthcheck, upstream import)
 ├── .github/            CI workflow
-├── Dockerfile          root convenience Dockerfiles inherited by apps
-├── docker-compose.yml  top-level `docker compose up -d`
+├── docker-compose.yml  top-level `docker compose up -d` (single `app` service)
 └── README.md
 ```
 
-> **Status accuracy:** the scaffold is verified **native** (build, test, run). Docker images/compose are authored and I ran `docker compose config`-valid checks, but they are **not executed** here (no Docker daemon in this environment) — CI builds both images before we claim Docker-verified. PostgreSQL is a planned driver (M1.1); SQLite is the live default.
+> **Status accuracy:** the scaffold is verified **native** (build, test, run). Docker image/compose are authored and I ran `docker compose config`-valid checks, but they are **not executed** here (no Docker daemon in this environment) — CI builds the single image before we claim Docker-verified. PostgreSQL is a planned driver (M1.1); SQLite is the live default.
 
 ## 6. Decision summary (details in `technology-decisions.md`)
 
@@ -155,7 +160,7 @@ media-nexus/
 | Events | In-process domain event bus + persisted audit log now; outbox + Redis Streams later |
 | Frontend | React + Vite + Tailwind CSS + TanStack Query + Zustand + React Router |
 | Testing | Vitest (unit), NestJS e2e/supertest (integration), Playwright (E2E, later) |
-| Deployment | Multi-stage Docker; `docker compose up -d` (api + web + optional postgres); GitHub Actions CI |
+| Deployment | Multi-stage Docker, single `app` image (API serves the built web UI, no nginx); `docker compose up -d`; GitHub Actions CI publishes the image on tag push |
 | License of this repo | MIT (chosen to permit broad reuse); GPL-derived behavior is reimplemented against public specs, never copied |
 
 See [technology-decisions.md](./technology-decisions.md) for rationale, alternatives, trade-offs and consequences for every

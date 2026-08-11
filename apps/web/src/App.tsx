@@ -4,10 +4,10 @@ import { HashRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
+import Discover from "./pages/Discover";
 import Movies from "./pages/Movies";
 import Series from "./pages/Series";
 import Activity from "./pages/Activity";
-import Requests from "./pages/Requests";
 import Indexers from "./pages/Indexers";
 import Clients from "./pages/Clients";
 import SeriesDetail from "./pages/SeriesDetail";
@@ -57,11 +57,11 @@ export default function App() {
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<Dashboard />} />
+            <Route path="discover" element={<Discover />} />
             <Route path="movies" element={<Movies />} />
             <Route path="series" element={<Series />} />
             <Route path="series/:id" element={<SeriesDetail />} />
             <Route path="activity" element={<Activity />} />
-            <Route path="requests" element={<Requests />} />
             <Route path="indexers" element={<Indexers />} />
             <Route path="calendar" element={<Calendar />} />
             <Route path="clients" element={<Clients />} />

@@ -82,7 +82,8 @@ compatibility, Docker-first, strong typing, strong testing, long-term maintainab
 - **Context:** modern, polished, one-app UX (dark/light, responsive, keyboard nav, tables/forms/dialogs/toasts/loading/
   empty/error states, command palette). React 18/19 is the shared ecosystem of all four upstreams.
 - **Alternatives:** Next.js (what Seerr uses — but we don't need SSR/ship a SPA behind a static host; Vite is simpler for
-  Docker nginx hosting); Svelte/Solid (nicer DX but off-ecosystem); plain jQuery/etc. (n/a).
+  single-container Docker hosting where the API serves the built SPA directly); Svelte/Solid (nicer DX but off-ecosystem);
+  plain jQuery/etc. (n/a).
 - **Decision:** **Vite + React + TypeScript**, Tailwind CSS for the design system, TanStack Query for server state,
   Zustand for client state, React Router for nav. (Next.js remains acceptable later if SSR/SEO ever matters.)
 - **Consequences:** + fast dev, epic ecosystem, easy static Docker hosting. − client-side only (fine for a self-hosted app).
@@ -96,23 +97,33 @@ compatibility, Docker-first, strong typing, strong testing, long-term maintainab
 - **Consequences:** + runtime validation + Swagger in one pass, typed domain contracts. − some duplication between zod and
   class-validator; mapped in a shared mapping utility and scheduled for consolidation into a generated client (roadmap).
 
-## ADR-009 — Docker: multi-stage builds, compose with api+web(+optional postgres), health checks
+## ADR-009 — Docker: single-container image (API serves the built web UI), health checks
 
-- **Context:** `docker compose up -d` with persistent volumes, timezone, UID/GID, health checks, secrets via env.
-  (Docker is **not** available in the current dev environment; Dockerfiles/compose are authored and reviewed for
-  correctness but not executed here — the scaffold is equivalently validated by building and running natively.)
-- **Decision:** `apps/api` and `apps/web` each get a multi-stage Dockerfile; nginx serves the web SPA and reverse-proxies
-  `/api` to the API container; docker-compose wires api + web + optional `postgres`; non-root runtime user; env-driven
-  config/secret injection; `/health/live` + `/health/ready` healthchecks with compose `start_period`.
-- **Consequences:** + simple single-compose deploy; − Postgres left optional to keep the default lightweight (SQLite volume
-  is the default), documented in `deployment/docker.md`.
+- **Context:** `docker compose up -d` with persistent volumes, timezone, health checks, secrets via env. (Docker is
+  **not** available in the current dev environment; `docker/Dockerfile` and compose are authored/`docker compose
+  config`-validated but not executed here — CI builds the image on tag push.)
+- **Decision:** one multi-stage `docker/Dockerfile` (build context = repo root) builds `apps/web` and copies its `dist`
+  into the API image at `/app/web`; the NestJS API serves the built SPA directly (static assets + a catch-all SPA-fallback
+  route) on port 7373, mapped to the host via `WEB_PORT` (default 8080). There is no nginx and no second container — this
+  supersedes an earlier two-container design (a separate `api` + nginx-fronted `web` container) that existed before the
+  web UI became same-origin with the API; env-driven config/secret injection; `/health/live` + `/health/ready`
+  healthchecks with compose `start_period`.
+- **Consequences:** + simplest possible deploy (one image, one port, no CORS/reverse-proxy config to get right); one
+  fewer moving part to secure or misconfigure. − the API process also serves static assets (acceptable for a self-hosted
+  app that is explicitly not meant to sit behind a public reverse proxy — see `docs/security.md`). Postgres remains a
+  documented future driver, not a compose service today (SQLite volume is the default), documented in
+  `deployment/docker.md`.
 
-## ADR-010 — Auth: API keys (header `X-Api-Key`) now; JWT/Plex-Jellyfin identity later
+## ADR-010 — Auth: single-tier API key (header `X-Api-Key`), `_arr`-style
 
-- **Context:** _arr ecosystem clients authenticate with `X-Api-Key`; Seerr uses identity (Plex/Jellyfin) + JWT. Unified auth
-  must serve both and be forward-compatible.
-- **Decision:** API-key auth backed by `api_key` (hashed) for `/api/v1` now — one wire format for automation and compat
-  surfaces; JWT/session + Plex/Jellyfin login designed into the model (`user`, `api_key`, `user_settings`) and gated behind
-  roadmap M6.
-- **Consequences:** + immediate _arr-client compatibility, simple and testable. − no interactive login yet; explicitly
-  scoped out of the scaffold (noted in API doc + README).
+- **Context:** _arr ecosystem clients authenticate with a single `X-Api-Key`. MediaNexus originally also modeled Seerr-style
+  per-user identity (accounts, roles, JWT) to back a request/approval workflow; that whole workflow — and the user
+  accounts it required — was deliberately removed to match the simpler _arr trust model.
+- **Decision:** API-key auth backed by `api_key` (hashed) is the **only** auth mechanism, for `/api/v1` and the
+  compatibility surfaces alike. Any valid key resolves to a full-access `Principal` (`{ keyId, isAdmin: true, scopes }`)
+  — there is no per-user identity, no JWT, no login screen. Bootstrap mints one system key on first run
+  (`MEDIA_NEXUS_BOOTSTRAP_KEY` can pin it, e.g. for CI).
+- **Consequences:** + immediate _arr-client compatibility, minimal attack surface, nothing to misconfigure around roles.
+  − not intended for multi-tenant or internet-facing use — the app is meant to stay on a trusted LAN/private network (see
+  `docs/security.md`). A future TMDB discover view and Plex watchlist integration (the remaining Seerr-derived roadmap
+  scope) do not require reintroducing per-user accounts.

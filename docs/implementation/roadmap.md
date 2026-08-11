@@ -3,6 +3,14 @@
 Milestones are ordered by **dependency and risk**. Each milestone is: goal, features, dependencies, tests, acceptance
 criteria, upstream references, compatibility implications. Scope/status legend: ✅ done in scaffold, ⏳ next, 🔲 later.
 
+> **Scope reduction (post-M8):** user accounts/login/roles, the request+approval workflow, the personal
+> watchlist/content-blocklist, and the `/api/seerr/v1` compatibility surface were **removed** — they are kept in the
+> milestone history below for context but are **no longer present**. Auth is now single-tier: any valid `X-Api-Key` is a
+> full-access system key, the same trust model as Sonarr/Radarr/Prowlarr's own API-key auth (see
+> [technology-decisions.md](../architecture/technology-decisions.md) ADR-010). The only Seerr-derived work still in
+> scope going forward is a TMDB-backed discover view and Plex account/watchlist integration — both **not yet built**;
+> everything else Seerr-shaped is deliberately out of scope, not a near-term item to restore.
+
 ---
 
 ## M0 — Foundations & scaffold ✅ (this milestone)
@@ -116,27 +124,25 @@ not here; full Cardigann engine breadth (many tracker defs will need per-definit
 **Compatibility implications:** Prowlarr `indexer` CRUD + **indexer sync to Sonarr/Radarr/Prowlarr surfaces** lands here —
 this is the highest-value interop for existing users.
 
-## M4 — Requests module (Seerr parity) ✅
+## M4 — Requests module (Seerr parity) ✅, later **removed**
 
-**Goal:** full request lifecycle with users: request → approval → auto-search → availability.
+**Goal (as originally built):** full request lifecycle with users: request → approval → auto-search → availability.
 
-**Features (done):** user accounts + roles (admin/moderator/USER) with scoped API keys and request authz;
-`request_item` season granularity; **real approval → auto-search → auto-grab** (`media.searchForRequest`, movies + series);
-request lifecycle `pending → approved → processing → fulfilled/failed` with **imports marking requests fulfilled**;
-**webhook notifications** (JSON, secret, per-event subscription) for request/import events; **watchlist + content blocklist**
-(principal-scoped); **Jellyfin media-server provider** (HTTP API) + `media.availabilityRefresh` job; restricted users
-submit + see only their own requests. (Plex login / server-user import deferred to M8; notifications beyond webhook to M5.)
+**Features (done, then removed):** user accounts + roles (admin/moderator/USER) with scoped API keys and request authz;
+`request_item` season granularity; approval → auto-search → auto-grab (`media.searchForRequest`, movies + series);
+request lifecycle `pending → approved → processing → fulfilled/failed`; webhook notifications for request/import events;
+watchlist + content blocklist (principal-scoped); restricted users submitting + seeing only their own requests. All of
+the above — user accounts/login/roles, the request+approval workflow, and the personal watchlist/content-blocklist —
+was **deliberately removed** in a later cleanup (see the scope-reduction note at the top of this file); the `user`,
+`request`, `request_item`, `watchlist` and `user_content_blocklist` tables are gone (migration
+`0003_drop_seerr_tables.sql`).
 
-**Dependencies:** M1 (search/grab), M0 (request tables), media-server provider (first: Jellyfin/Plex).
+**Kept:** the **Jellyfin media-server provider** (HTTP API) + `media.availabilityRefresh` job survived the cleanup —
+moved to its own `apps/api/src/media-servers/` module, functionally unchanged, and is the seed for a **future** Plex
+watchlist integration (not yet built).
 
-**Tests:** approval state machine, request→search event-to-job mapping, permission tests.
-
-**Acceptance criteria (verified end-to-end):** a restricted USER submits a request (stays pending, cannot approve, sees only
-own requests); an admin approves → event→job `media.searchForRequest` auto-searches a real Newznab, grabs via SABnzbd,
-downloads+imports, and the request flips to **fulfilled**; a webhook receives created/approved/import/fulfilled events; watchlist + content
-blocklist work per user.
-
-**Compatibility implications:** Seerr-compatible read+write surfaces (`request`, `media`, `discover`, `auth/*`).
+**Compatibility implications:** none currently — the Seerr-compatible read+write surfaces (`request`, `media`,
+`discover`, `auth/*`) that were delivered in M6b were removed along with this milestone's tables.
 
 ## M5 — Notifications, realtime, hardening
 
@@ -161,7 +167,8 @@ quality profiles, episodes, `command` (maps to native jobs: SeriesSearch/MoviesS
 refresh), Prowlarr indexer list + **search proxy** (so Sonarr/Radarr can use MediaNexus-as-Prowlarr and search through it).
 Compatibility **contract tests** (packages/compatibility) lock the upstream wire shapes; an e2e adds/lists a series via
 `/api/sonarr/v3/series`, adds/lists a movie via `/api/radarr/v3/movie`, and searches via the Prowlarr proxy.
-Remaining: Seerr-compatible surface (next), Prowlarr push-sync to native *_arr apps, deeper Sonarr v5/Radarr v4 parity.
+Remaining (as of M6): Seerr-compatible surface (next, delivered in M6b and later removed — see M6b/M4 below), Prowlarr
+push-sync to native *_arr apps, deeper Sonarr v5/Radarr v4 parity.
 
 **Goal:** existing ecosystem clients work against MediaNexus.
 
@@ -177,18 +184,19 @@ against MediaNexus; Sonarr can add MediaNexus-as-Prowlarr indexer and search thr
 
 **Compatibility implications:** this milestone *is* the compatibility surface; native API untouched.
 
-## M6b — Seerr-compatible surface ✅ + Metadata import (TMDB) ✅
+## M6b — Seerr-compatible surface ✅ (later **removed**) + Metadata import (TMDB) ✅
 
-- **Seerr surface (`/api/seerr/v1`):** status, `auth/local` login (username/email + password → a fresh usable API-key
-  token via native auth), `auth/me`, `auth/logout`, requests list + create (maps Seerr `mediaId` = TMDB id to native
-  media via `(tmdbId/tvdbId)` lookup), `media/:tmdbId`, `discover/movies|tv`, `search`, `settings/public`. Contract tests
-  lock Seerr/Overseerr wire shapes + the status-code enum; an e2e logs in, creates a request (auto-approved for admins →
-  status 2), and serves discover/me.
-- **Metadata import (TMDB):** TMDB provider (search / details / `tv/:id/season/:n` episodes, `find` for tvdb↔tmdb, `memory`
-  test-double); settings `metadata.tmdbApiKey`/`metadata.tmdbBaseUrl`; `POST /series/:id/metadata` **auto-creates seasons
-  + episodes**, `POST /movies/:id/metadata` enriches overview/genres/releaseDate, `GET /metadata/search`, and a
-  `media.metadataRefresh` job; UI buttons (Series detail "Import from TMDB", Movies refresh). Verified with a mock TMDB
-  e2e (series gains S01E01 "Pilot" with air date; movie gets overview/genres).
+- **Seerr surface (`/api/seerr/v1`), removed:** originally shipped status, `auth/local` login, `auth/me`, `auth/logout`,
+  requests list + create, `media/:tmdbId`, `discover/movies|tv`, `search`, `settings/public`. It was removed along with
+  the request/user-accounts workflow it depended on. Worth noting even while it existed it never actually queried TMDB —
+  `discover`/`search` just dressed up the local library as fake results. It is not on the roadmap to restore; see the
+  scope-reduction note at the top of this file for what Seerr-derived work is still planned.
+- **Metadata import (TMDB), kept and unaffected by the removal:** TMDB provider (search / details / `tv/:id/season/:n`
+  episodes, `find` for tvdb↔tmdb, `memory` test-double); settings `metadata.tmdbApiKey`/`metadata.tmdbBaseUrl`;
+  `POST /series/:id/metadata` **auto-creates seasons + episodes**, `POST /movies/:id/metadata` enriches
+  overview/genres/releaseDate, `GET /metadata/search`, and a `media.metadataRefresh` job; UI buttons (Series detail
+  "Import from TMDB", Movies refresh). Verified with a mock TMDB e2e (series gains S01E01 "Pilot" with air date; movie
+  gets overview/genres). This is the real TMDB integration that the planned discover-page work will build on.
 
 ## M7 — Data migration from live apps
 
@@ -197,12 +205,16 @@ model:
 - **Sonarr** — series, seasons, episodes (monitoring/air-dates), quality profiles, history (EventType→action), indexers
 - **Radarr** — movies, quality profiles, history, indexers
 - **Prowlarr** — indexers (settings JSON passthrough)
-- **Seerr/Overseerr** — users, media availability, requests (status mapped to ours), watchlists
+
+A Seerr/Overseerr importer (`--kind seerr` — users, requests, watchlists) originally existed here too; it was removed
+along with the user-accounts/request/watchlist tables it fed (see the scope-reduction note at the top of this file).
+`--kind` now accepts only `sonarr|radarr|prowlarr`.
+
 Idempotent via upstream-id-derived keys; reports per-entity counts + un-mapped rows. CLI `npm run import:upstream --
 --kind <x> --db <upstream.db> [--target <media-nexus.db>]` plus a programmatic `runImport`; Postgres-exports migration
-and a web-UI migration wizard are follow-ups. Verified: fixture DBs for all four upstreams + CLI smoke + idempotency.
+and a web-UI migration wizard are follow-ups. Verified: fixture DBs for Sonarr/Radarr/Prowlarr + CLI smoke + idempotency.
 
-**Goal:** users migrate existing Sonarr/Radarr/Prowlarr/Seerr installs without data loss.
+**Goal:** users migrate existing Sonarr/Radarr/Prowlarr installs without data loss.
 
 **Features:** CLI import from SQLite/Postgres exports (or live API) mapping upstream entities → unified model; idempotent
 re-run; report of un-imported data.
@@ -212,7 +224,7 @@ re-run; report of un-imported data.
 **Tests:** fixture databases from each upstream → assertions on resulting unified rows.
 
 **Acceptance criteria:** importing a real Sonarr DB preserves series, monitoring, quality profiles, history (mapped),
-indexer configs; importing Seerr preserves users, requests, watchlists.
+indexer configs.
 
 ## M8 — Release hardening
 
@@ -221,8 +233,9 @@ download-clients/config/media-servers; admin-gate config-PUT + metadata refresh;
 a security doc (`docs/security.md` + authz matrix + hardening checklist), Playwright browser E2E for critical journeys
 (config + spec + CI job), a CI publish-on-tag GHCR job, and an upgrade/migration runbook. The browser run is gated to CI
 (this dev environment has no reliable dual-server/browser autoboot); everything else is locally verified.
-Remaining follow-ups: JWT/Plex login sessions, refreshable scoped API keys, CSRF review when cookie sessions land,
-Postgres support, load-smoke/performance pass, Docker-container verification here.
+Remaining follow-ups: refreshable/rotatable API keys with scope enforcement beyond `*`, Postgres support,
+load-smoke/performance pass, Docker-container verification here. (JWT/Plex login sessions are no longer planned — auth
+is deliberately single-tier API-key now, see ADR-010; a future Plex integration is scoped as watchlist sync, not login.)
 
 **Goal:** production-ready distribution.
 

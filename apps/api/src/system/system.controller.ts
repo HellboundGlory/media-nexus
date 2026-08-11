@@ -6,7 +6,7 @@ import { ApiError, runtimeSettingsSchema } from "@medianexus/shared";
 import { UseGuards } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { redactDeep } from "../common/redact";
-import { AdminGuard } from "../requests/admin.guard";
+import { AdminGuard } from "../common/admin.guard";
 import { SystemStatusService } from "./system-status.service";
 import { ConfigService } from "./config.service";
 

@@ -26,6 +26,31 @@ export interface TmdbMovieDetail {
   genres?: { name: string }[]; poster_path?: string | null;
 }
 
+export type DiscoverCategory = "trending" | "popular" | "upcoming" | "top_rated";
+
+export interface DiscoverItem {
+  tmdbId: number;
+  mediaType: "movie" | "series";
+  title: string;
+  overview: string;
+  releaseDate: string | null;
+  year: number | null;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  rating: number | null;
+}
+export interface DiscoverPage {
+  page: number;
+  totalPages: number;
+  totalResults: number;
+  results: DiscoverItem[];
+}
+interface TmdbDiscoverRawItem {
+  id: number; title?: string; name?: string; overview?: string;
+  release_date?: string | null; first_air_date?: string | null;
+  poster_path?: string | null; backdrop_path?: string | null; vote_average?: number;
+}
+
 export class TmdbProvider implements MetadataProviderContract {
   readonly key = "tmdb";
   private readonly settings: TmdbSettings;
@@ -80,8 +105,37 @@ export class TmdbProvider implements MetadataProviderContract {
   }
 
   async tvdbIdForTmdb(tmdbId: number): Promise<number | null> {
-    const d = await this.get<TmdbSeriesDetail>(`/tv/${tmdbId}`);
+    // external_ids is only present on /tv/{id} when explicitly appended
+    const d = await this.get<TmdbSeriesDetail>(`/tv/${tmdbId}`, { append_to_response: "external_ids" });
     return d.external_ids?.tvdb_id ?? null;
+  }
+
+  /** Trending/popular/upcoming/top-rated browse lists (TMDB list endpoints, paginated). */
+  async discover(mediaType: "movie" | "series", category: DiscoverCategory, page = 1): Promise<DiscoverPage> {
+    const data = await this.get<{ page: number; total_pages: number; total_results: number; results?: TmdbDiscoverRawItem[] }>(
+      this.discoverPath(mediaType, category), { page: String(page) },
+    );
+    const results = (data.results ?? []).map((r): DiscoverItem => ({
+      tmdbId: r.id,
+      mediaType,
+      title: r.title ?? r.name ?? "",
+      overview: r.overview ?? "",
+      releaseDate: r.release_date ?? r.first_air_date ?? null,
+      year: (r.release_date ?? r.first_air_date) ? Number(String(r.release_date ?? r.first_air_date).slice(0, 4)) : null,
+      posterUrl: r.poster_path ? `https://image.tmdb.org/t/p/w342${r.poster_path}` : null,
+      backdropUrl: r.backdrop_path ? `https://image.tmdb.org/t/p/w780${r.backdrop_path}` : null,
+      rating: r.vote_average ?? null,
+    }));
+    return { page: data.page, totalPages: data.total_pages, totalResults: data.total_results, results };
+  }
+
+  private discoverPath(mediaType: "movie" | "series", category: DiscoverCategory): string {
+    if (category === "trending") return `/trending/${mediaType === "movie" ? "movie" : "tv"}/week`;
+    const kind = mediaType === "movie" ? "movie" : "tv";
+    const suffix = category === "popular" ? "popular"
+      : category === "upcoming" ? (mediaType === "movie" ? "upcoming" : "on_the_air")
+      : "top_rated";
+    return `/${kind}/${suffix}`;
   }
 
   /** All seasons + episodes for a series. */

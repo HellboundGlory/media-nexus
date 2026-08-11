@@ -1,12 +1,4 @@
 // SPDX-License-Identifier: MIT
-export interface Principal {
-  keyId: string;
-  userId: string | null;
-  username: string | null;
-  isAdmin: boolean;
-  scopes: string[];
-}
-
 export interface Movie {
   id: string;
   tmdbId: number | null;
@@ -27,6 +19,7 @@ export interface Movie {
 export interface Series {
   id: string;
   tvdbId: number | null;
+  tmdbId: number | null;
   imdbId: string | null;
   title: string;
   overview: string;
@@ -87,17 +80,6 @@ export interface SystemStatus {
   started: string;
   uptimeSeconds: number;
   database: { vendor: string };
-}
-
-export interface RequestRow {
-  id: string;
-  userRequestorId: string | null;
-  mediaType: "movie" | "series";
-  mediaId: string;
-  status: string;
-  isAutoApproval: boolean;
-  mediaTitle: string | null;
-  requestedAt: string;
 }
 
 export interface HistoryRow {
@@ -184,4 +166,28 @@ export interface JobRun {
   error?: string;
   finishedAt?: string;
   createdAt?: string;
+}
+
+export type DiscoverMediaType = "movie" | "series";
+export type DiscoverCategory = "trending" | "popular" | "upcoming" | "top_rated";
+
+export interface DiscoverItem {
+  tmdbId: number;
+  mediaType: DiscoverMediaType;
+  title: string;
+  overview: string;
+  releaseDate: string | null;
+  year: number | null;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  rating: number | null;
+  inLibrary: boolean;
+  libraryId: string | null;
+}
+
+export interface DiscoverPage {
+  page: number;
+  totalPages: number;
+  totalResults: number;
+  results: DiscoverItem[];
 }

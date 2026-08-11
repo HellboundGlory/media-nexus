@@ -26,7 +26,7 @@ export class AuditListener implements OnModuleInit {
       await this.db.insert(schema.auditLog).values({
         id: `audit_${event.id.replace(/-/g, "").slice(0, 20)}`,
         correlationId: event.correlationId,
-        actor: event.aggregate.userId ?? "system",
+        actor: "system",
         action: event.type,
         entityType: event.aggregate.aggType ?? null,
         entityId: event.aggregate.aggId ?? null,

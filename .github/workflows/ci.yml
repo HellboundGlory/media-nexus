@@ -42,7 +42,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Boot API + Vite
         run: |
-          { NODE_ENV=test PORT=7373 DATABASE_URL=file:/tmp/mn-e2e.db MEDIA_NEXUS_SECRET=e2e-secret-only-123 MEDIA_NEXUS_BOOTSTRAP_KEY=e2e-key MEDIA_NEXUS_BOOTSTRAP_ADMIN_PASSWORD=e2e-pw node apps/api/dist/main.js >/tmp/api.log 2>&1 & }
+          { NODE_ENV=test PORT=7373 DATABASE_URL=file:/tmp/mn-e2e.db MEDIA_NEXUS_SECRET=e2e-secret-only-123 MEDIA_NEXUS_BOOTSTRAP_KEY=e2e-key node apps/api/dist/main.js >/tmp/api.log 2>&1 & }
           ( cd apps/web && npx vite --host 127.0.0.1 --port 5173 --strictPort >/tmp/web.log 2>&1 & )
           for i in $(seq 1 60); do
             curl -fsS http://127.0.0.1:7373/health/live >/dev/null 2>&1 && curl -fsS -o /dev/null http://127.0.0.1:5173/ >/dev/null 2>&1 && break
@@ -72,17 +72,10 @@ jobs:
         run: |
           echo "TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
           echo "IMAGE_REPO=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-      - name: Build & publish api
+      - name: Build & publish
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: docker/api.Dockerfile
+          file: docker/Dockerfile
           push: true
-          tags: ghcr.io/${{ env.IMAGE_REPO }}/api:${{ env.TAG }},ghcr.io/${{ env.IMAGE_REPO }}/api:latest
-      - name: Build & publish web
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: docker/web.Dockerfile
-          push: true
-          tags: ghcr.io/${{ env.IMAGE_REPO }}/web:${{ env.TAG }},ghcr.io/${{ env.IMAGE_REPO }}/web:latest
+          tags: ghcr.io/${{ env.IMAGE_REPO }}/app:${{ env.TAG }},ghcr.io/${{ env.IMAGE_REPO }}/app:latest

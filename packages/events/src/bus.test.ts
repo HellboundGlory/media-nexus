@@ -33,8 +33,8 @@ describe("EventBus", () => {
   });
 
   it("envelope carries correlationId + aggregate", () => {
-    const ev = domainEvent(EventTypes.RequestCreated, { requestId: "r1" }, { aggType: "movie", aggId: "m1" });
-    expect(ev.type).toBe(EventTypes.RequestCreated);
+    const ev = domainEvent(EventTypes.MovieAdded, { movieId: "m1" }, { aggType: "movie", aggId: "m1" });
+    expect(ev.type).toBe(EventTypes.MovieAdded);
     expect(ev.version).toBe(1);
     expect(ev.id).toBeTruthy();
     expect(ev.correlationId).toBeTruthy();

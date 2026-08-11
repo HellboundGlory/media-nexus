@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 import { z } from "zod";
-import { mediaTypeSchema } from "./media-type";
 
 export const createMovieSchema = z.object({
   tmdbId: z.number().int().positive().optional(),
@@ -17,6 +16,7 @@ export type CreateMovie = z.infer<typeof createMovieSchema>;
 
 export const createSeriesSchema = z.object({
   tvdbId: z.number().int().positive().optional(),
+  tmdbId: z.number().int().positive().optional(),
   imdbId: z.string().optional(),
   title: z.string().min(1),
   overview: z.string().default(""),
@@ -58,20 +58,4 @@ export const createIndexerSchema = z.object({
 });
 export type CreateIndexer = z.infer<typeof createIndexerSchema>;
 
-export const createRequestSchema = z.object({
-  mediaType: mediaTypeSchema,
-  mediaId: z.string(),
-  seasons: z.array(z.number().int().min(0)).default([]),
-});
-export type CreateRequest = z.infer<typeof createRequestSchema>;
-
 export const upsertSettingSchema = z.record(z.string(), z.unknown());
-
-/** Bootstrap user create (admin). */
-export const createSystemUserSchema = z.object({
-  username: z.string().min(3).max(64),
-  password: z.string().min(8).max(256),
-  email: z.string().email().optional(),
-  isAdmin: z.boolean().default(true),
-});
-export type CreateSystemUser = z.infer<typeof createSystemUserSchema>;

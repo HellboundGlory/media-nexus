@@ -1,10 +1,12 @@
 # MediaNexus — `docker compose up -d`
 # Set MEDIA_NEXUS_SECRET in .env (copy from .env.example) before first run.
+# Single container: the API serves the web UI directly. Never publish this port
+# to the public internet — there is no login/auth beyond one system API key.
 services:
-  api:
+  app:
     build:
       context: .
-      dockerfile: docker/api.Dockerfile
+      dockerfile: docker/Dockerfile
     env_file:
       - .env
     environment:
@@ -23,6 +25,8 @@ services:
       - ./data/config:/data/config
       - ./data/media:/data/media
       - ./data/downloads:/data/downloads
+    ports:
+      - "${WEB_PORT:-8080}:7373"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7373/health/ready"]
       interval: 30s
@@ -30,17 +34,6 @@ services:
       start_period: 40s
       retries: 3
     stop_grace_period: 20s
-    restart: unless-stopped
-
-  web:
-    build:
-      context: .
-      dockerfile: docker/web.Dockerfile
-    depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "8080:80"
     restart: unless-stopped
 
 volumes:

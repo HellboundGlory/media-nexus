@@ -5,7 +5,7 @@ import { z } from "zod";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { MediaServersService } from "./media-servers.service";
 import type { MediaServerConfig } from "@medianexus/shared";
-import { AdminGuard } from "./admin.guard";
+import { AdminGuard } from "../common/admin.guard";
 
 const serversBody = z.object({ servers: z.array(z.any()).max(20) });
 

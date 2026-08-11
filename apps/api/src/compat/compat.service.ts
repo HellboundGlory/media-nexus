@@ -1,18 +1,11 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { ApiError } from "@medianexus/shared";
-import { count, desc, eq } from "drizzle-orm";
+import { desc } from "drizzle-orm";
 import type { NextFunction, Request, Response } from "express";
 import {
   buildSonarrV3SurfaceSource,
   buildRadarrV3Surface,
   buildProwlarrV1Surface,
-  buildSeerrV1Surface,
-  seerrStatus,
-  type SeerrNativeSource,
-  type SeerrUser,
-  type SeerrTitle,
-  type SeerrRequest,
   type CompatSurface,
   type CompatSeries,
   type CompatMovie,
@@ -28,8 +21,6 @@ import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import { SystemStatusService } from "../system/system-status.service";
-import { AuthService } from "../auth/auth.service";
-import { RequestsService } from "../requests/requests.service";
 import { SeriesService } from "../series/series.service";
 import { MoviesService } from "../movies/movies.service";
 import { JobsService } from "../jobs/jobs.service";
@@ -52,14 +43,11 @@ export class CompatService {
     private readonly movies: MoviesService,
     private readonly jobs: JobsService,
     private readonly indexers: IndexersService,
-    private readonly auth: AuthService,
-    private readonly requestsService: RequestsService,
   ) {
     this.surfaces = [
       buildSonarrV3SurfaceSource(this.sonarrSource()),
       buildRadarrV3Surface(this.radarrSource()),
       buildProwlarrV1Surface(this.prowlarrSource()),
-      buildSeerrV1Surface(this.seerrSource()),
     ];
   }
 
@@ -202,86 +190,6 @@ export class CompatService {
     };
   }
 
-
-  // ---------- Seerr v1 ----------
-  private seerrSource(): SeerrNativeSource {
-    const s = this.statusSvc.status();
-    return {
-      version: () => s.version,
-      commitTag: () => "develop",
-      totals: async () => {
-        const [reqs] = await this.db.select({ n: count() }).from(schema.request);
-        const [movies] = await this.db.select({ n: count() }).from(schema.movie);
-        const [tv] = await this.db.select({ n: count() }).from(schema.series);
-        return { requests: reqs.n, movies: movies.n, tv: tv.n };
-      },
-      settingsPublic: async () => ({ initialized: true, onboarding: false, locale: "en", region: "US", originalLanguage: "en", appName: "MediaNexus", url: "", emailEnabled: false }),
-      login: async (identifier, password) => {
-        const user = await this.auth.findByIdentifier(identifier);
-        if (!user || !user.passwordHash) return null;
-        const ok = await this.auth.verifyPassword(password, user.passwordHash);
-        if (!ok) return null;
-        // mint a fresh usable API key per session (raw returned once; only its hash is stored)
-        const { rawKey } = await this.auth.createApiKey({ name: `seerr-${Date.now()}`, userId: user.id });
-        return {
-          id: user.id, email: user.email, username: user.username, permissions: user.isAdmin ? 2 : 1,
-          requestCount: 0, avatar: "", token: rawKey,
-        } satisfies SeerrUser;
-      },
-      me: async (token) => {
-        const principal = await this.auth.authenticateKey(token).catch(() => null);
-        if (!principal) return null;
-        const user = principal.userId ? await this.auth.findById(principal.userId) : null;
-        return { id: principal.userId ?? "system", email: user?.email ?? null, username: principal.username ?? "system", permissions: principal.isAdmin ? 2 : 1, requestCount: 0, avatar: "" };
-      },
-      logout: async (token) => {
-        const principal = await this.auth.authenticateKey(token).catch(() => null);
-        if (principal) await this.auth.deleteApiKey(principal.keyId);
-      },
-      listRequests: async (page, take) => {
-        const all = await this.requestsService.list({});
-        const items = all.slice((page - 1) * take, page * take).map((r): SeerrRequest => ({
-          id: r.id, mediaId: r.mediaId, mediaType: r.mediaType as "movie" | "tv",
-          status: seerrStatus(r.status), createdAt: r.requestedAt, updatedAt: r.updatedAt,
-        }));
-        return { items, total: all.length };
-      },
-      createRequest: async (mediaType, tmdbId, token) => {
-        const principal = await this.auth.authenticateKey(token).catch(() => null);
-        const nativeId = await this.findByTmdb(mediaType, Number(tmdbId));
-        if (!nativeId) throw new ApiError({ code: "NOT_FOUND", message: "No native title for this tmdbId" });
-        const nativeType = mediaType === "tv" ? "series" : "movie";
-        const created = await this.requestsService.create({ mediaType: nativeType, mediaId: nativeId, seasons: [] }, principal ?? undefined);
-        return { id: created.id, mediaId: tmdbId, mediaType, status: seerrStatus(created.status), createdAt: created.requestedAt, updatedAt: created.updatedAt };
-      },
-      media: async (tmdbId) => {
-        const id = await this.findByTmdb("movie", Number(tmdbId)) ?? await this.findByTmdb("tv", Number(tmdbId));
-        if (!id) return null;
-        const row = await this.db.select().from(schema.mediaAvailability).where(eq(schema.mediaAvailability.mediaId, id)).limit(1);
-        return ({ id, title: String(tmdbId), mediaType: "movie", tmdbId: Number(tmdbId), status: row[0]?.status ?? "unknown", year: null }) satisfies SeerrTitle;
-      },
-      discover: async (mediaType) => {
-        if (mediaType === "movie") {
-          return (await this.movies.list({})).items.map((m): SeerrTitle => ({ id: m.id, title: m.title, mediaType: "movie", tmdbId: m.tmdbId, status: m.hasFile ? "available" : "unknown", year: m.releaseDate ? Number(m.releaseDate.slice(0, 4)) : null, overview: m.overview }));
-        }
-        return (await this.series.list({})).items.map((x): SeerrTitle => ({ id: x.id, title: x.title, mediaType: "tv", tmdbId: x.tvdbId, status: "unknown", year: x.firstAirYear, overview: x.overview }));
-      },
-      search: async (query) => {
-        const movies = (await this.movies.list({ search: query })).items.map((m): SeerrTitle => ({ id: m.id, title: m.title, mediaType: "movie", tmdbId: m.tmdbId, year: m.releaseDate ? Number(m.releaseDate.slice(0, 4)) : null, overview: m.overview }));
-        const tv = (await this.series.list({ search: query })).items.map((x): SeerrTitle => ({ id: x.id, title: x.title, mediaType: "tv", tmdbId: x.tvdbId, year: x.firstAirYear, overview: x.overview }));
-        return [...movies, ...tv];
-      },
-    };
-  }
-
-  private async findByTmdb(mediaType: "movie" | "tv", tmdbId: number): Promise<string | null> {
-    if (mediaType === "movie") {
-      const rows = await this.db.select({ id: schema.movie.id }).from(schema.movie).where(eq(schema.movie.tmdbId, tmdbId)).limit(1);
-      return rows[0]?.id ?? null;
-    }
-    const rows = await this.db.select({ id: schema.series.id }).from(schema.series).where(eq(schema.series.tvdbId, tmdbId)).limit(1);
-    return rows[0]?.id ?? null;
-  }
 
   /** Express handler for a registered surface (used by configure.ts). */
   handleFor(surface: CompatSurface) {

@@ -5,14 +5,14 @@
 | Layer | Tool | Scope / examples |
 |---|---|---|
 | Unit | Vitest | domain services, parsers, quality evaluation, provider contracts (mocked), release matching, job state machine, event bus |
-| Integration | Vitest + supertest against a NestJS app on SQLite | API contract per endpoint: auth, validation, movies/series CRUD, requests, history, queue, jobs (schedule→run→history), events→audit |
+| Integration | Vitest + supertest against a NestJS app on SQLite | API contract per endpoint: auth, validation, movies/series CRUD, history, queue, jobs (schedule→run→history), events→audit |
 | Contract | Vitest | compatibility adapters: request/response snapshots locked to upstream-documented shapes (M6) |
-| End-to-end | Playwright | critical journeys (M8): add movie → search → grab → download → import → library; request → approve → search → grab |
+| End-to-end | Playwright | critical journeys (M8): add movie → search → grab → download → import → library |
 
 ## Priority workflows (per brief, highest-risk first)
 
 1. Search → Grab → Download → Import → Organize → Library (M1)
-2. Request → Approval → Search → Grab → Download → Import (M4)
+2. Auto-grab: RSS sync → Search → Grab → Download → Import (M2)
 3. Indexer → Search → Results → Grab (M1/M3)
 4. Existing client → Compatibility API → MediaNexus (M6)
 

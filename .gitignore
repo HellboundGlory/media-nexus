@@ -8,6 +8,8 @@ dist/
 build/
 coverage/
 *.tsbuildinfo
+test-results/
+playwright-report/
 
 # data / runtime
 data/

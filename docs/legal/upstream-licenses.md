@@ -24,8 +24,11 @@ MediaNexus is licensed **MIT** (see root `LICENSE`). Why:
   GPL _arr codebases (they are C#; copying would also import a rigid, legacy-coupled architecture — see
   `technology-decisions.md` ADR-001), we are free to choose a permissive license and keep the platform broadly usable —
   including in commercial, self-hosted products.
-- MIT also matches Seerr (the one MIT upstream), so adaptation of Seerr-influenced **patterns** (request workflow, media
-  availability, notification subscription) carries no copyleft contamination.
+- MIT also matches Seerr (the one MIT upstream), so adaptation of Seerr-influenced **patterns** (media availability,
+  notification subscription, and the planned TMDB discover view / Plex watchlist integration) carries no copyleft
+  contamination. An earlier Seerr-influenced request/approval workflow and user-accounts model was built and later
+  deliberately removed (see [docs/implementation/roadmap.md](../implementation/roadmap.md)); that removal is unrelated
+  to licensing — it was a product-scope decision.
 
 ## 3. What is "copied/adapted" vs "reimplemented" vs "merely compatible"
 
@@ -46,8 +49,10 @@ For each category below, `docs/legal/provenance.md` is where we record the fine-
 
 ### b) Adaptable with attribution — Seerr (MIT)
 
-- Seerr is MIT, so adapting its patterns (Express app layout, TypeORM-style entities → Drizzle, request approval state
-  machine, Plex/Jellyfin auth flow, notification subscription model) is permitted with attribution.
+- Seerr is MIT, so adapting its patterns (Express app layout, TypeORM-style entities → Drizzle, notification subscription
+  model, and — for planned work — its discover-page and watchlist concepts) is permitted with attribution. Its request
+  approval state machine and Plex/Jellyfin auth flow were adapted early on but the whole request/user-accounts feature
+  was later removed from product scope (see [docs/implementation/roadmap.md](../implementation/roadmap.md)).
 - Policy: we adapt **patterns and contracts**, and if any direct Seerr source text is ever included, we will carry the MIT
   notice and record provenance in `provenance.md`. To date the scaffold contains **no** direct Seerr source text.
 

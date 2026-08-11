@@ -16,16 +16,14 @@ apps, the future plugin system, and the compatibility layer.
 
 ## 2. Authentication
 
-- **API keys:** header `X-Api-Key` with the value's SHA-256 hash looked up in `api_key`. Keys may be global
-  (automation/system, `_arr`-style) or user-scoped (Seerr-style). This single mechanism preserves _arr-client
-  compatibility and gives Seerr-style per-user identity.
-- **Sessions/JWT:** planned for interactive web login (Plex/Jellyfin identity + local accounts). `user`/`api_key` tables
-  already model both.
-- **Bootstrap:** on first run, the API seeds the initial `admin` user and generates a one-time bootstrap API key printed
-  to logs/startup banner. Default credentials are never hard-coded.
+- **API keys:** header `X-Api-Key` with the value's SHA-256 hash looked up in `api_key`. Any valid key is a full-access
+  system key, `_arr`-style (like Sonarr/Radarr/Prowlarr's own API-key auth) — there is no login, no per-user accounts, and
+  no roles/permission tiers. `Principal` is `{ keyId, isAdmin, scopes }`, and `isAdmin` is always `true` for a valid key.
+- **Bootstrap:** on first run, the API mints one system API key and prints it once to logs/startup banner
+  (`MEDIA_NEXUS_BOOTSTRAP_KEY` can set it deterministically, e.g. for CI/tests). Default credentials are never hard-coded.
 - **Guard policy (security by default):** *all* `/api/v1/*` routes require a valid API key unless explicitly marked
-  `@Public()` (health is the only public area; system bootstrap is a controlled one-time path). The web app stores its key
-  in `localStorage` (injected via `VITE_MEDIA_NEXUS_API_KEY` during dev) and pairs with future JWT login.
+  `@Public()` (health and `/metrics` are the only public areas). The web app stores its key in `localStorage` (injected
+  via `VITE_MEDIA_NEXUS_API_KEY` during dev).
 
 ## 3. Observability of the API
 
@@ -49,7 +47,8 @@ apps, the future plugin system, and the compatibility layer.
 - **Real-time:** planned Server-Sent Events at `/api/v1/events` (SSE chosen over raw WebSocket for simplicity and HTTP-only
   proxying; the _arr use SignalR — parity considered, SSE + TanStack Query covers the web and compat clients). Not in the
   scaffold; tracked in roadmap.
-- **CORS:** configurable allow-list via env (`CORS_ORIGINS`); default `same-origin` + localhost dev.
+- **CORS:** not applicable — the web UI is served same-origin by the same process that serves the API; this app is not
+  meant to sit behind a separate origin or a public reverse proxy.
 - **Rate limiting:** planned for auth endpoints; not in scaffold.
 
 ## 5. Native endpoint inventory
@@ -69,17 +68,11 @@ Implemented in the scaffold (each listed endpoint exists and is covered by tests
 | Series | `GET /api/v1/wanted/missing` | monitored episodes without files (Want/Missing) |
 | Series | `GET /api/v1/calendar` | upcoming air-dated episodes |
 | Auth | `GET /api/v1/auth/whoami` | identity of the API key owner |
-| Requests | `POST /api/v1/requests` | user request (movie/series) → `request` + `request_item` rows |
-| Requests | `POST /api/v1/requests/:id/approve|decline` | approve → auto-search job; decline |
-| Users | `GET/POST /api/v1/users`, `DELETE /api/v1/users/:id`, `POST /api/v1/users/:id/api-keys` | user + role management, scoped keys (admin) |
-| Watchlist | `GET/POST /api/v1/watchlist`, `DELETE /api/v1/watchlist/:mediaType/:mediaId` | per-user watchlist |
-| Blocklist | `GET/POST /api/v1/content-blocklist`, `DELETE /api/v1/content-blocklist/:mediaType/:mediaId` | per-user content prefs |
-| Media servers | `GET/PUT /api/v1/media-servers`, `POST /api/v1/media-servers/refresh`, `POST /api/v1/media-servers/:index/test` | Jellyfin/memory availability sources |
+| Media servers | `GET/PUT /api/v1/media-servers`, `POST /api/v1/media-servers/refresh`, `POST /api/v1/media-servers/:index/test` | Jellyfin/memory availability sources (seed for future Plex watchlist integration) |
 | Realtime | `GET /api/v1/events` | Server-Sent Events stream of domain events (auth via X-Api-Key header) |
 | Observability | `GET /metrics` | Prometheus text metrics (public) |
 | Observability | `GET /api/v1/system/audit` | recent audit-log entries |
 | Notifications | `GET/PUT /api/v1/notifications`, `POST /api/v1/notifications/:kind/:index/test` | webhook/discord/telegram/email config + test delivery |
-| Requests | `GET /api/v1/requests` | list requests (with status) |
 | Activity | `GET /api/v1/history` | unified history feed |
 | Activity | `GET /api/v1/queue` | download queue |
 | Indexers | `GET /api/v1/indexers`, `POST /api/v1/indexers` | indexer config (Newznab/Torznab/Cardigann/memory) |

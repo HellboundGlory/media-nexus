@@ -1,12 +1,22 @@
 // SPDX-License-Identifier: MIT
-import { Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { MetadataService } from "./metadata.service";
-import { AdminGuard } from "../requests/admin.guard";
+import { AdminGuard } from "../common/admin.guard";
 
 const lookupQuery = z.object({ query: z.string().min(1), type: z.enum(["movie", "series"]).default("movie") });
+
+const discoverQuery = z.object({
+  mediaType: z.enum(["movie", "series"]).default("movie"),
+  category: z.enum(["trending", "popular", "upcoming", "top_rated"]).default("trending"),
+  page: z.coerce.number().int().min(1).max(500).default(1),
+});
+const discoverAddBody = z.object({
+  mediaType: z.enum(["movie", "series"]),
+  tmdbId: z.number().int().positive(),
+});
 
 @ApiTags("metadata")
 @UseGuards(AdminGuard)
@@ -30,5 +40,17 @@ export class MetadataController {
   @ApiOperation({ summary: "Refresh series metadata + auto-create seasons/episodes from TMDB" })
   refreshSeries(@Param("id") id: string) {
     return this.metadata.refreshSeries(id);
+  }
+
+  @Get("api/v1/discover")
+  @ApiOperation({ summary: "Browse TMDB trending/popular/upcoming/top-rated movies or TV shows" })
+  discover(@Query(new ZodValidationPipe(discoverQuery)) q: z.infer<typeof discoverQuery>) {
+    return this.metadata.discover(q.mediaType, q.category, q.page);
+  }
+
+  @Post("api/v1/discover/add")
+  @ApiOperation({ summary: "Add a movie/series to the library from a TMDB discover result" })
+  addFromDiscover(@Body(new ZodValidationPipe(discoverAddBody)) body: z.infer<typeof discoverAddBody>) {
+    return this.metadata.addFromDiscover(body.mediaType, body.tmdbId);
   }
 }

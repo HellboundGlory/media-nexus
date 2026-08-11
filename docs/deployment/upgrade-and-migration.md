@@ -18,7 +18,7 @@
 
 ## Migrating data from an existing *arr setup
 
-Use the built-in importer to bring a **live SQLite database** from Sonarr, Radarr, Prowlarr or Seerr into MediaNexus:
+Use the built-in importer to bring a **live SQLite database** from Sonarr, Radarr or Prowlarr into MediaNexus:
 
 ```bash
 npm install
@@ -28,8 +28,10 @@ npm run build:backend
 npm run import:upstream -- --kind sonarr   --db /path/to/sonarr.db
 npm run import:upstream -- --kind radarr   --db /path/to/radarr.db
 npm run import:upstream -- --kind prowlarr --db /path/to/prowlarr.db
-npm run import:upstream -- --kind seerr    --db /path/to/overseerr.db
 ```
+
+There is no `--kind seerr`: MediaNexus has no user accounts, requests or watchlists to import data into (that feature
+set was removed — see [docs/implementation/roadmap.md](../implementation/roadmap.md)).
 
 ### What gets imported (per upstream)
 
@@ -38,7 +40,6 @@ npm run import:upstream -- --kind seerr    --db /path/to/overseerr.db
 | Sonarr | series, seasons, episodes (+monitoring/air dates), quality profiles, history, indexers |
 | Radarr | movies, quality profiles, history, indexers |
 | Prowlarr | indexers (settings passthrough) |
-| Seerr/Overseerr | users, media availability, requests, watchlists |
 
 ### Properties & behavior
 
@@ -54,8 +55,8 @@ npm run import:upstream -- --kind seerr    --db /path/to/overseerr.db
 1. Point your media/downloads paths at the volumes (`paths.rootFolders`, `paths.downloads`).
 2. Set `metadata.tmdbApiKey` (System → Settings) and run metadata refresh on series to fill seasons/episodes images.
 3. Add real download clients (SABnzbd/qBittorrent) and indexers, run a health check.
-4. Stop Sonarr/Radarr/Prowlarr/Seerr and repoint any automation at MediaNexus `/api/v1` (or its compat surfaces:
-   `/api/sonarr/v3`, `/api/radarr/v3`, `/api/prowlarr/v1`, `/api/seerr/v1`).
+4. Stop Sonarr/Radarr/Prowlarr and repoint any automation at MediaNexus `/api/v1` (or its compat surfaces:
+   `/api/sonarr/v3`, `/api/radarr/v3`, `/api/prowlarr/v1`).
 5. Confirm the acceptance path: a monitored series auto-grabs a missing episode and imports it into the library.
 
 ## Rollback

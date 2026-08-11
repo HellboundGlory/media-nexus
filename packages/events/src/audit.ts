@@ -6,8 +6,5 @@ export const AUDIT_EVENT_TYPES: ReadonlySet<string> = new Set([
   "media.series.added",
   "media.movie.removed",
   "media.series.removed",
-  "requests.request.created",
-  "requests.request.approved",
-  "requests.request.declined",
   "system.job.manual",
 ]);

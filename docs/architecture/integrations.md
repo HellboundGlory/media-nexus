@@ -69,8 +69,9 @@ Configuration schemas (e.g. `sabnzbdSettingsSchema`, `qbittorrentSettingsSchema`
   + availability by TMDB/TVDB provider ids, plus a memory demo provider. The `media_availability` table is the seam;
   `media.availabilityRefresh` syncs it. Plex/Emby providers are planned on the same contract.
 - **Notifications:** a `NotificationProvider` receives typed domain events; configuration rows (`notification_provider`)
-  subscribe per-`eventType` + `tags`, so users can route "grab" to Discord and "request approved" to email. Concrete sinks
-  are roadmap items.
+  subscribe per-`eventType` + `tags`, so users can route "release grabbed" to Discord and "indexer failed" to email. The
+  event types fired today are `acquisition.release.grabbed`, `acquisition.import.completed`, `discovery.indexer.failed`
+  and `acquisition.client.failed` (see `events.md`).
 
 ## 6. Security rules for integrations
 

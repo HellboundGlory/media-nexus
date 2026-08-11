@@ -2,7 +2,14 @@
 import { Module } from "@nestjs/common";
 import { MetadataService } from "./metadata.service";
 import { MetadataController } from "./metadata.controller";
-import { AdminGuard } from "../requests/admin.guard";
+import { AdminGuard } from "../common/admin.guard";
+import { MoviesModule } from "../movies/movies.module";
+import { SeriesModule } from "../series/series.module";
 
-@Module({ providers: [MetadataService, AdminGuard], controllers: [MetadataController], exports: [MetadataService] })
+@Module({
+  imports: [MoviesModule, SeriesModule],
+  providers: [MetadataService, AdminGuard],
+  controllers: [MetadataController],
+  exports: [MetadataService],
+})
 export class MetadataModule {}

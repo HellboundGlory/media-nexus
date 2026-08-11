@@ -11,9 +11,6 @@ export interface ImportReport {
   episodes: number;
   movies: number;
   indexers: number;
-  users: number;
-  requests: number;
-  watchlists: number;
   history: number;
   remapped: number;   // items updated in place (idempotent re-run)
   skipped: number;    // items already present
@@ -22,7 +19,7 @@ export interface ImportReport {
   note?: string;
 }
 
-export type ImportKind = "sonarr" | "radarr" | "prowlarr" | "seerr";
+export type ImportKind = "sonarr" | "radarr" | "prowlarr";
 
 /** A mapper reads an upstream schema and writes unified rows into the target Db. */
 export interface Importer {
@@ -44,5 +41,5 @@ export type ImportRow = Record<string, unknown>;
 
 export const emptyReport = (kind: string): ImportReport => ({
   kind, sourceTables: [], qualityProfiles: 0, series: 0, seasons: 0, episodes: 0, movies: 0, indexers: 0,
-  users: 0, requests: 0, watchlists: 0, history: 0, remapped: 0, skipped: 0, unknown: 0, errors: [],
+  history: 0, remapped: 0, skipped: 0, unknown: 0, errors: [],
 });

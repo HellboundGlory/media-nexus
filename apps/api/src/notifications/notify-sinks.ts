@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 /**
- * Notification sinks (M5): Discord webhooks, Telegram Bot API, and Email (nodemailer).
- * Each returns a human-readable summary for tests/logs. The webhook sink (M4) stays in
+ * Notification sinks: Discord webhooks, Telegram Bot API, and Email (nodemailer).
+ * Each returns a human-readable summary for tests/logs. The webhook sink stays in
  * NotificationService's delivery path alongside these.
  */
 import nodemailer from "nodemailer";
@@ -24,10 +24,6 @@ export function summarize(event: DomainEvent<any>): { title: string; body: strin
 
 export function humanTitle(type: string): string {
   const map: Record<string, string> = {
-    "requests.request.created": "New request",
-    "requests.request.approved": "Request approved",
-    "requests.request.declined": "Request declined",
-    "requests.request.fulfilled": "Request fulfilled",
     "acquisition.release.grabbed": "Release grabbed",
     "acquisition.import.completed": "Import completed",
     "discovery.indexer.failed": "Indexer failed",

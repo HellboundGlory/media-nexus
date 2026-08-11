@@ -7,7 +7,7 @@ import {
 } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { IndexersService } from "./indexers.service";
-import { RateLimitGuard } from "../requests/rate-limit.guard";
+import { RateLimitGuard } from "../common/rate-limit.guard";
 
 const createDefinitionBody = z.object({
   key: z.string().regex(/^[a-z0-9_-]+$/, "key must be lowercase alphanumeric + -/_"),

@@ -7,7 +7,7 @@ import { ConfigService } from "../system/config.service";
 import { deliverToDiscord, deliverToTelegram, deliverToEmail, type NotificationSummary } from "./notify-sinks";
 
 /**
- * Notification service (M4/M5): delivers subscribed domain events to all configured
+ * Notification service: delivers subscribed domain events to all configured
  * sinks — webhook (JSON POST), Discord webhooks, Telegram Bot API, and Email.
  * Sinks are added per kind without touching domain logic.
  */
@@ -16,10 +16,6 @@ export interface NotificationSinkResult extends NotificationSummary {
 }
 export type NotifyKind = "webhook" | "discord" | "telegram" | "email";
 export const WATCHED = new Set([
-  "requests.request.created",
-  "requests.request.approved",
-  "requests.request.declined",
-  "requests.request.fulfilled",
   "acquisition.release.grabbed",
   "acquisition.import.completed",
   "discovery.indexer.failed",

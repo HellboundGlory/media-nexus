@@ -33,7 +33,6 @@ documented behavior of popular clients:
 | Sonarr API v3/v5 | `series` (CRUD), `episode`, `episodefile`, `qualityprofile`, `command` (search/recent/rescan), `queue`, `history`, `wanted`, `calendar`, `system/status`, `health` | **Required** |
 | Radarr API v3 | `movie` (CRUD), `movieeditor`, `qualityprofile`, `command`, `queue`, `history`, `wanted`, `system/status` | **Required** |
 | Prowlarr API v1 | `indexer` (CRUD), `search` (manual + `t=search` RSS/proxy), health/status, indexer sync endpoints consumed by Sonarr/Radarr, `api/v1/{indexer}/health` | **Required** (esp. indexer sync) |
-| Seerr API v1 | `auth/*` (plex/jellyfin login), `request` (create/list/update), `media` (status), `discover`, `search`, `settings/notifications`, watchlist | **High-value** |
 
 A **Required** classification means compatibility is on the critical path for real-world adoption; **High-value** means
 large client-bases benefit and it should follow closely; **Optional/obsolete** (e.g. old `Sonarr Api v1`, `Radarr v1/2`)
@@ -47,11 +46,16 @@ are explicitly out of scope.
 | Sonarr-compatible | `/api/sonarr/v3/...` (v5 aliases later) |
 | Radarr-compatible | `/api/radarr/v3/...` |
 | Prowlarr-compatible | `/api/prowlarr/v1/...` |
-| Seerr-compatible | `/api/seerr/v1/...` (Overseerr/Seerr clients) |
 
 `/api/prowlarr/v1/api/v1/...`-style embedded paths (some Prowlarr clients hit nested paths) are handled by the Prowlarr
 adapter's router, not by polluting the native router. Auth for compat surfaces: map `X-Api-Key` to MediaNexus API keys
-(one wire format, same credential store); Seerr compat additionally accepts its JWT flows when implemented.
+(one wire format, same credential store).
+
+> A Seerr-compatible surface (`/api/seerr/v1`) existed briefly and was removed: it never queried TMDB, it only dressed up
+> the local library as fake "discover" results, and it depended on the user-accounts/request-workflow tables that were
+> removed. It is not on the roadmap to restore; the only Seerr-derived work still planned is a TMDB-backed discover view
+> and Plex watchlist integration (see [docs/implementation/roadmap.md](../implementation/roadmap.md)) — neither is a
+> Seerr-API-shaped compatibility surface.
 
 ## 5. Incremental delivery plan
 

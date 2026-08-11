@@ -34,11 +34,10 @@ export function jsonc<T = unknown>(row: Row, name: string, def: T): T {
 export const pad = (n: number, w = 2) => String(n).padStart(w, "0");
 
 /** Detect which upstream kind a DB is by the tables it has. */
-export function detectKind(tables: string[]): "sonarr" | "radarr" | "prowlarr" | "seerr" | "unknown" {
+export function detectKind(tables: string[]): "sonarr" | "radarr" | "prowlarr" | "unknown" {
   const t = new Set(tables);
   if (t.has("Series") && t.has("Seasons") && t.has("Episodes")) return "sonarr";
   if (t.has("Movies") && t.has("MovieFiles")) return "radarr";
   if (t.has("Indexers") && t.has("Tags") && !t.has("Series")) return "prowlarr";
-  if (t.has("User") && t.has("Media")) return "seerr";
   return "unknown";
 }

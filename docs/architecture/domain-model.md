@@ -1,6 +1,6 @@
 # MediaNexus — Unified Domain Model
 
-> This document is the canonical description of the MediaNexus data/domain model. The concrete Drizzle schema (20 tables,
+> This document is the canonical description of the MediaNexus data/domain model. The concrete Drizzle schema (19 tables,
 > SQLite dialect) lives in `packages/database/src/schema.ts`; this document is the source from which that schema is derived. Entities marked
 > **implemented** exist in the current schema; the rest are planned and tracked in
 > [docs/implementation/roadmap.md](../implementation/roadmap.md).
@@ -9,15 +9,15 @@
 
 - **One model, not four schemas.** Movie and TV acquisition share infrastructure (quality profiles, files, downloads,
   indexers, history); where behavior genuinely differs, the model keeps distinct tables/columns.
-- **Polymorphic associations via `mediaType` (`movie`|`series`|`episode`).** Releases, history, requests, files and
-  media-server state reference *any* media kind through `(mediaType, mediaId)` — the pattern the four upstream apps each
-  re-invented separately. This keeps one history list, one queue, one request model for all content without forcing a
+- **Polymorphic associations via `mediaType` (`movie`|`series`|`episode`).** Releases, history, files and media-server
+  state reference *any* media kind through `(mediaType, mediaId)` — the pattern the four upstream apps each re-invented
+  separately. This keeps one history list, one queue and one availability model for all content without forcing a
   single fat `media` table.
 - **No forced abstraction.** Movies and series remain their own tables because their identity, metadata and import
   behavior differ (TMDB vs TVDB, one file vs many episode files). We do **not** collapse them into one table just to look
   unified.
 - **The Seerr "media availability" notion is elevated to a first-class concept** (`media_availability`): a movie/series as
-  it exists in a user's library server, which is what request fulfillment and "available" statuses depend on.
+  it exists in a user's library server, which is what "available" statuses depend on.
 
 ## 2. Upstream entity mapping
 
@@ -30,27 +30,24 @@
 | `Indexer` + Cardigann defs, `IndexerStatus`, proxies, history | Prowlarr | `indexer_definition`, `indexer`, `indexer_category`, `history_entry` |
 | `DownloadClient`, `RemotePathMapping` | Sonarr/Radarr/Prowlarr | `download_client`, `setting` (remote path mappings) |
 | `Queue`, `History`, `Blocklist`, `Wanted` | Sonarr/Radarr | `download_queue_entry`, `history_entry`, `blocklist_entry` |
-| `User`, `UserSettings`, `Media`, `Request`, `RequestItem`, `Watchlist`, `Blocklist` (content prefs) | Seerr | `user`, `user_settings`, `media_availability`, `request`, `request_item`, `watchlist`, `user_content_blocklist` |
+| `Media` (availability) | Seerr | `media_availability` |
 | `NotificationAgent`-ish config | all | `notification_provider` |
-| auth, `ApiKey` | _arr | `user`, `api_key` |
+| auth, `ApiKey` | _arr | `api_key` |
 | scheduled tasks | all | `job_definition`, `job_run` |
 | `System/Logs/Health` | all | `health_check_run` (via jobs), `audit_log` |
 
-The _arr `Blocklist` (releases you never want) and Seerr `Blocklist` (content the user doesn't want to see) both legitimately
-exist but are **different concepts**; the unified model names them `blocklist_entry` (release-level) and
-`user_content_blocklist` (user content preference) to keep them unambiguous.
+The _arr `Blocklist` (releases you never want) is kept as `blocklist_entry` (release-level). Seerr's separate
+content-blocklist concept (content a user doesn't want to see) was part of the personal-watchlist/request feature set
+that was deliberately removed (no user accounts to scope it to) and has no equivalent in this model.
 
 ## 3. Entity catalog
 
 ### 3.1 Identity & access
 
-- **`user`** *(implemented)* — `id, username (unique), email, passwordHash, isAdmin, roles (text[]), avatarUrl,
-  plexToken, jellyfinToken, created/updated`. Roles seed the Seerr-compatible permission model
-  (`ADMIN`, `MODERATOR`, `USER`); fine-grained permissions live in `user_settings.permissions` (JSON) as a plan.
-- **`api_key`** *(implemented)* — `id, userId (nullable→system), name, keyHash (sha256), scopes (text[]), lastUsedAt,
-  expiresAt, createdAt`. Only the hash is stored; the raw key is shown once at creation. API keys may be user-scoped
-  (Seerr-style) or global (system automation, _arr-style).
-- **`user_settings`** *(planned)* — per-user prefs mirroring Seerr: locale, region, permissions map, notification prefs.
+- **`api_key`** *(implemented)* — `id, name, keyHash (sha256), scopes (text[]), lastUsedAt, expiresAt, createdAt`. Only
+  the hash is stored; the raw key is shown once at creation. There is no `user` table and no login — every key is a
+  global, full-access system key (`_arr`-style, like Sonarr/Radarr/Prowlarr's own API-key auth); `isAdmin` is always
+  `true` for a valid key (see `api.md` §2).
 
 ### 3.2 Configuration
 
@@ -66,8 +63,10 @@ exist but are **different concepts**; the unified model names them `blocklist_en
 - **`movie`** *(implemented)* — `id, tmdbId, imdbId, title, originalTitle, overview, status, releaseDate, monitored,
   qualityProfileId (FK), rootFolderPath, minimumAvailability, genres (json), images (json), tags (json), addedAt,
   updatedAt, hasFile, movieFileId?`.
-- **`series`** *(implemented)* — `id, tvdbId, imdbId, title, overview, status, network, firstAirYear, monitored,
+- **`series`** *(implemented)* — `id, tvdbId, tmdbId, imdbId, title, overview, status, network, firstAirYear, monitored,
   qualityProfileId (FK), rootFolderPath, seriesType (standard|daily|anime), genres, images, tags, addedAt, updatedAt`.
+  Identity stays `tvdbId` (unique); `tmdbId` is a secondary unique id populated from TMDB discover/metadata refresh —
+  it exists purely so Discover can cheaply check "is this TMDB title already in my library" without a per-item lookup.
 - **`season`** *(implemented)* — `id, seriesId (FK), seasonNumber, monitored, qualityProfileId?, releaseStatus?`.
 - **`episode`** *(implemented)* — `id, seriesId (FK), seasonId (FK), episodeNumber, absoluteNumber, title, overview,
   airDateUtc, monitored, hasFile, sceneSeasonNumber, sceneEpisodeNumber`.
@@ -108,17 +107,14 @@ exist but are **different concepts**; the unified model names them `blocklist_en
   protocol, categories, size, seeders/leechers/peers, downloadUrl, magnetUrl, infoUrl, guid, quality, language, isFreelee,
   isProper, repack, age, grabAllowed`. This is the native contract for Searches; see `api.md`.
 
-### 3.6 Requests (Seerr parity)
+### 3.6 Availability (media servers)
 
 - **`media_availability`** *(implemented)* — "this movie/series exists in a media server": `id, mediaType, mediaId,
   status (unknown|processing|partiallyAvailable|available), plexId?, jellyfinId?, tmdbRating, tmdbVoteCount, lastTmdbSyncAt,
-  lastAvailabilitySyncAt`. Request fulfillment reads this; availability watchers update it.
-- **`request`** *(implemented)* — `id, userRequestorId (FK), mediaType, mediaId, status
-  (pending|approved|declined|processing|fulfilled|failed|expired|…), requestedAt, updatedAt, adminNote?, isAutoApproval,
-  is4k? `.
-- **`request_item`** *(planned)* — per-season/per-episode granularity for series requests (`requestId, seriesId,
-  seasonNumber, episodeNumbers, status`).
-- **`watchlist`** *(planned)* and **`user_content_blocklist`** *(planned)* — user content prefs from Seerr.
+  lastAvailabilitySyncAt`. Populated by the media-servers module (Jellyfin sync today, `media.availabilityRefresh` job);
+  a future Plex watchlist integration is the planned next consumer of this table (see
+  [docs/implementation/roadmap.md](../implementation/roadmap.md)). The request/approval workflow that used to read this
+  table was removed along with user accounts.
 
 ### 3.7 Automation & jobs
 
@@ -134,22 +130,20 @@ exist but are **different concepts**; the unified model names them `blocklist_en
 - **`notification_provider`** *(planned — schema drafted)* — `id, name, implementation, enabled, settings (json), eventTypes
   (text[]), tags, created/updated`. Event subscriptions are explicit so future notification sinks receive only relevant
   domain events.
-- **`audit_log`** *(implemented)* — `id, correlationId, actor (user id | 'system'), action, entityType, entityId,
-  details (json), ip, createdAt`. Every security-relevant or admin action is recorded (Rule 7/observability).
+- **`audit_log`** *(implemented)* — `id, correlationId, actor (text, defaults to 'system'), action, entityType, entityId,
+  details (json), ip, createdAt`. There is no user id to attribute actions to (no user accounts); every security-relevant
+  or admin action is still recorded (Rule 7/observability).
 
 ## 4. Relationships (subset)
 
 ```mermaid
 erDiagram
-    USER ||--o{ API_KEY : owns
     QUALITY_PROFILE ||--o{ MOVIE : "scales to"
     QUALITY_PROFILE ||--o{ SERIES : "scales to"
     SERIES ||--o{ SEASON : has
     SEASON ||--o{ EPISODE : contains
     MEDIA_FILE }o--|| MOVIE : "movie file"
     MEDIA_FILE }o--o{ EPISODE : "episode file(s)"
-    USER ||--o{ REQUEST : requests
-    REQUEST }o--|| MEDIA_AVAILABILITY : "fulfilled against"
     MEDIA_AVAILABILITY }o--|| MOVIE : "for"
     MEDIA_AVAILABILITY }o--|| SERIES : "for"
     INDEXER_DEFINITION ||--o{ INDEXER : "instantiated as"
@@ -160,16 +154,15 @@ erDiagram
 ```
 
 Polymorphic FKs (`mediaType` + `mediaId`) apply to `media_file`, `download_queue_entry`, `history_entry`,
-`blocklist_entry`, `media_availability`, `request`. A database-level polymorphic FK is not enforced (SQLite/PG both lack
+`blocklist_entry`, `media_availability`. A database-level polymorphic FK is not enforced (SQLite/PG both lack
 native polymorphism); referential integrity is enforced at the service layer plus a check on `mediaType` values.
 
 ## 5. Terminology decisions
 
 | Term | Meaning |
 |---|---|
-| `mediaType` | `movie` \| `series` \| `episode` (episode is only ever the *subject* of a file/history/queue row; requests are movie/series granularity) |
+| `mediaType` | `movie` \| `series` \| `episode` (episode is only ever the *subject* of a file/history/queue row) |
 | Grab | a release chosen from search results and sent to a download client |
 | Import | verified + quality-checked download moved into the media library (hardlink/copy/rename) |
 | Availability | whether content exists in a connected media server (Seerr concept) |
-| Release blocklist vs content blocklist | _arr (releases) vs Seerr (content prefs) — kept distinct |
 | `quality` | the quality-resolution + source (e.g. `Bluray-1080p`) normalization shared across movies/series |

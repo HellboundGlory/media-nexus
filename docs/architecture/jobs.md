@@ -50,8 +50,9 @@ Worker (N) — claim next eligible row (priority, concurrency limit, dueAt)
 - **Retries/backoff:** exponential `backoffBase * 2^(attempt-1)` (+ jitter), bounded by `maxRetries`.
 - **Timeout/cancellation:** per-job `timeoutMs` → mark a runaway run `timed_out`; cancellation is a status flag checked by
   cooperative jobs between awaits (true thread-kill is unsafe in-process; documented).
-- **Triggers:** `scheduled` (cron), `manual` (API command), `event` (domain event → job mapping, e.g. `RequestApproved` →
-  `media.searchForRequest`).
+- **Triggers:** `scheduled` (cron), `manual` (API command or `system.job.manual` audit entry), `event` (domain event → job
+  mapping — the contract exists in the job model; the request-lifecycle mapping that first exercised it was removed
+  along with the requests feature, no event-triggered job is wired today).
 - **History/observability:** every terminal run persists; failed runs carry `error` + link to request/correlation id.
   Health endpoint includes latest job statuses; audit log records manual triggers.
 
@@ -73,4 +74,3 @@ independently of HTTP.
 | `system.metadataCleanup` | `0 4 * * *` | prune stale media_availability/history (planned body) |
 | `media.availabilityRefresh` | `0 */4 * * *` | sync availability from configured media servers (Jellyfin/memory) |
 | `acquisition.downloadMonitor` | `*/1 * * * *` | poll all configured download clients (SABnzbd/qBittorrent/memory), mirror progress into the unified queue, and import completed downloads into the library (M1) |
-| `media.searchForRequest` | event-triggered | on approval: auto-search indexers + grab best release (movies/series) and drive request to fulfilled (M4) |

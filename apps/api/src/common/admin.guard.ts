@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import { ApiError } from "@medianexus/shared";
-import type { Principal } from "../common/principal";
+import type { Principal } from "./principal";
 
 /** Guard for admin-only routes (e.g. user management, global settings writes). */
 @Injectable()

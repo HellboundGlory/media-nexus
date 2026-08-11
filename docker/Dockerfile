@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
-# MediaNexus API — multi-stage build (build context = repo root)
+# MediaNexus — single-container build (build context = repo root).
+# The API (NestJS) serves the built web UI directly (apps/web/dist) — one process,
+# one port, no nginx/reverse-proxy container. Never expose this port to the public
+# internet; there is no login/auth beyond a single system API key.
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 # build tools for native module compilation (better-sqlite3) under glibc
@@ -20,8 +23,9 @@ RUN npm ci --no-audit --no-fund
 # source
 COPY apps apps
 COPY packages packages
-# build shared packages + api
+# build shared packages + api + web
 RUN npm run build:backend
+RUN npm run build -w @medianexus/web
 
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production
@@ -32,6 +36,7 @@ COPY --from=build /app/apps/api/package.json /app/apps/api/package.json
 COPY --from=build /app/packages /app/packages
 COPY --from=build /app/node_modules /app/node_modules
 COPY --from=build /app/packages/database/migrations /app/packages/database/migrations
+COPY --from=build /app/apps/web/dist /app/web
 EXPOSE 7373
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:7373/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

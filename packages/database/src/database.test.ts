@@ -13,7 +13,7 @@ describe("database", () => {
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
     );
     const names = tables.map((t: { name: string }) => t.name as string);
-    for (const t of ["user", "movie", "series", "request", "job_run", "indexer", "audit_log"]) {
+    for (const t of ["api_key", "movie", "series", "job_run", "indexer", "audit_log"]) {
       expect(names).toContain(t);
     }
 

@@ -6,11 +6,9 @@ import { SeriesModule } from "../series/series.module";
 import { MoviesModule } from "../movies/movies.module";
 import { JobsModule } from "../jobs/jobs.module";
 import { IndexersModule } from "../indexers/indexers.module";
-import { AuthModule } from "../auth/auth.module";
-import { RequestsModule } from "../requests/requests.module";
 
 @Module({
-  imports: [SystemModule, SeriesModule, MoviesModule, JobsModule, IndexersModule, AuthModule, RequestsModule],
+  imports: [SystemModule, SeriesModule, MoviesModule, JobsModule, IndexersModule],
   providers: [CompatService],
   exports: [CompatService],
 })

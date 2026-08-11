@@ -3,7 +3,7 @@ import { Body, Controller, Get, Param, Post, Put, UseGuards } from "@nestjs/comm
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import { ZodValidationPipe } from "../common/zod.pipe";
-import { AdminGuard } from "./admin.guard";
+import { AdminGuard } from "../common/admin.guard";
 import { NotificationService, type NotifyKind } from "./notifications.service";
 import { ConfigService } from "../system/config.service";
 

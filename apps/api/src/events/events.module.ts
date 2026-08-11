@@ -3,7 +3,6 @@ import { Global, Module } from "@nestjs/common";
 import { EventBus } from "@medianexus/events";
 import { EventsService } from "./events.service";
 import { AuditListener } from "./audit.listener";
-import { NotificationStub } from "./notification.stub";
 
 @Global()
 @Module({
@@ -11,7 +10,6 @@ import { NotificationStub } from "./notification.stub";
     EventBus,
     EventsService,
     AuditListener,
-    NotificationStub,
   ],
   exports: [EventBus, EventsService],
 })

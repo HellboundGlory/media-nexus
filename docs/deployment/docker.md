@@ -4,41 +4,45 @@
 
 ```bash
 cp .env.example .env   # adjust secrets/volumes
-docker compose up -d   # builds api + web, optional postgres (default off → sqlite volume)
-docker compose ps      # health checks turn green (start_period for api)
+docker compose up -d   # builds the single `app` image (default: sqlite volume)
+docker compose ps      # health check turns green (start_period)
 ```
 
 | Service | Port | Notes |
 |---|---|---|
-| `web` | 8080 | nginx serves SPA + reverse-proxies `/api` → api:7373, `/health` → api |
-| `api` | 7373 (internal) | NestJS API, swagger at `/api/docs` |
-| *(planned)* `postgres` | n/a | PostgreSQL service wired when the PG driver lands (roadmap M1.1); today the default is SQLite on a volume |
+| `app` | `${WEB_PORT:-8080}` → container `7373` | single container: NestJS API serves the built web UI directly (static assets + SPA fallback) and swagger at `/api/docs` |
+| *(planned)* `postgres` | n/a | PostgreSQL wired when the PG driver lands (roadmap M1.1); today the default is SQLite on a volume |
+
+This is **one container, one port** — there is no separate `web`/nginx container and no reverse proxy. See
+[docs/security.md](../security.md): the app has no login beyond a single system API key, so it is meant for
+LAN/private-network use only, never exposed directly to the public internet.
 
 ## Volumes / persistence
 
-- `./data/db:/data/db` — SQLite database + uploads (default). For Postgres use a named volume or bind mount; the DB is
-  managed by the `postgres` service.
+- `./data/db:/data/db` — SQLite database + uploads (default). Postgres is not wired into compose yet (roadmap M1.1); once
+  it lands, point `DATABASE_URL` at it instead of using this volume.
 - `./data/media:/data/media` — media library (mount the host library here)
 - `./data/downloads:/data/downloads` — downloads staging (must be same filesystem for hardlinks)
 - `./data/config:/data/config` — application config/settings persistence
 
 ## Images are configurable, not hard-coded
 
-Paths in the deploy are **environment-driven**: `MEDIA_NEXUS_DB_PATH`, `MEDIA_NEXUS_DATA_DIR`, `MEDIA_NEXUS_MEDIA_DIR`,
-`MEDIA_NEXUS_DOWNLOADS_DIR`, `TZ`, `PUID`/`PGID` (non-root runtime). Nothing host-specific is baked into the images.
+Paths in the deploy are **environment-driven**: `DATABASE_URL`, `MEDIA_NEXUS_DATA_DIR`, `MEDIA_NEXUS_MEDIA_DIR`,
+`MEDIA_NEXUS_DOWNLOADS_DIR`, `TZ`, `PUID`/`PGID`. Nothing host-specific is baked into the image.
 
 ## Health checks & graceful shutdown
 
-- `web`: checks HTTP 200 on `/health/live` (through nginx → api).
-- `api`: checks `/health/live` and `/health/ready` (DB); container stops gracefully via SIGTERM (Nest app hooks
+- The `app` container checks `/health/live` and `/health/ready` (DB); it stops gracefully via SIGTERM (Nest app hooks
   `onModuleDestroy` to drain job workers and close connections).
 - Compose `stop_grace_period` gives jobs time to settle; jobs are claim-lease based so a killed worker is recoverable on
   restart.
 
-## Reverse proxies & HTTPS
+## Do not put this behind a public reverse proxy
 
-Terminate TLS externally (Caddy/Traefik/nginx proxy) and forward to `:8080`. Set `CORS_ORIGINS` and `TRUST_PROXY=1` (for
-correct client IPs/secure cookies) when behind a proxy. Optional `Dockerfile` distroless-style slim runtime for `api`.
+MediaNexus has no login beyond a single system API key (see [docs/security.md](../security.md)) — it is designed for
+LAN/private-network use, not for public exposure. There is deliberately no reverse-proxy/HTTPS-termination example in
+this repo; if you choose to expose it anyway (VPN endpoint, Tailscale, etc.), that is an operator decision outside the
+scope of what MediaNexus documents or supports.
 
-> Note: the current dev environment has no Docker daemon; these files are authored and `docker compose config`
-> validation-compatible, and exercised by the CI container build before we claim them verified end-to-end.
+> Note: the current dev environment has no Docker daemon; the Dockerfile/compose are authored and `docker compose
+> config`-validation-compatible, and exercised by the CI container build before we claim them verified end-to-end.

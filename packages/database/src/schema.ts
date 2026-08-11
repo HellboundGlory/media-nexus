@@ -18,29 +18,17 @@ const json = <T,>(name: string, def: SQL = sql`'[]'`) =>
   text(name, { mode: "json" }).$type<T>().notNull().default(def);
 
 // ---------- 1. Identity & access ----------
-export const user = sqliteTable("user", {
-  id: text("id").primaryKey(),
-  username: text("username").notNull(),
-  email: text("email"),
-  passwordHash: text("password_hash"), // bcrypt
-  isAdmin: bool("is_admin", false),
-  roles: json<string[]>("roles", sql`'[]'`),
-  plexToken: text("plex_token"),
-  jellyfinToken: text("jellyfin_token"),
-  createdAt: iso("created_at"),
-  updatedAt: iso("updated_at"),
-}, (t) => [uniqueIndex("user_username_idx").on(t.username)]);
-
+// Single-tier auth: any valid API key is a system/admin key (arr-style). No user
+// accounts/roles — this app is never public-facing.
 export const apiKey = sqliteTable("api_key", {
   id: text("id").primaryKey(),
-  userId: text("user_id"), // null = system/global key (arr-style)
   name: text("name").notNull(),
   keyHash: text("key_hash").notNull(), // sha256 of the raw key — never stored plain
   scopes: json<string[]>("scopes", sql`'[]'`),
   lastUsedAt: nullableIso("last_used_at"),
   expiresAt: nullableIso("expires_at"),
   createdAt: iso("created_at"),
-}, (t) => [uniqueIndex("api_key_hash_idx").on(t.keyHash), index("api_key_user_idx").on(t.userId)]);
+}, (t) => [uniqueIndex("api_key_hash_idx").on(t.keyHash)]);
 
 // ---------- 2. Configuration ----------
 export const setting = sqliteTable("setting", {
@@ -87,6 +75,7 @@ export const movie = sqliteTable("movie", {
 export const series = sqliteTable("series", {
   id: text("id").primaryKey(),
   tvdbId: integer("tvdb_id"),
+  tmdbId: integer("tmdb_id"), // secondary id (identity stays tvdbId) — enables discover "in library" matching
   imdbId: text("imdb_id"),
   title: text("title").notNull(),
   overview: text("overview").notNull().default(""),
@@ -102,7 +91,7 @@ export const series = sqliteTable("series", {
   tags: json<string[]>("tags"),
   addedAt: iso("added_at"),
   updatedAt: iso("updated_at"),
-}, (t) => [uniqueIndex("series_tvdb_idx").on(t.tvdbId)]);
+}, (t) => [uniqueIndex("series_tvdb_idx").on(t.tvdbId), uniqueIndex("series_tmdb_idx").on(t.tmdbId)]);
 
 export const season = sqliteTable("season", {
   id: text("id").primaryKey(),
@@ -229,7 +218,7 @@ export const blocklistEntry = sqliteTable("blocklist_entry", {
   createdAt: iso("created_at"),
 });
 
-// ---------- 6. Requests ----------
+// ---------- 6. Media availability ----------
 export const mediaAvailability = sqliteTable("media_availability", {
   id: text("id").primaryKey(),
   mediaType: text("media_type").notNull(),
@@ -241,46 +230,6 @@ export const mediaAvailability = sqliteTable("media_availability", {
   tmdbVoteCount: integer("tmdb_vote_count"),
   lastAvailabilitySyncAt: text("last_availability_sync_at"),
 }, (t) => [uniqueIndex("availability_media_idx").on(t.mediaType, t.mediaId)]);
-
-export const request = sqliteTable("request", {
-  id: text("id").primaryKey(),
-  userRequestorId: text("user_requestor_id"),
-  mediaType: text("media_type").notNull(),
-  mediaId: text("media_id").notNull(),
-  status: text("status").notNull().default("pending"),
-  isAutoApproval: bool("is_auto_approval", false),
-  adminNote: text("admin_note"),
-  requestedAt: iso("requested_at"),
-  updatedAt: iso("updated_at"),
-}, (t) => [index("request_media_idx").on(t.mediaType, t.mediaId), index("request_user_idx").on(t.userRequestorId)]);
-
-
-// ---------- 6b. Requests extras (M4: Seerr parity) ----------
-export const watchlist = sqliteTable("watchlist", {
-  id: text("id").primaryKey(),
-  userId: text("user_id").notNull(),
-  mediaType: text("media_type").notNull(),
-  mediaId: text("media_id").notNull(),
-  createdAt: iso("created_at"),
-}, (t) => [uniqueIndex("watchlist_unique_idx").on(t.userId, t.mediaType, t.mediaId)]);
-
-export const userContentBlocklist = sqliteTable("user_content_blocklist", {
-  id: text("id").primaryKey(),
-  userId: text("user_id").notNull(),
-  mediaType: text("media_type").notNull(),
-  mediaId: text("media_id").notNull(),
-  createdAt: iso("created_at"),
-}, (t) => [uniqueIndex("blocklist_unique_idx").on(t.userId, t.mediaType, t.mediaId)]);
-
-/** Per-season (series request) granularity. */
-export const requestItem = sqliteTable("request_item", {
-  id: text("id").primaryKey(),
-  requestId: text("request_id").notNull(),
-  seriesId: text("series_id"),
-  seasonNumber: integer("season_number").notNull(),
-  episodeNumbers: json<number[]>("episode_numbers"),
-  status: text("status").notNull().default("pending"),
-}, (t) => [index("request_item_req_idx").on(t.requestId)]);
 
 export const mediaServer = sqliteTable("media_server", {
   id: text("id").primaryKey(),
@@ -343,7 +292,6 @@ export const auditLog = sqliteTable("audit_log", {
 
 // ---------- exported schema ----------
 export const schema = {
-  user,
   apiKey,
   setting,
   qualityProfile,
@@ -359,10 +307,6 @@ export const schema = {
   historyEntry,
   blocklistEntry,
   mediaAvailability,
-  request,
-  requestItem,
-  watchlist,
-  userContentBlocklist,
   mediaServer,
   jobDefinition,
   jobRun,

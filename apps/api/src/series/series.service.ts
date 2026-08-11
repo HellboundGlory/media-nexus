@@ -44,6 +44,7 @@ export class SeriesService {
     const row = {
       id,
       tvdbId: input.tvdbId ?? null,
+      tmdbId: input.tmdbId ?? null,
       imdbId: input.imdbId ?? null,
       title: input.title,
       overview: input.overview ?? "",

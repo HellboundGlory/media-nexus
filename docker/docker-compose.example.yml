@@ -2,22 +2,23 @@
 #
 # 1) `docker compose -f docker/docker-compose.example.yml up -d`
 # 2) Get the first-run API key from logs:
-#      docker compose -f docker/docker-compose.example.yml logs api | grep "API key"
+#      docker compose -f docker/docker-compose.example.yml logs app | grep "API key"
 # 3) Open the web UI (http://host:8080), paste the key under System → API key.
 # 4) Set metadata.tmdbApiKey (System) and add indexers + download clients.
 #
-# Images are pulled from GitHub Container Registry (built/published by CI on `v*` tags).
+# Image is pulled from GitHub Container Registry (built/published by CI on `v*` tags).
 # Replace `hellboundglory/media-nexus` if you own the repo under a different path.
 #
-# To integrate with an existing reverse proxy / network, uncomment the `networks`
-# and Traefik/Caddy labels at the bottom instead of the host `ports:`.
+# This is a single container (API + web UI, one port) meant for LAN/private-network
+# use only — it has no login/auth beyond one system API key. Do not put it behind a
+# public reverse proxy or expose it to the internet.
 
 name: media-nexus
 
 services:
-  api:
-    image: ghcr.io/hellboundglory/media-nexus/api:latest
-    container_name: media-nexus-api
+  app:
+    image: ghcr.io/hellboundglory/media-nexus/app:latest
+    container_name: media-nexus
     restart: unless-stopped
     env_file:
       - ${MN_ENV_FILE:-.env}
@@ -36,6 +37,8 @@ services:
       # media + downloads MUST share a filesystem for hardlink imports
       - ./data/media:/data/media
       - ./data/downloads:/data/downloads
+    ports:
+      - "${WEB_PORT:-8080}:7373"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7373/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -43,33 +46,3 @@ services:
       start_period: 40s
       retries: 3
     stop_grace_period: 20s
-
-  web:
-    image: ghcr.io/hellboundglory/media-nexus/web:latest
-    container_name: media-nexus-web
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "${WEB_PORT:-8080}:80"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health/live"]
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
-
-# --- optional: attach to your reverse-proxy network + expose via Traefik labels ---
-#   web:
-#     networks: [media-nexus, proxy]
-#     labels:
-#       - "traefik.enable=true"
-#       - "traefik.http.routers.medianexus.rule=Host(`media.example.com`)"
-#       - "traefik.http.services.medianexus.loadbalancer.server.port=80"
-#     ports: []            # remove host port mapping when behind the proxy
-# networks:
-#   proxy:
-#     external: true
-#   media-nexus:
-#     driver: bridge

@@ -22,6 +22,20 @@
       "when": 1786400223602,
       "tag": "0002_m4_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786448075470,
+      "tag": "0003_drop_seerr_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1786450282055,
+      "tag": "0004_series_tmdb_id",
+      "breakpoints": true
     }
   ]
 }

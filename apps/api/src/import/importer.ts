@@ -6,13 +6,11 @@ import { detectKind } from "./rows";
 import { sonarrImporter } from "./upstream/sonarr";
 import { radarrImporter } from "./upstream/radarr";
 import { prowlarrImporter } from "./upstream/prowlarr";
-import { seerrImporter } from "./upstream/seerr";
 
 export const importers: Record<ImportKind, Importer> = {
   sonarr: sonarrImporter,
   radarr: radarrImporter,
   prowlarr: prowlarrImporter,
-  seerr: seerrImporter,
 };
 
 /** Read access over an upstream sqlite file (better-sqlite3). */
@@ -53,7 +51,7 @@ export async function runImport(
   if (!importer) {
     return {
       kind: opts.kind ?? "unknown", sourceTables: tables, qualityProfiles: 0, series: 0, seasons: 0, episodes: 0,
-      movies: 0, indexers: 0, users: 0, requests: 0, watchlists: 0, history: 0, remapped: 0, skipped: 0, unknown: 0,
+      movies: 0, indexers: 0, history: 0, remapped: 0, skipped: 0, unknown: 0,
       errors: [`No importer matched source tables: ${tables.slice(0, 20).join(", ")}`], note: "unsupported database",
     };
   }

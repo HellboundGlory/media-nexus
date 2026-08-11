@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 import { NavLink, Outlet } from "react-router-dom";
 import { clsx } from "clsx";
-import { Moon, Sun, LayoutDashboard, Film, Tv, Activity, Inbox, ListTree, ScrollText, KeyRound, Download, CalendarDays } from "lucide-react";
+import { Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, ListTree, ScrollText, KeyRound, Download, CalendarDays } from "lucide-react";
 import { useAppStore, applyTheme } from "../store/useAppStore";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/discover", label: "Discover", icon: Compass },
   { to: "/movies", label: "Movies", icon: Film },
   { to: "/series", label: "Series", icon: Tv },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/activity", label: "Activity", icon: Activity },
-  { to: "/requests", label: "Requests", icon: Inbox },
   { to: "/indexers", label: "Indexers", icon: ListTree },
   { to: "/clients", label: "Download Clients", icon: Download },
 ];
@@ -61,7 +61,7 @@ export default function Layout() {
         </nav>
         <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
           <div className="flex items-center justify-between rounded-lg px-2 py-1">
-            <span className="flex items-center gap-2 text-xs text-zinc-500"><KeyRound className="h-3.5 w-3.5" /> v0.1.0</span>
+            <span className="flex items-center gap-2 text-xs text-zinc-500"><KeyRound className="h-3.5 w-3.5" /> v1.0.0</span>
             <button
               onClick={() => { const next = theme === "dark" ? "light" : "dark"; setTheme(next); applyTheme(next); }}
               className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 /**
  * End-to-end/integration tests against the full NestJS app on a temp SQLite DB.
- * Covers: auth, media, requests->event->job, demo search/grab/import, jobs,
- * compat surface, AND the M1 real-pipeline (mock Newznab + SABnzbd over HTTP +
- * real filesystem import).
+ * Covers: auth, media, demo search/grab/import, jobs, compat surface, AND the
+ * M1 real-pipeline (mock Newznab + SABnzbd over HTTP + real filesystem import).
  */
 import { describe, beforeAll, afterAll, it, expect } from "vitest";
 import { mkdtempSync } from "node:fs";
@@ -30,7 +29,6 @@ beforeAll(async () => {
   process.env.AUTO_MIGRATE = "true";
   process.env.MEDIA_NEXUS_SECRET = "test-secret-only";
   process.env.MEDIA_NEXUS_BOOTSTRAP_KEY = API_KEY;
-  process.env.MEDIA_NEXUS_BOOTSTRAP_ADMIN_PASSWORD = "test-password-123";
   process.env.JOB_CONCURRENCY = "1";
   process.env.LOG_LEVEL = "warn";
 
@@ -58,10 +56,9 @@ describe("MediaNexus API (e2e)", () => {
     expect((await request(http).get("/api/v1/movies").set("X-Api-Key", "wrong")).status).toBe(401);
   });
 
-  it("whoami identifies the admin key", async () => {
+  it("whoami identifies the system key", async () => {
     const res = await auth(request(http).get("/api/v1/auth/whoami"));
     expect(res.status).toBe(200);
-    expect(res.body.principal.username).toBe("admin");
     expect(res.body.principal.isAdmin).toBe(true);
   });
 
@@ -104,22 +101,6 @@ describe("MediaNexus API (e2e)", () => {
     const seasons = await auth(request(http).get(`/api/v1/series/${id}/seasons`));
     expect(seasons.status).toBe(200);
     expect(seasons.body.length).toBeGreaterThanOrEqual(2);
-  });
-
-  // ---- requests -> event -> job ----
-  it("creates an approved request (admin) that fires the search job via event", async () => {
-    const movie = await auth(request(http).post("/api/v1/movies").send({ title: "Inception", tmdbId: 27205 }));
-    const reqRes = await auth(request(http).post("/api/v1/requests").send({ mediaType: "movie", mediaId: movie.body.id }));
-    expect(reqRes.status).toBe(201);
-    expect(reqRes.body.status).toBe("approved");
-
-    let found = false;
-    for (let i = 0; i < 20 && !found; i++) {
-      const runs = await auth(request(http).get("/api/v1/system/jobs/runs"));
-      found = runs.body.some((r: any) => r.jobKey === "media.searchForRequest");
-      if (!found) await new Promise((r) => setTimeout(r, 150));
-    }
-    expect(found).toBe(true);
   });
 
   // ---- demo pipeline: search -> grab -> download monitor -> import ----
@@ -577,166 +558,6 @@ describe("M3: indexer health, Cardigann custom definitions, and statistics", () 
   });
 });
 
-
-describe("M4: users, approval->auto-search->fulfillment, notifications, watchlist", () => {
-  let nzUrl: string;
-  let sabUrl: string;
-  let webhookUrl: string;
-  const servers: import("node:http").Server[] = [];
-  const received: { type: string; payload: any }[] = [];
-
-  beforeAll(async () => {
-    const { createServer } = await import("node:http");
-    const nz = createServer((_req, res) => {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ channel: { title: "m4", item: [{ title: "The.M4.Chronicle.2026.1080p.WEB-DL", guid: "m4-1", link: "https://mock/1.nzb", "newznab:attr": [{ name: "size", value: "4000000000" }] }] } }));
-    });
-    const sab = createServer((_req, res) => {
-      res.writeHead(200, { "content-type": "application/json" });
-      const u = new URL(_req.url ?? "/", "http://x");
-      const mode = u.searchParams.get("mode");
-      if (mode === "addurl") res.end(JSON.stringify({ status: true, nzo_ids: ["NZO-M4"] }));
-      else if (mode === "queue") res.end(JSON.stringify({ queue: { slots: [] } }));
-      else if (mode === "history") res.end(JSON.stringify({ history: { slots: [{ nzo_id: "NZO-M4", filename: "The.M4.Chronicle.2026.1080p.WEB-DL", status: "Completed" }] } }));
-      else res.end(JSON.stringify({ status: false }));
-    });
-    const hook = createServer((req, res) => {
-      let body = "";
-      req.on("data", (c) => (body += c));
-      req.on("end", () => { try { received.push(JSON.parse(body)); } catch { /* ignore */ } res.writeHead(204); res.end(); });
-    });
-    await new Promise<void>((r) => nz.listen(0, "127.0.0.1", () => r()));
-    await new Promise<void>((r) => sab.listen(0, "127.0.0.1", () => r()));
-    await new Promise<void>((r) => hook.listen(0, "127.0.0.1", () => r()));
-    servers.push(nz, sab, hook);
-    nzUrl = `http://127.0.0.1:${(nz.address() as any).port}`;
-    sabUrl = `http://127.0.0.1:${(sab.address() as any).port}`;
-    webhookUrl = `http://127.0.0.1:${(hook.address() as any).port}`;
-
-    // paths + webhook config for THIS describe (idempotent)
-    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
-    const { join: j } = await import("node:path");
-    const { tmpdir: osTmp } = await import("node:os");
-    const base = mkdtempSync(j(osTmp(), "mn-m4-"));
-    const downloadsRoot = j(base, "downloads");
-    const mediaRoot = j(base, "library");
-    mkdirSync(downloadsRoot, { recursive: true });
-    mkdirSync(mediaRoot, { recursive: true });
-    const title = "The.M4.Chronicle.2026.1080p.WEB-DL";
-    const dir = j(downloadsRoot, "complete", title);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(j(dir, `${title}.mkv`), Buffer.alloc(2048));
-    const r = await auth(request(http).put("/api/v1/system/config").send({
-      "paths.downloads": downloadsRoot,
-      "paths.rootFolders": [{ path: mediaRoot }],
-      "notifications.webhooks": [{ url: webhookUrl, eventTypes: ["requests.request.approved", "requests.request.created", "requests.request.fulfilled", "acquisition.import.completed"] }],
-    }));
-    expect(r.status).toBe(200);
-  });
-
-  afterAll(async () => {
-    for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
-  });
-
-  it("enforces roles: restricted user cannot admin, and their requests auto-search on approval", async () => {
-    // admin creates a restricted user + scoped key
-    const user = await auth(request(http).post("/api/v1/users").send({ username: "m4-user", password: "secret-password-1", roles: ["USER"] }));
-    expect(user.status).toBe(201);
-    const uid = user.body.id;
-    const keyRes = await auth(request(http).post(`/api/v1/users/${uid}/api-keys`).send({ name: "m4-key" }));
-    expect(keyRes.status).toBe(201);
-    const userKey = keyRes.body.rawKey;
-    expect(userKey).toBeTruthy();
-    const uk = (r: any) => r.set("X-Api-Key", userKey);
-
-    // restricted user is not admin
-    const whoami = await uk(request(http).get("/api/v1/auth/whoami"));
-    expect(whoami.body.principal.isAdmin).toBe(false);
-    expect((await uk(request(http).get("/api/v1/users"))).status).toBe(403);
-
-    // configure an indexer + client so auto-search can grab
-    await auth(request(http).post("/api/v1/indexers").send({
-      definitionKey: "generic-newznab", name: "M4 NZB", protocol: "usenet",
-      settings: { baseUrl: nzUrl, apiKey: "k" },
-    }));
-    await auth(request(http).post("/api/v1/download-clients").send({
-      name: "M4 SAB", implementation: "sabnzbd", kind: "usenet", priority: 1,
-      settings: { host: sabUrl, apiKey: "k", category: "movies" },
-    }));
-
-    // restricted user creates a request (in library as a movie)
-    const movie = await auth(request(http).post("/api/v1/movies").send({ title: "The M4 Chronicle", tmdbId: 770071, releaseDate: "2026-01-01" }));
-    const created = await uk(request(http).post("/api/v1/requests").send({ mediaType: "movie", mediaId: movie.body.id }));
-    expect(created.status).toBe(201);
-    expect(created.body.status).toBe("pending"); // no auto-approve for USER
-    const requestId = created.body.id;
-
-    // restricted user cannot approve
-    expect((await uk(request(http).post(`/api/v1/requests/${requestId}/approve`).send({}))).status).toBe(403);
-
-    // admin approves -> event->job -> auto-search+grab -> immediately imports via monitor
-    const approved = await auth(request(http).post(`/api/v1/requests/${requestId}/approve`).send({}));
-    expect(approved.status).toBe(201);
-    expect(approved.body.status).toBe("approved");
-
-    // run the download monitor to import the completed sabnzbd download
-    let fulfilled = false;
-    for (let i = 0; i < 30 && !fulfilled; i++) {
-      await auth(request(http).post("/api/v1/system/commands/acquisition.downloadMonitor")).catch(() => {});
-      const rows = await auth(request(http).get("/api/v1/requests"));
-      fulfilled = rows.body.some((r: any) => r.id === requestId && r.status === "fulfilled");
-      if (!fulfilled) {
-        await new Promise((r) => setTimeout(r, 150));
-      }
-    }
-    expect(fulfilled).toBe(true);
-
-    // movie now has a file and availability is available
-    const got = await auth(request(http).get(`/api/v1/movies/${movie.body.id}`));
-    expect(got.body.hasFile).toBe(true);
-
-    // restricted user sees only their own requests
-    const otherMovie = await auth(request(http).post("/api/v1/movies").send({ title: "M4 Other", tmdbId: 770072 }));
-    await auth(request(http).post("/api/v1/requests").send({ mediaType: "movie", mediaId: otherMovie.body.id }));
-    const ownList = await uk(request(http).get("/api/v1/requests"));
-    expect(ownList.body.every((r: any) => r.userRequestorId === uid)).toBe(true);
-
-    // webhook received the workflow events (async delivery — poll briefly)
-    let fulfilledHook = false;
-    let approvedHook = false;
-    let importHook = false;
-    for (let i = 0; i < 20 && !(fulfilledHook && approvedHook && importHook); i++) {
-      fulfilledHook = received.some((r) => r.type === "requests.request.fulfilled" && r.payload.requestId === requestId);
-      approvedHook = received.some((r) => r.type === "requests.request.approved");
-      importHook = received.some((r) => r.type === "acquisition.import.completed");
-      if (!(fulfilledHook && approvedHook && importHook)) await new Promise((r) => setTimeout(r, 100));
-    }
-    // eslint-disable-next-line no-console
-    if (!(fulfilledHook && approvedHook && importHook)) console.error("M4 HOOKS:", JSON.stringify(received.map((r) => r.type)), "fulfilledFlag", fulfilledHook);
-    expect(approvedHook).toBe(true);
-    expect(fulfilledHook).toBe(true);
-    expect(importHook).toBe(true);
-  });
-
-  it("supports watchlist + content blocklist scoped to the requesting user", async () => {
-    const user = await auth(request(http).post("/api/v1/users").send({ username: "m4-watcher", password: "secret-password-2", roles: ["USER"] }));
-    const keyRes = await auth(request(http).post(`/api/v1/users/${user.body.id}/api-keys`).send({ name: "wl" }));
-    const uk = (r: any) => r.set("X-Api-Key", keyRes.body.rawKey);
-
-    const movie = await auth(request(http).post("/api/v1/movies").send({ title: "Watch Me", tmdbId: 882211 }));
-    await uk(request(http).post("/api/v1/watchlist").send({ mediaType: "movie", mediaId: movie.body.id }));
-    const wl = await uk(request(http).get("/api/v1/watchlist"));
-    expect(wl.body.some((w: any) => w.mediaId === movie.body.id)).toBe(true);
-
-    await uk(request(http).post("/api/v1/content-blocklist").send({ mediaType: "movie", mediaId: movie.body.id }));
-    expect((await uk(request(http).get("/api/v1/content-blocklist"))).body.length).toBe(1);
-
-    await uk(request(http).delete(`/api/v1/watchlist/movie/${movie.body.id}`));
-    expect((await uk(request(http).get("/api/v1/watchlist"))).body.length).toBe(0);
-  });
-});
-
-
 describe("M5: SSE realtime, notification sinks (discord/telegram), metrics, audit", () => {
   const servers: import("node:http").Server[] = [];
   const discord: string[] = [];
@@ -757,8 +578,8 @@ describe("M5: SSE realtime, notification sinks (discord/telegram), metrics, audi
     const tUrl = `http://127.0.0.1:${(t.address() as any).port}`;
 
     const r = await auth(request(http).put("/api/v1/system/config").send({
-      "notifications.discord": [{ webhookUrl: dUrl, eventTypes: ["requests.request.created", "acquisition.release.grabbed"] }],
-      "notifications.telegram": [{ botToken: "TEST", chatId: "1", baseUrl: tUrl, eventTypes: ["requests.request.created", "acquisition.release.grabbed"] }],
+      "notifications.discord": [{ webhookUrl: dUrl, eventTypes: ["acquisition.release.grabbed"] }],
+      "notifications.telegram": [{ botToken: "TEST", chatId: "1", baseUrl: tUrl, eventTypes: ["acquisition.release.grabbed"] }],
     }));
     expect(r.status).toBe(200);
   });
@@ -767,19 +588,28 @@ describe("M5: SSE realtime, notification sinks (discord/telegram), metrics, audi
     for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
   });
 
-  it("streams domain events over SSE and both sinks receive a request event", async () => {
+  it("streams domain events over SSE and both sinks receive a release-grabbed event", async () => {
     // start the underlying http server on an ephemeral port so we can open a raw SSE fetch
     await app.listen(0);
     const port = (app.getHttpServer().address() as any).port as number;
     const ctrl = new AbortController();
     const movie = await auth(request(http).post("/api/v1/movies").send({ title: "M5 Event Movie", tmdbId: 990077 }));
+    const idx = await auth(request(http).post("/api/v1/indexers").send({
+      definitionKey: "memory", name: "M5 Event Indexer", protocol: "torrent", settings: { title: "Demo" },
+    }));
+    expect(idx.status).toBe(201);
     const url = `http://127.0.0.1:${port}/api/v1/events`;
     const res = await fetch(url, { headers: { "x-api-key": API_KEY }, signal: ctrl.signal });
     const reader = (res.body as ReadableStream).getReader();
     const dec = new TextDecoder();
 
-    // trigger an event after the stream is open
-    await auth(request(http).post("/api/v1/requests").send({ mediaType: "movie", mediaId: movie.body.id }));
+    // trigger an event after the stream is open: search + grab a release
+    const search = await auth(request(http).post("/api/v1/search").send({ mediaType: "movie", mediaId: movie.body.id, query: "matrix" }));
+    expect(search.status).toBe(201);
+    const grab = await auth(request(http).post("/api/v1/grabs").send({
+      mediaType: "movie", mediaId: movie.body.id, releaseId: search.body.releases[0].id,
+    }));
+    expect(grab.status).toBe(201);
 
     let buf = "";
     const deadline = Date.now() + 6000;
@@ -793,7 +623,7 @@ describe("M5: SSE realtime, notification sinks (discord/telegram), metrics, audi
         if (done && !value) continue;
         if (done) break;
         buf += dec.decode(value, { stream: true });
-        if (buf.includes("requests.request.created")) saw = true;
+        if (buf.includes("acquisition.release.grabbed")) saw = true;
       }
     } finally {
       ctrl.abort();
@@ -803,7 +633,7 @@ describe("M5: SSE realtime, notification sinks (discord/telegram), metrics, audi
     // sinks received the event (async — poll briefly)
     let got = false;
     for (let i = 0; i < 20 && !got; i++) {
-      got = discord.some((b) => b.includes("requests.request.created")) && telegram.some((b) => b.includes("New request"));
+      got = discord.some((b) => b.includes("acquisition.release.grabbed")) && telegram.some((b) => b.includes("Release grabbed"));
       if (!got) await new Promise((r2) => setTimeout(r2, 100));
     }
     expect(got).toBe(true);
@@ -894,51 +724,6 @@ describe("M6: compatibility APIs — Sonarr/Radarr/Prowlarr", () => {
   });
 });
 
-
-describe("M6b: Seerr-compatible surface", () => {
-  it("logs in via /auth/local, creates a request, and serves discover/me", async () => {
-    // ensure a native movie to request
-    const movie = await auth(request(http).post("/api/v1/movies").send({ title: "Seerr Target", tmdbId: 670216, releaseDate: "2021-01-01" }));
-    expect(movie.status).toBe(201);
-
-    const login = await request(http).post("/api/seerr/v1/auth/local").send({ username: "admin", password: "test-password-123" });
-    expect(login.status).toBe(200);
-    expect(login.body.username).toBe("admin");
-    const token = login.body.token;
-    expect(token).toBeTruthy();
-
-    // resolve the session user
-    const me = await request(http).get("/api/seerr/v1/auth/me").set("X-Api-Key", token);
-    expect(me.status).toBe(200);
-    expect(me.body.username).toBe("admin");
-
-    // create a request for the tmdbId through the Seerr surface
-    const created = await request(http).post("/api/seerr/v1/request").set("X-Api-Key", token).send({ mediaType: "movie", mediaId: "670216" });
-    expect(created.status).toBe(201);
-    expect(created.body.mediaId).toBe("670216");
-    // admin auto-approves -> Seerr status 2 (approved)
-    expect(created.body.status).toBe(2);
-
-    // it landed in the native model
-    const nativeReqs = await auth(request(http).get("/api/v1/requests"));
-    expect(nativeReqs.body.some((r: any) => r.mediaId === movie.body.id)).toBe(true);
-
-    // discover lists the movie
-    const discover = await request(http).get("/api/seerr/v1/discover/movies");
-    expect(discover.status).toBe(200);
-    expect(discover.body.some((t: any) => t.tmdbId === 670216)).toBe(true);
-
-    // status reports totals
-    const status = await request(http).get("/api/seerr/v1/status");
-    expect(status.body.totalMovies).toBeGreaterThan(0);
-
-    // bad login -> 401
-    const bad = await request(http).post("/api/seerr/v1/auth/local").send({ username: "admin", password: "wrong" });
-    expect(bad.status).toBe(401);
-  });
-});
-
-
 describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", () => {
   let tmdbUrl: string;
   const servers: import("node:http").Server[] = [];
@@ -949,7 +734,33 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
       res.writeHead(200, { "content-type": "application/json" });
       const u = new URL(_req.url ?? "/", "http://x");
       const p = u.pathname;
-      if (p.startsWith("/find/")) { res.end(JSON.stringify({ tv_results: [{ id: 5000 }] })); return; }
+      const find = /^\/find\/([0-9]+)$/.exec(p);
+      if (find) { res.end(JSON.stringify({ tv_results: [{ id: Number(find[1]) === 900123 ? 100600 : 5000 }] })); return; }
+      // discover: trending/popular/upcoming/top_rated list endpoints
+      if (p === "/trending/movie/week" || p === "/movie/popular" || p === "/movie/upcoming" || p === "/movie/top_rated") {
+        res.end(JSON.stringify({ page: 1, total_pages: 1, total_results: 1, results: [
+          { id: 424242, title: "Discover Movie", overview: "a discover movie", release_date: "2026-05-01", poster_path: "/dm.jpg", backdrop_path: "/dmb.jpg", vote_average: 7.5 },
+        ] }));
+        return;
+      }
+      if (p === "/trending/tv/week" || p === "/tv/popular" || p === "/tv/on_the_air" || p === "/tv/top_rated") {
+        res.end(JSON.stringify({ page: 1, total_pages: 1, total_results: 1, results: [
+          { id: 100600, name: "Discover Show", overview: "a discover show", first_air_date: "2026-06-01", poster_path: "/ds.jpg", backdrop_path: "/dsb.jpg", vote_average: 8.2 },
+        ] }));
+        return;
+      }
+      if (p === "/movie/424242") { res.end(JSON.stringify({ id: 424242, title: "Discover Movie", overview: "a discover movie", release_date: "2026-05-01", genres: [{ name: "Action" }], poster_path: "/dm.jpg" })); return; }
+      if (p === "/tv/100600") {
+        const includeExternal = u.searchParams.get("append_to_response") === "external_ids";
+        res.end(JSON.stringify({
+          id: 100600, name: "Discover Show", overview: "a discover show", first_air_date: "2026-06-01",
+          genres: [{ name: "Sci-Fi" }], number_of_seasons: 1, poster_path: "/ds.jpg",
+          ...(includeExternal ? { external_ids: { tvdb_id: 900123 } } : {}),
+        }));
+        return;
+      }
+      if (p === "/tv/100600/season/0") { res.end(JSON.stringify({ season_number: 0, episodes: [] })); return; }
+      if (p === "/tv/100600/season/1") { res.end(JSON.stringify({ season_number: 1, episodes: [{ episode_number: 1, name: "Discover Pilot", air_date: "2026-06-02", overview: "first ep" }] })); return; }
       if (p === "/tv/5000") { res.end(JSON.stringify({ id: 5000, name: "Meta Show", overview: "a show", first_air_date: "2021-01-01", genres: [{ name: "Drama" }], number_of_seasons: 1, poster_path: "/s.jpg", external_ids: { tvdb_id: 8888 } })); return; }
       const m = /^\/tv\/5000\/season\/([0-9]+)$/.exec(p);
       if (m) {
@@ -1014,6 +825,66 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
     expect(lookup.body[0].title).toBe("Dune");
     expect(lookup.body[0].externalId).toBe("9");
   });
+
+  it("discover: browses lists, adds a movie and a series, and flags them in-library", async () => {
+    const trending = await auth(request(http).get("/api/v1/discover?mediaType=movie&category=trending"));
+    expect(trending.status).toBe(200);
+    const dm = trending.body.results.find((r: any) => r.tmdbId === 424242);
+    expect(dm).toBeTruthy();
+    expect(dm.title).toBe("Discover Movie");
+    expect(dm.posterUrl).toContain("/dm.jpg");
+    expect(dm.inLibrary).toBe(false);
+
+    const addedMovie = await auth(request(http).post("/api/v1/discover/add").send({ mediaType: "movie", tmdbId: 424242 }));
+    expect(addedMovie.status).toBe(201);
+    expect(addedMovie.body.created).toBe(true);
+    const movieId = addedMovie.body.id;
+    const gotMovie = await auth(request(http).get(`/api/v1/movies/${movieId}`));
+    expect(gotMovie.body.title).toBe("Discover Movie");
+    expect(gotMovie.body.tmdbId).toBe(424242);
+    expect(gotMovie.body.overview).toBe("a discover movie");
+    expect(gotMovie.body.genres).toContain("Action");
+
+    // adding again is idempotent (no duplicate created)
+    const addedAgain = await auth(request(http).post("/api/v1/discover/add").send({ mediaType: "movie", tmdbId: 424242 }));
+    expect(addedAgain.body.created).toBe(false);
+    expect(addedAgain.body.id).toBe(movieId);
+
+    // discover now flags it as in-library
+    const trending2 = await auth(request(http).get("/api/v1/discover?mediaType=movie&category=trending"));
+    const dm2 = trending2.body.results.find((r: any) => r.tmdbId === 424242);
+    expect(dm2.inLibrary).toBe(true);
+    expect(dm2.libraryId).toBe(movieId);
+
+    // series: tmdbId -> tvdbId resolution (append_to_response=external_ids) + seasons/episodes population
+    const seriesTrending = await auth(request(http).get("/api/v1/discover?mediaType=series&category=trending"));
+    const ds = seriesTrending.body.results.find((r: any) => r.tmdbId === 100600);
+    expect(ds).toBeTruthy();
+    expect(ds.inLibrary).toBe(false);
+
+    const addedSeries = await auth(request(http).post("/api/v1/discover/add").send({ mediaType: "series", tmdbId: 100600 }));
+    expect(addedSeries.status).toBe(201);
+    expect(addedSeries.body.created).toBe(true);
+    const seriesId = addedSeries.body.id;
+    const gotSeries = await auth(request(http).get(`/api/v1/series/${seriesId}`));
+    expect(gotSeries.body.title).toBe("Discover Show");
+    expect(gotSeries.body.tvdbId).toBe(900123);
+    expect(gotSeries.body.tmdbId).toBe(100600);
+
+    const seriesEpisodes = await auth(request(http).get(`/api/v1/series/${seriesId}/episodes`));
+    const ep1 = seriesEpisodes.body.find((e: any) => e.seasonNumber === 1 && e.episode.episodeNumber === 1);
+    expect(ep1).toBeTruthy();
+    expect(ep1.episode.title).toBe("Discover Pilot");
+  });
+
+  it("discover: 422s when TMDB isn't configured", async () => {
+    await auth(request(http).put("/api/v1/system/config").send({ "metadata.tmdbApiKey": "" }));
+    const res = await auth(request(http).get("/api/v1/discover?mediaType=movie&category=popular"));
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe("UNPROCESSABLE");
+    // restore for hygiene (nothing else in this file currently depends on it, but keep the suite order-independent)
+    await auth(request(http).put("/api/v1/system/config").send({ "metadata.tmdbApiKey": "test-key", "metadata.tmdbBaseUrl": tmdbUrl }));
+  });
 });
 
 
@@ -1040,17 +911,13 @@ describe("M8 hardening: secrets redaction, authz gating, security headers", () =
     expect(String(dcs.text)).not.toContain("sab-secret-999");
   });
 
-  it("gates global config + metadata behind admin", async () => {
-    const user = await auth(request(http).post("/api/v1/users").send({ username: "sec-user", password: "secret-password-9", roles: ["USER"] }));
-    const key = (await auth(request(http).post(`/api/v1/users/${user.body.id}/api-keys`).send({ name: "sec" }))).body.rawKey;
-    const uk = (r: any) => r.set("X-Api-Key", key);
-
-    expect((await uk(request(http).get("/api/v1/system/config"))).status).toBe(403);
-    expect((await uk(request(http).put("/api/v1/system/config").send({ "ui.theme": "light" }))).status).toBe(403);
-    // admin still works + no secrets in config
-    const adminCfg = await auth(request(http).get("/api/v1/system/config"));
-    expect(adminCfg.status).toBe(200);
-    expect(String(adminCfg.text)).not.toContain("supersecret-123");
+  it("serves global config to any valid system key with no secrets leaked", async () => {
+    // single-tier auth: any valid X-Api-Key is a full-access system key (no user
+    // accounts/roles) — see "rejects API calls without/with invalid keys" for the
+    // no-key/invalid-key 401 case.
+    const cfg = await auth(request(http).get("/api/v1/system/config"));
+    expect(cfg.status).toBe(200);
+    expect(String(cfg.text)).not.toContain("supersecret-123");
   });
 
   it("sets security response headers", async () => {

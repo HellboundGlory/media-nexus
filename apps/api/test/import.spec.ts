@@ -132,36 +132,3 @@ describe("M7 import: prowlarr", () => {
     expect(i.settings).toMatchObject({ baseUrl: "https://tracker.invalid" });
   });
 });
-
-describe("M7 import: seerr", () => {
-  let srcPath: string;
-  beforeAll(() => {
-    srcPath = mkSource("overseerr.db", (db) => {
-    db.exec(`CREATE TABLE User (id INTEGER PRIMARY KEY, username TEXT, email TEXT, plexUsername TEXT);
-      CREATE TABLE Media (id INTEGER PRIMARY KEY, tmdbId INTEGER, tvdbId INTEGER, mediaType TEXT, status TEXT);
-      CREATE TABLE MediaRequest (id INTEGER PRIMARY KEY, mediaId INTEGER, type TEXT, status INTEGER, requestedBy INTEGER, createdAt INTEGER);
-      CREATE TABLE Watchlist (userId INTEGER, tmdbId INTEGER, mediaType TEXT);`);
-    db.prepare(`INSERT INTO User (id,username,email) VALUES (1,'seeduser','s@e.com')`).run();
-    db.prepare(`INSERT INTO Media (id,tmdbId,mediaType,status) VALUES (1,7101,'movie','pending')`).run();
-    db.prepare(`INSERT INTO MediaRequest (id,mediaId,type,status,requestedBy,createdAt) VALUES (1,1,'movie',1,1,${Date.now()})`).run();
-    db.prepare(`INSERT INTO Watchlist (userId,tmdbId,mediaType) VALUES (1,7101,'movie')`).run();
-    });
-  });
-
-  it("maps users, requests and watchlist against existing native media", async () => {
-    const target = newTarget("t-seerr.db");
-    // the seerr media maps to an existing native movie by tmdbId
-    await target.db.insert(schema.movie).values({ id: "native-7101", tmdbId: 7101, title: "Existing", monitored: true, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-    const report = await runImport(srcPath, target.db, { kind: "seerr" });
-    expect(report.users).toBe(1);
-    expect(report.requests).toBe(1);
-    const req = (await target.db.select().from(schema.request).where(eq(schema.request.id, "imp_seerr_r1")))[0];
-    expect(req.mediaId).toBe("native-7101");
-    expect(req.status).toBe("pending");
-    const watch = await target.db.select().from(schema.watchlist);
-    expect(watch.length).toBe(1);
-    expect(watch[0].mediaId).toBe("native-7101");
-    const avail = await target.db.select().from(schema.mediaAvailability);
-    expect(avail.length).toBeGreaterThanOrEqual(1);
-  });
-});

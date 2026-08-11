@@ -2,7 +2,6 @@
 import { describe, it, expect } from "vitest";
 import { qualityRank, qualitySatisfies, qualitySourceSchema, type Quality } from "./quality";
 import { releaseSchema } from "./release";
-import { createRequestSchema } from "./inputs";
 
 const q = (source: string, resolution: string): Quality => ({ source: source as Quality["source"], resolution: resolution as Quality["resolution"], edition: "" });
 
@@ -32,10 +31,5 @@ describe("domain schemas", () => {
     });
     expect(r.success).toBe(true);
     if (r.success) expect(r.data.isProper).toBe(false);
-  });
-
-  it("accepts a valid request input and rejects unknown mediaType", () => {
-    expect(createRequestSchema.safeParse({ mediaType: "movie", mediaId: "m1" }).success).toBe(true);
-    expect(createRequestSchema.safeParse({ mediaType: "album", mediaId: "m1" }).success).toBe(false);
   });
 });

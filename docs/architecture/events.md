@@ -9,7 +9,7 @@ call (Rule/anti-pattern in the brief).
 Example event catalog (native events; the full list grows as milestones land):
 
 ```text
-MovieAdded, SeriesAdded, RequestCreated, RequestApproved, RequestDeclined,
+MovieAdded, SeriesAdded, MovieRemoved, SeriesRemoved,
 ReleaseFound?, ReleaseGrabbed, DownloadStarted, DownloadCompleted, ImportCompleted,
 MediaFileRenamed, IndexerFailed, DownloadClientFailed
 ```
@@ -47,17 +47,16 @@ async-flow debuggability (Rule/observability).
 
 | Consumer | Behavior |
 |---|---|
-| Audit log | persist `AdminAction`/`Security` and selected media/request events |
-| Notifications | webhook / Discord / Telegram / Email sinks (M5) subscribe per event type; dispatch async with error isolation + manual `test` endpoint |
-| Jobs | event→job mapping (e.g. `RequestApproved` → enqueue search) |
+| Audit log | persist a fixed set of events: `media.movie.added/removed`, `media.series.added/removed`, `system.job.manual` |
+| Notifications | webhook / Discord / Telegram / Email sinks subscribe per event type (`acquisition.release.grabbed`, `acquisition.import.completed`, `discovery.indexer.failed`, `acquisition.client.failed`); dispatch async with error isolation + manual `test` endpoint |
 | Compatibility/webhooks | future push webhooks subscribed to events |
 
 ## 5. Scaffold reality check
 
 In the scaffold: `packages/events` implements the envelope + typed bus + serialization + tests; the API publishes
-`MovieAdded`/`SeriesAdded`/`RequestCreated` on create; an `AuditListener` persists those; a request create also fires an
-event → job mapping showing the request→search pattern (`media.searchForRequest`) without a live search yet (deliberately
-stubbed to prove the wiring; a real search is M1).
+`MovieAdded`/`SeriesAdded`/`MovieRemoved`/`SeriesRemoved` on create/delete; an `AuditListener` persists those (plus
+`system.job.manual`); acquisition/discovery events (`ReleaseGrabbed`, `ImportCompleted`, `IndexerFailed`,
+`DownloadClientFailed`) drive the notification sinks.
 
 ## 6. Rules
 

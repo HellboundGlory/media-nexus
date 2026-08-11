@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { ApiError } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import { ConfigService } from "../system/config.service";
 import { TmdbProvider } from "@medianexus/integrations";
-import type { MediaSummary } from "@medianexus/integrations";
+import type { MediaSummary, DiscoverCategory } from "@medianexus/integrations";
+import { MoviesService } from "../movies/movies.service";
+import { SeriesService } from "../series/series.service";
 
 /**
  * Metadata import (metadata): TMDB provides movie/series enrichment and — critically —
@@ -19,6 +21,8 @@ export class MetadataService {
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly config: ConfigService,
+    private readonly movies: MoviesService,
+    private readonly series: SeriesService,
   ) {}
 
   async provider(): Promise<TmdbProvider | null> {
@@ -107,5 +111,61 @@ export class MetadataService {
       catch (err) { this.logger.warn(`metadata refresh skipped ${s.title}: ${(err as Error).message}`); }
     }
     return { refreshed };
+  }
+
+  /** Browse TMDB trending/popular/upcoming/top-rated lists, flagged against the local library. */
+  async discover(mediaType: "movie" | "series", category: DiscoverCategory, page = 1) {
+    const p = await this.provider();
+    if (!p) throw new ApiError({ code: "UNPROCESSABLE", message: "metadata.tmdbApiKey is not configured" });
+    const result = await p.discover(mediaType, category, page);
+
+    const tmdbIds = result.results.map((r) => r.tmdbId);
+    const inLibrary = new Map<number, string>();
+    if (tmdbIds.length) {
+      const table = mediaType === "movie" ? schema.movie : schema.series;
+      const rows = await this.db.select({ id: table.id, tmdbId: table.tmdbId }).from(table).where(inArray(table.tmdbId, tmdbIds));
+      for (const r of rows) if (r.tmdbId != null) inLibrary.set(r.tmdbId, r.id);
+    }
+
+    return {
+      page: result.page,
+      totalPages: result.totalPages,
+      totalResults: result.totalResults,
+      results: result.results.map((r) => ({
+        ...r,
+        inLibrary: inLibrary.has(r.tmdbId),
+        libraryId: inLibrary.get(r.tmdbId) ?? null,
+      })),
+    };
+  }
+
+  /** One-click add from discover: create the title, then best-effort enrich (images/genres/seasons). */
+  async addFromDiscover(mediaType: "movie" | "series", tmdbId: number): Promise<{ id: string; created: boolean }> {
+    const p = await this.provider();
+    if (!p) throw new ApiError({ code: "UNPROCESSABLE", message: "metadata.tmdbApiKey is not configured" });
+
+    if (mediaType === "movie") {
+      const existing = await this.db.select({ id: schema.movie.id }).from(schema.movie).where(eq(schema.movie.tmdbId, tmdbId)).limit(1);
+      if (existing[0]) return { id: existing[0].id, created: false };
+      const details = await p.getDetails("movie", String(tmdbId));
+      const created = await this.movies.create({
+        title: details.title, tmdbId, overview: details.overview ?? "", releaseDate: details.releaseDate,
+        monitored: true, rootFolderPath: "", tags: [],
+      });
+      await this.refreshMovie(created.id).catch((err) => this.logger.warn(`post-add movie enrich failed: ${(err as Error).message}`));
+      return { id: created.id, created: true };
+    }
+
+    const existingSeries = await this.db.select({ id: schema.series.id }).from(schema.series).where(eq(schema.series.tmdbId, tmdbId)).limit(1);
+    if (existingSeries[0]) return { id: existingSeries[0].id, created: false };
+    const tvdbId = await p.tvdbIdForTmdb(tmdbId);
+    if (!tvdbId) throw new ApiError({ code: "UNPROCESSABLE", message: "Could not resolve a TVDB id for this series from TMDB" });
+    const details = await p.getDetails("series", String(tmdbId));
+    const createdSeries = await this.series.create({
+      title: details.title, tvdbId, tmdbId, overview: details.overview ?? "", firstAirYear: details.year,
+      monitored: true, rootFolderPath: "", seriesType: "standard", tags: [],
+    });
+    await this.refreshSeries(createdSeries.id).catch((err) => this.logger.warn(`post-add series enrich failed: ${(err as Error).message}`));
+    return { id: createdSeries.id, created: true };
   }
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useAppStore } from "../store/useAppStore";
 
-export const API_BASE = (import.meta.env.VITE_MEDIA_NEXUS_API_URL as string | undefined) ?? "/api";
+export const API_BASE = (import.meta.env.VITE_MEDIA_NEXUS_API_URL as string | undefined) ?? "/api/v1";
 
 export function apiKey(): string {
   const fromStore = useAppStore.getState().apiKey;

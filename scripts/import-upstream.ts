@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /**
- * CLI: import an upstream Sonarr/Radarr/Prowlarr/Seerr SQLite DB into MediaNexus.
+ * CLI: import an upstream Sonarr/Radarr/Prowlarr SQLite DB into MediaNexus.
  *   tsx scripts/import-upstream.ts --kind sonarr --db /path/to/sonarr.db
  *   (--kind optional: auto-detected; --target defaults to DATABASE_URL or ./data/media-nexus.db)
  */
@@ -21,7 +21,7 @@ function parse(argv: string[]): Args {
 
 async function main(): Promise<void> {
   const args = parse(process.argv.slice(2));
-  if (!args.db) { console.error("Usage: tsx scripts/import-upstream.ts --kind <sonarr|radarr|prowlarr|seerr> --db <upstream.db> [--target <media-nexus.db>]"); process.exit(1); }
+  if (!args.db) { console.error("Usage: tsx scripts/import-upstream.ts --kind <sonarr|radarr|prowlarr> --db <upstream.db> [--target <media-nexus.db>]"); process.exit(1); }
   const sourcePath = resolve(args.db);
   const targetUrl = args.target ? `file:${resolve(args.target)}` : (process.env.DATABASE_URL ?? "file:./data/media-nexus.db");
 

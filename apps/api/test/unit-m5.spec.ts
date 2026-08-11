@@ -4,8 +4,8 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import nodemailer from "nodemailer";
 import { domainEvent, EventTypes } from "@medianexus/events";
-import { deliverToDiscord, deliverToTelegram, deliverToEmail } from "../src/requests/notify-sinks";
-import { RateLimitGuard } from "../src/requests/rate-limit.guard";
+import { deliverToDiscord, deliverToTelegram, deliverToEmail } from "../src/notifications/notify-sinks";
+import { RateLimitGuard } from "../src/common/rate-limit.guard";
 import { MetricsService } from "../src/observability/metrics.service";
 
 const servers: Server[] = [];
