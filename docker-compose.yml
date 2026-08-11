@@ -13,14 +13,11 @@ services:
       NODE_ENV: production
       PORT: 7373
       DATABASE_URL: file:/data/db/media-nexus.db
-      MEDIA_NEXUS_DATA_DIR: /data/config
-      MEDIA_NEXUS_MEDIA_DIR: /data/media
-      MEDIA_NEXUS_DOWNLOADS_DIR: /data/downloads
       TZ: ${TZ:-UTC}
-      PUID: ${PUID:-1000}
-      PGID: ${PGID:-1000}
       MEDIA_NEXUS_SECRET: ${MEDIA_NEXUS_SECRET:?set MEDIA_NEXUS_SECRET in .env}
     volumes:
+      # ./data/* bind mounts provide persistence for DB, config, media and downloads.
+      # Media + downloads must share a filesystem for hardlinks (import pipeline).
       - ./data/db:/data/db
       - ./data/config:/data/config
       - ./data/media:/data/media
@@ -35,7 +32,3 @@ services:
       retries: 3
     stop_grace_period: 20s
     restart: unless-stopped
-
-volumes:
-  # ./data/* bind mounts provide persistence for DB, config, media and downloads.
-  # Media + downloads must share a filesystem for hardlinks (import pipeline).

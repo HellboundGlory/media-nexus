@@ -19,16 +19,20 @@ LAN/private-network use only, never exposed directly to the public internet.
 
 ## Volumes / persistence
 
-- `./data/db:/data/db` — SQLite database + uploads (default). Postgres is not wired into compose yet (roadmap M1.1); once
-  it lands, point `DATABASE_URL` at it instead of using this volume.
+- `./data/db:/data/db` — SQLite database (default). All app config/settings live here (the `setting` table), not in a
+  separate config directory. Postgres is not wired into compose yet (roadmap M1.1); once it lands, point
+  `DATABASE_URL` at it instead of using this volume.
 - `./data/media:/data/media` — media library (mount the host library here)
-- `./data/downloads:/data/downloads` — downloads staging (must be same filesystem for hardlinks)
-- `./data/config:/data/config` — application config/settings persistence
+- `./data/downloads:/data/downloads` — downloads staging (must be same filesystem as media for hardlinks)
 
-## Images are configurable, not hard-coded
+## Paths are set in the app, not via environment variables
 
-Paths in the deploy are **environment-driven**: `DATABASE_URL`, `MEDIA_NEXUS_DATA_DIR`, `MEDIA_NEXUS_MEDIA_DIR`,
-`MEDIA_NEXUS_DOWNLOADS_DIR`, `TZ`, `PUID`/`PGID`. Nothing host-specific is baked into the image.
+Root folders and the downloads path (`paths.rootFolders`, `paths.downloads`) are **runtime settings**, configured
+in the web UI (System → Settings) or via `PUT /api/v1/system/config` — see
+[docs/deployment/configuration.md](configuration.md). Point them at whatever container paths your volumes are
+mounted to (`/data/media`, `/data/downloads` in the example above). There is no environment variable for this —
+`DATABASE_URL`, `MEDIA_NEXUS_SECRET`, `TZ` are the only deploy-time env vars that affect paths/behavior; nothing
+host-specific is baked into the image.
 
 ## Health checks & graceful shutdown
 

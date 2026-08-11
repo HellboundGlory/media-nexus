@@ -16,7 +16,6 @@ All configuration flows through environment variables (secrets via `_FILE` suffi
 | `AUTO_MIGRATE` | `true` | run pending Drizzle migrations automatically on boot |
 | `JOB_CONCURRENCY` | `2` | running job workers |
 | `LOG_LEVEL` | `info` | structured log level |
-| `PUID` / `PGID` | `1000` | container UID/GID (docker) |
 | `TZ` | `UTC` | timezone |
 | `WEB_PORT` | `8080` | (compose only) host port mapped to the container's port 7373 |
 
@@ -27,8 +26,10 @@ this app is not meant to sit behind a reverse proxy (see [docs/security.md](../s
 
 Namespaced keys, e.g.:
 
-- `paths.rootFolders` — library root folders
-- `paths.downloads` — downloads staging root
+- `paths.rootFolders` — library root folders. **This, not an environment variable, is how you point MediaNexus at
+  your media library** — set it to wherever your media volume is mounted inside the container (System → Settings).
+- `paths.downloads` — downloads staging root, same idea — set it to your downloads volume's container path. Must be
+  on the same filesystem as `paths.rootFolders` for hardlink imports.
 - `media.naming.movies` / `media.naming.episodes` — naming templates
 - `media.preferredProtocol` — usenet vs torrent preference
 - `system.timezone`

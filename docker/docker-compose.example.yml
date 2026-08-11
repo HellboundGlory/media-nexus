@@ -4,7 +4,9 @@
 # 2) Get the first-run API key from logs:
 #      docker compose -f docker/docker-compose.example.yml logs app | grep "API key"
 # 3) Open the web UI (http://host:8080), paste the key under System → API key.
-# 4) Set metadata.tmdbApiKey (System) and add indexers + download clients.
+# 4) Set your root folder(s) to /data/media and downloads root to /data/downloads
+#    (System → Settings — these are runtime settings, not environment variables).
+# 5) Set metadata.tmdbApiKey (System) and add indexers + download clients.
 #
 # Image is pulled from GitHub Container Registry (built/published by CI on `v*` tags).
 # Replace `hellboundglory/media-nexus` if you own the repo under a different path.
@@ -28,8 +30,6 @@ services:
       # SQLite default (Postgres is a roadmap item; set postgres://… when supported)
       DATABASE_URL: file:/data/db/media-nexus.db
       MEDIA_NEXUS_SECRET: ${MEDIA_NEXUS_SECRET:?set MEDIA_NEXUS_SECRET in .env}
-      MEDIA_NEXUS_MEDIA_DIR: /data/media
-      MEDIA_NEXUS_DOWNLOADS_DIR: /data/downloads
       TZ: ${TZ:-UTC}
     volumes:
       - ./data/db:/data/db
