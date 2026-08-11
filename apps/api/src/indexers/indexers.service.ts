@@ -259,8 +259,8 @@ export class IndexersService {
       size: release.size,
       category: input.mediaType,
     };
-    // demo flow (memory client): create a placeholder "downloaded" file so the importer has something to move
-    if (!client.row) {
+    // memory download client (test infra only): create a placeholder "downloaded" file so the importer has something to move
+    if (client.row?.implementation === "memory") {
       const cfg = await this.config.get();
       const downloadsRoot = cfg["paths.downloads"] || resolve(process.cwd(), "data", "downloads");
       const dir = join(downloadsRoot, safePlaceholder(release.title));
