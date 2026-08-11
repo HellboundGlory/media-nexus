@@ -113,39 +113,3 @@ export class JellyfinMediaServerProvider implements MediaServerContract {
     return all;
   }
 }
-
-/** In-memory demo media server (availability preset) — for E2E/dev without a real Jellyfin.
- *  `preset` = [{ mediaType, providerId: { tmdb?|tvdb?, name } }] matching library items. */
-export class MemoryMediaServerProvider implements MediaServerContract {
-  readonly key = "memory";
-  private readonly preset: Array<{ mediaType: "movie" | "series"; providerId: Record<string, string>; name: string }>;
-
-  constructor(preset: Array<{ mediaType: "movie" | "series"; providerId: Record<string, string>; name: string }> = []) {
-    this.preset = preset;
-  }
-
-  async getLibraryItems(): Promise<Array<{ id: string; type: "Movie" | "Series"; providerIds: Record<string, string>; name: string }>> {
-    return this.preset.map((p, i) => ({
-      id: `mem-${i}`,
-      type: p.mediaType === "movie" ? "Movie" : "Series",
-      providerIds: p.providerId,
-      name: p.name,
-    }));
-  }
-
-  async getAvailability(mediaType: "movie" | "series", externalId: string): Promise<Availability> {
-    return { present: this.preset.some((p) => p.mediaType === mediaType && Object.values(p.providerId).includes(externalId)) };
-  }
-
-  async importUsers(): Promise<ServerUser[]> {
-    return [{ externalId: "mem-user-1", username: "demo-user" }];
-  }
-
-  async scanLibrary(): Promise<{ scanned: number }> {
-    return { scanned: this.preset.length };
-  }
-
-  async healthcheck(): Promise<HealthResult> {
-    return { ok: true, latencyMs: 1, message: "in-memory media server" };
-  }
-}

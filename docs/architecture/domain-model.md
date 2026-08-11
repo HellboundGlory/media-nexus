@@ -111,8 +111,9 @@ that was deliberately removed (no user accounts to scope it to) and has no equiv
 
 - **`media_availability`** *(implemented)* — "this movie/series exists in a media server": `id, mediaType, mediaId,
   status (unknown|processing|partiallyAvailable|available), plexId?, jellyfinId?, tmdbRating, tmdbVoteCount, lastTmdbSyncAt,
-  lastAvailabilitySyncAt`. Populated by the media-servers module (Jellyfin sync today, `media.availabilityRefresh` job);
-  a future Plex watchlist integration is the planned next consumer of this table (see
+  lastAvailabilitySyncAt`. Populated by the media-servers module (Jellyfin and Plex sync, `media.availabilityRefresh`
+  job); a future Plex *watchlist* integration (account-linked, separate from library-availability sync) is the planned
+  next consumer of this table (see
   [docs/implementation/roadmap.md](../implementation/roadmap.md)). The request/approval workflow that used to read this
   table was removed along with user accounts.
 

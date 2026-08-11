@@ -34,5 +34,5 @@ test("Series, Indexers and Clients pages render their headings", async ({ page }
   await page.goto("/#/indexers");
   await expect(page.getByRole("heading", { name: "Indexers" })).toBeVisible();
   await page.goto("/#/clients");
-  await expect(page.getByRole("heading", { name: "Download Clients" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Clients & Servers" })).toBeVisible();
 });

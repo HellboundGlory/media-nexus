@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Play, Webhook, Database } from "lucide-react";
+import { KeyRound, Play, Webhook, Database, Copy, Check, RotateCw } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { api } from "../api/client";
 import type { JobRun } from "../api/types";
@@ -13,6 +13,15 @@ export default function System() {
   const apiKey = useAppStore((s) => s.apiKey);
   const setApiKey = useAppStore((s) => s.setApiKey);
   const [keyDraft, setKeyDraft] = useState(apiKey);
+  const [copied, setCopied] = useState(false);
+  const regenerateKey = useMutation({
+    mutationFn: () => api.post<{ rawKey: string }>("/auth/regenerate-key"),
+    onSuccess: (res) => {
+      setApiKey(res.rawKey);
+      setKeyDraft(res.rawKey);
+      setTimeout(() => qc.invalidateQueries(), 150);
+    },
+  });
   const [notifyDraft, setNotifyDraft] = useState({ url: "", secret: "", eventTypes: "" });
   const [savedNotification, setSavedNotification] = useState(false);
   const saveWebhooks = useMutation({
@@ -47,6 +56,7 @@ export default function System() {
     ["GET", "/api/v1/series/:id/seasons"], ["POST", "/api/v1/search"], ["POST", "/api/v1/grabs"],
     ["GET", "/api/v1/indexers"], ["POST", "/api/v1/indexers"], ["GET", "/api/v1/indexers/definitions"],
     ["GET", "/api/v1/history"], ["GET", "/api/v1/queue"], ["GET", "/api/v1/auth/whoami"],
+    ["POST", "/api/v1/auth/regenerate-key"],
     ["GET", "/health/live"], ["GET", "/health/ready"], ["GET", "/api/sonarr/v3/system/status"],
   ];
 
@@ -175,7 +185,9 @@ export default function System() {
           First-run bootstrap prints an <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">X-Api-Key</code> to the API
           logs. Paste it here so this browser can call the API (stored locally only). In dev you can also set
           <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800"> VITE_MEDIA_NEXUS_API_KEY </code> in{" "}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">apps/web/.env</code>.
+          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">apps/web/.env</code>. Lost the key entirely?
+          Regenerate one below — it immediately replaces the old key here, but anything else using the old key
+          (scripts, other browsers, compat clients) will need the new one too.
         </p>
         <div className="flex gap-2">
           <input
@@ -186,12 +198,34 @@ export default function System() {
             className="flex-1 rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700"
           />
           <button
+            onClick={() => {
+              if (!keyDraft) return;
+              navigator.clipboard.writeText(keyDraft).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
+            }}
+            title="Copy to clipboard"
+            className="flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+          <button
             onClick={() => { setApiKey(keyDraft.trim()); setTimeout(() => qc.invalidateQueries(), 150); }}
             className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500"
           >
             Save key
           </button>
         </div>
+        <button
+          onClick={() => {
+            if (!window.confirm("Regenerate the API key? The current key stops working immediately — anything else using it (other browsers, scripts, Sonarr/Radarr/Prowlarr-compatible clients) will need the new one.")) return;
+            regenerateKey.mutate();
+          }}
+          disabled={regenerateKey.isPending}
+          className="mt-2 flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-800 disabled:opacity-50 dark:hover:text-zinc-200"
+        >
+          <RotateCw className={`h-3 w-3 ${regenerateKey.isPending ? "animate-spin" : ""}`} /> Regenerate key
+        </button>
+        {regenerateKey.isSuccess && <p className="mt-1 text-xs text-emerald-600">New key generated and saved to this browser.</p>}
+        {regenerateKey.isError && <p className="mt-1 text-xs text-red-600">{regenerateKey.error instanceof Error ? regenerateKey.error.message : "Failed to regenerate"}</p>}
       </section>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">

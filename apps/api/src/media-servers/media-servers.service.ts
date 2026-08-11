@@ -7,11 +7,11 @@ import type { Db } from "@medianexus/database";
 import { ConfigService } from "../system/config.service";
 import { redactDeep } from "../common/redact";
 import type { MediaServerConfig } from "@medianexus/shared";
-import { JellyfinMediaServerProvider, MemoryMediaServerProvider } from "@medianexus/integrations";
+import { JellyfinMediaServerProvider, PlexMediaServerProvider } from "@medianexus/integrations";
 import type { MediaServerContract } from "@medianexus/integrations";
 
 /**
- * Media server availability: builds configured providers (Jellyfin/memory),
+ * Media server availability: builds configured providers (Jellyfin/Plex),
  * refreshes `media_availability` against a real library server so the app knows
  * what's already available. Config lives in `media.servers` (validated in config).
  */
@@ -32,12 +32,15 @@ export class MediaServersService {
       if (!server.enabled) continue;
       const settings = server.settings as Record<string, unknown>;
       const provider: MediaServerContract =
-        server.implementation === "jellyfin"
-          ? new JellyfinMediaServerProvider({
+        server.implementation === "plex"
+          ? new PlexMediaServerProvider({
+              host: String(settings.host ?? ""),
+              token: String(settings.apiKey ?? ""),
+            })
+          : new JellyfinMediaServerProvider({
               host: String(settings.host ?? ""),
               apiKey: String(settings.apiKey ?? ""),
-            })
-          : new MemoryMediaServerProvider(Array.isArray(settings.present) ? (settings.present as never) : []);
+            });
       out.push({ cfg: server, provider });
     }
     return out;
@@ -60,7 +63,7 @@ export class MediaServersService {
     for (const { provider } of providers) {
       let items: { id: string; type: "Movie" | "Series"; providerIds: Record<string, string>; name: string }[] = [];
       try {
-        if (provider instanceof JellyfinMediaServerProvider) items = await provider.getLibraryItems();
+        if (provider instanceof JellyfinMediaServerProvider || provider instanceof PlexMediaServerProvider) items = await provider.getLibraryItems();
       } catch (err) {
         this.logger.warn(`media server scan failed: ${(err as Error).message}`);
         continue;

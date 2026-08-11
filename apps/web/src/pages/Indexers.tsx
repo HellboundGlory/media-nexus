@@ -58,8 +58,7 @@ export default function Indexers() {
   const submitIndexer = () => {
     if (!selectedDef) return;
     const settings: Record<string, unknown> = { ...Object.fromEntries(Object.entries(settingsDraft)) };
-    if (selectedDef.implementation === "memory") settings.title = "Demo";
-    else if (selectedDef.implementation !== "cardigann") {
+    if (selectedDef.implementation !== "cardigann") {
       settings.baseUrl = baseUrl;
       settings.apiKey = apiKey;
       settings.categories = [2000, 5000, 5010, 5020, 5030, 5040];
@@ -86,7 +85,7 @@ export default function Indexers() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">Indexers</h2>
-          <p className="text-sm text-zinc-500">Configure search sources (Newznab/Torznab via HTTP, Cardigann custom, memory demo). Test health, view grab stats, then Search & grab below.</p>
+          <p className="text-sm text-zinc-500">Configure search sources (Newznab/Torznab via HTTP, Cardigann custom). Test health, view grab stats, then Search & grab below.</p>
         </div>
         <button onClick={() => setShowCustom((v) => !v)} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-200 dark:text-zinc-900">
           {showCustom ? "Hide custom form" : "New custom (Cardigann)"}
@@ -151,7 +150,7 @@ export default function Indexers() {
                     )}
                   </label>
                 ))
-              ) : selectedDef?.implementation !== "memory" && selectedDef ? (
+              ) : selectedDef ? (
                 <>
                   <label className="block"><span className="mb-1 block text-xs text-zinc-500">Base URL</span>
                     <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://indexer.example.com" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>

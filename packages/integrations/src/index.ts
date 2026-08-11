@@ -10,4 +10,5 @@ export * from "./local-storage";
 export * from "./proxy";
 export * from "./cardigann";
 export * from "./jellyfin";
+export * from "./plex";
 export * from "./tmdb";

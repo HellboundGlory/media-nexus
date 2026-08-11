@@ -35,7 +35,9 @@ export class IndexersService {
 
   async definitions() {
     const rows = await this.db.select().from(schema.indexerDefinition).orderBy(asc(schema.indexerDefinition.name));
-    return rows.map((def) => {
+    // "memory" stays seeded (test infra creates indexers against it) but is never real —
+    // never surface it to a real client browsing definitions.
+    return rows.filter((def) => def.implementation !== "memory").map((def) => {
       let settingsSchema: { name: string; label?: string; type: string; default?: string | number | boolean; required: boolean; options?: string[] }[] | undefined;
       if (def.implementation === "cardigann" && def.cardigannYml) {
         try {

@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { JellyfinMediaServerProvider, MemoryMediaServerProvider } from "./jellyfin";
+import { JellyfinMediaServerProvider } from "./jellyfin";
 
 const servers: Server[] = [];
 afterEach(() => { for (const s of servers.splice(0)) s.close(); });
@@ -35,14 +35,5 @@ describe("JellyfinMediaServerProvider", () => {
     const users = await provider.importUsers();
     expect(users[0].username).toBe("Alice");
     expect((await provider.healthcheck()).ok).toBe(true);
-  });
-});
-
-describe("MemoryMediaServerProvider", () => {
-  it("reports preset availability", async () => {
-    const provider = new MemoryMediaServerProvider([{ mediaType: "movie", providerId: { tmdb: "1" }, name: "X" }]);
-    expect((await provider.getAvailability("movie", "1")).present).toBe(true);
-    expect((await provider.getAvailability("series", "1")).present).toBe(false);
-    expect((await provider.scanLibrary()).scanned).toBe(1);
   });
 });

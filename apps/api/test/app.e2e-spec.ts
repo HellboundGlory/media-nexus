@@ -116,6 +116,12 @@ describe("MediaNexus API (e2e)", () => {
     }));
     expect(idx.status).toBe(201);
 
+    // grabs need a real (or explicit test-only memory) download client — no more implicit fallback
+    const dc = await auth(request(http).post("/api/v1/download-clients").send({
+      name: "Demo Client", implementation: "memory", kind: "torrent", priority: 1, settings: {},
+    }));
+    expect(dc.status).toBe(201);
+
     const search = await auth(request(http).post("/api/v1/search").send({ mediaType: "movie", mediaId: mid, query: "matrix" }));
     expect(search.status).toBe(201);
     expect(search.body.releases.length).toBeGreaterThan(0);
@@ -539,11 +545,14 @@ describe("M3: indexer health, Cardigann custom definitions, and statistics", () 
   });
 
   it("reports per-indexer statistics from history", async () => {
-    // self-contained: configure a memory indexer + movie + grab so statistics has data
+    // self-contained: configure a memory indexer + download client + movie + grab so statistics has data
     const idx = await auth(request(http).post("/api/v1/indexers").send({
       definitionKey: "memory", name: "M3 Stats Demo", protocol: "torrent", settings: { title: "Demo" },
     }));
     expect(idx.status).toBe(201);
+    await auth(request(http).post("/api/v1/download-clients").send({
+      name: "M3 Stats Client", implementation: "memory", kind: "torrent", priority: 1, settings: {},
+    }));
     const movie = await auth(request(http).post("/api/v1/movies").send({ title: "M3 Stats Movie", tmdbId: 835555 }));
     const search = await auth(request(http).post("/api/v1/search").send({ mediaType: "movie", mediaId: movie.body.id, query: "matrix" }));
     const g = await auth(request(http).post("/api/v1/grabs").send({ mediaType: "movie", mediaId: movie.body.id, releaseId: search.body.releases[0].id }));
@@ -598,6 +607,9 @@ describe("M5: SSE realtime, notification sinks (discord/telegram), metrics, audi
       definitionKey: "memory", name: "M5 Event Indexer", protocol: "torrent", settings: { title: "Demo" },
     }));
     expect(idx.status).toBe(201);
+    await auth(request(http).post("/api/v1/download-clients").send({
+      name: "M5 Event Client", implementation: "memory", kind: "torrent", priority: 1, settings: {},
+    }));
     const url = `http://127.0.0.1:${port}/api/v1/events`;
     const res = await fetch(url, { headers: { "x-api-key": API_KEY }, signal: ctrl.signal });
     const reader = (res.body as ReadableStream).getReader();
@@ -924,5 +936,20 @@ describe("M8 hardening: secrets redaction, authz gating, security headers", () =
     const res = await request(http).get("/api/v1/movies").set("X-Api-Key", API_KEY);
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
     expect(res.headers["x-frame-options"]).toBe("SAMEORIGIN");
+  });
+
+  // last test in the file: rotates the shared API_KEY, invalidating it for anything after
+  it("regenerates the calling API key, invalidating the old one", async () => {
+    const res = await auth(request(http).post("/api/v1/auth/regenerate-key"));
+    expect(res.status).toBe(201);
+    const newKey = res.body.rawKey;
+    expect(newKey).toBeTruthy();
+    expect(newKey).not.toBe(API_KEY);
+
+    expect((await request(http).get("/api/v1/movies").set("X-Api-Key", API_KEY)).status).toBe(401);
+
+    const whoami = await request(http).get("/api/v1/auth/whoami").set("X-Api-Key", newKey);
+    expect(whoami.status).toBe(200);
+    expect(whoami.body.principal.isAdmin).toBe(true);
   });
 });

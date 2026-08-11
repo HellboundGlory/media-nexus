@@ -47,7 +47,7 @@ export type EmailNotificationConfig = z.infer<typeof emailNotificationSchema>;
 
 export const mediaServerConfigSchema = z.object({
   name: z.string().min(1),
-  implementation: z.enum(["jellyfin", "memory"]).default("jellyfin"),
+  implementation: z.enum(["jellyfin", "plex"]).default("jellyfin"),
   enabled: z.boolean().default(true),
   settings: z.record(z.string(), z.unknown()).default({}),
 });

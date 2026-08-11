@@ -152,17 +152,3 @@ export class TmdbProvider implements MetadataProviderContract {
     return out;
   }
 }
-
-/** Deterministic in-memory provider for tests/demo. */
-export class MemoryMetadataProvider implements MetadataProviderContract {
-  readonly key = "memory";
-  constructor(private readonly preset: Record<string, { mediaType: "movie" | "series"; title: string }> = {}) {}
-  async search(query: string, mediaType: "movie" | "series") {
-    return Object.values(this.preset)
-      .filter((p) => p.mediaType === mediaType && p.title.toLowerCase().includes(query.toLowerCase()))
-      .map((p, i) => ({ externalId: String(i + 1), title: p.title }));
-  }
-  async getDetails(mediaType: "movie" | "series", externalId: string): Promise<MediaSummary> {
-    return { externalId, title: this.preset[externalId]?.title ?? "Unknown", overview: "memory metadata" };
-  }
-}

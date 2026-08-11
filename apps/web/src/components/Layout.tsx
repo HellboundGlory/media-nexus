@@ -12,7 +12,7 @@ const nav = [
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/activity", label: "Activity", icon: Activity },
   { to: "/indexers", label: "Indexers", icon: ListTree },
-  { to: "/clients", label: "Download Clients", icon: Download },
+  { to: "/clients", label: "Clients & Servers", icon: Download },
 ];
 
 export default function Layout() {

@@ -15,6 +15,7 @@ import {
   type IndexerContract,
 } from "@medianexus/integrations";
 import { schema, type Db } from "@medianexus/database";
+import { ApiError } from "@medianexus/shared";
 import { DB_TOKEN } from "../db/database.module";
 import { ConfigService } from "../system/config.service";
 
@@ -23,8 +24,10 @@ export const MEMORY_DOWNLOAD_CLIENT = Symbol("MEMORY_DOWNLOAD_CLIENT");
 export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
 
 /**
- * Provider instances + registry. The in-memory demo providers are registered so the
- * demo flow keeps working with zero external services; real providers (newznab/torznab,
+ * Provider instances + registry. The in-memory indexer/download-client providers are
+ * registered for test infrastructure only (never surfaced to a real client — see
+ * IndexersService.definitions() and the lack of any implicit fallback in
+ * configuredDownloadClients()/pickDownloadClient()); real providers (newznab/torznab,
  * sabnzbd, qbittorrent) are materialized from DB configuration on demand by ProvidersService.
  */
 
@@ -91,8 +94,6 @@ export class ProvidersService {
       else if (row.implementation === "qbittorrent") out.push({ row, provider: new QbittorrentProvider(settings as never) });
       else if (row.implementation === "memory") out.push({ row, provider: this.memClient });
     }
-    // the demo client is always available as a fallback (dev/demo flow)
-    out.push({ row: null, provider: this.memClient });
     return out;
   }
 
@@ -106,9 +107,10 @@ export class ProvidersService {
       const hit = clients.find((c) => c.row?.id === explicitId);
       if (hit) return hit;
     }
-    const matches = clients.filter((c) => !c.row || c.row.kind === protocol);
+    const matches = clients.filter((c) => c.row && c.row.kind === protocol);
     matches.sort((a, b) => (a.row?.priority ?? 1) - (b.row?.priority ?? 1));
-    return matches[0] ?? { row: null, provider: this.memClient };
+    if (!matches[0]) throw new ApiError({ code: "UNPROCESSABLE", message: `No enabled ${protocol} download client is configured` });
+    return matches[0];
   }
 
   getRegistry(): ProviderRegistry {

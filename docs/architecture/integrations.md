@@ -65,9 +65,11 @@ Configuration schemas (e.g. `sabnzbdSettingsSchema`, `qbittorrentSettingsSchema`
 
 - **Metadata:** TMDB is the primary metadata source for movies *and* series (Seerr's model; TheTVDB retained as secondary
   for TV identity). Normalization into `movie`/`series`/`collection`/`person` rows is a `MetadataProvider` responsibility.
-- **Media servers:** first provider implemented — **Jellyfin** over HTTP (`Items`/`Users`/`System/Info`) for library scan
-  + availability by TMDB/TVDB provider ids, plus a memory demo provider. The `media_availability` table is the seam;
-  `media.availabilityRefresh` syncs it. Plex/Emby providers are planned on the same contract.
+- **Media servers:** **Jellyfin** (`Items`/`Users`/`System/Info`) and **Plex** (`/library/sections` +
+  `/library/sections/:key/all`, `X-Plex-Token` auth) over HTTP, both for library scan + availability by TMDB/TVDB
+  provider ids. The `media_availability` table is the seam; `media.availabilityRefresh` syncs it. Emby is planned on
+  the same contract. Plex here is library-availability only — account-linked Plex watchlist import is separate,
+  still-planned scope (see roadmap).
 - **Notifications:** a `NotificationProvider` receives typed domain events; configuration rows (`notification_provider`)
   subscribe per-`eventType` + `tags`, so users can route "release grabbed" to Discord and "indexer failed" to email. The
   event types fired today are `acquisition.release.grabbed`, `acquisition.import.completed`, `discovery.indexer.failed`
@@ -86,5 +88,7 @@ Configuration schemas (e.g. `sabnzbdSettingsSchema`, `qbittorrentSettingsSchema`
 healthcheck via `t=caps`), `SabnzbdProvider` (addurl/queue/history/delete, merges history-completed for import),
 `QbittorrentProvider` (login-cookie, torrents/add/info/delete, resolves the hash from a magnet optionally), and a
 `LocalStorageProvider` (hardlink→copy import, largest-video discovery, disk free). Each is contract-tested against local mock
-HTTP servers. The in-memory demo providers remain registered for zero-dependency development. Contract-first rule holds:
-core never constructs vendor-specific clients — it goes through `ProvidersService` in `apps/api`.
+HTTP servers. In-memory indexer/download-client providers remain registered internally (test infrastructure only — the
+`indexer_definition` seed row stays but is filtered out of `GET /indexers/definitions`, and there is no implicit
+fallback to them if a real client isn't configured; nothing memory-backed is reachable from the UI). Contract-first
+rule holds: core never constructs vendor-specific clients — it goes through `ProvidersService` in `apps/api`.

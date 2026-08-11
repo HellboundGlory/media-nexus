@@ -10,15 +10,15 @@ const IMPL_FIELDS: Record<string, { host: string; apiKey: string; extra?: { key:
   sabnzbd: { host: "SABnzbd host (http://host:8080)", apiKey: "SABnzbd API key", extra: [{ key: "category", label: "Category", def: "movies" }] },
   qbittorrent: { host: "qBittorrent host (http://host:8080)", apiKey: "Password (optional)", extra: [
     { key: "username", label: "Username", def: "admin" }, { key: "tag", label: "Tag", def: "media-nexus" }] },
-  memory: { host: "In-memory demo client (no settings)", apiKey: "" },
 };
 
-const implKinds: Record<string, "usenet" | "torrent"> = { sabnzbd: "usenet", qbittorrent: "torrent", memory: "torrent" };
+const implKinds: Record<string, "usenet" | "torrent"> = { sabnzbd: "usenet", qbittorrent: "torrent" };
+const SERVER_TOKEN_LABEL: Record<string, string> = { jellyfin: "API key", plex: "Token (X-Plex-Token)" };
 
 export default function Clients() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
-  const [impl, setImpl] = useState<"sabnzbd" | "qbittorrent" | "memory">("sabnzbd");
+  const [impl, setImpl] = useState<"sabnzbd" | "qbittorrent">("sabnzbd");
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -63,8 +63,8 @@ export default function Clients() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Download Clients</h2>
-        <p className="text-sm text-zinc-500">Real downloads: SABnzbd (usenet) and qBittorrent (torrent) via their HTTP APIs. The demo client needs no external service.</p>
+        <h2 className="text-2xl font-semibold tracking-tight">Clients &amp; Servers</h2>
+        <p className="text-sm text-zinc-500">Download clients (SABnzbd, qBittorrent) and media servers (Jellyfin, Plex) via their HTTP APIs.</p>
       </div>
 
       {clients.isError ? <ErrorState error={clients.error} onRetry={() => clients.refetch()} /> : null}
@@ -105,31 +105,26 @@ export default function Clients() {
                 <select value={impl} onChange={(e) => setImpl(e.target.value as never)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
                   <option value="sabnzbd">SABnzbd (usenet)</option>
                   <option value="qbittorrent">qBittorrent (torrent)</option>
-                  <option value="memory">Demo (in-memory)</option>
                 </select>
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs text-zinc-500">Name</span>
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My SABnzbd" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
               </label>
-              {impl !== "memory" && (
-                <>
-                  <label className="block">
-                    <span className="mb-1 block text-xs text-zinc-500">{fields.host}</span>
-                    <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="http://192.168.1.10:8080" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
-                  </label>
-                  <label className="block">
-                    <span className="mb-1 block text-xs text-zinc-500">{fields.apiKey}</span>
-                    <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
-                  </label>
-                  {fields.extra?.map((f) => (
-                    <label key={f.key} className="block">
-                      <span className="mb-1 block text-xs text-zinc-500">{f.label}</span>
-                      <input defaultValue={f.def} onChange={(e) => setExtras((x) => ({ ...x, [f.key]: e.target.value }))} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
-                    </label>
-                  ))}
-                </>
-              )}
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-500">{fields.host}</span>
+                <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="http://192.168.1.10:8080" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-500">{fields.apiKey}</span>
+                <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+              </label>
+              {fields.extra?.map((f) => (
+                <label key={f.key} className="block">
+                  <span className="mb-1 block text-xs text-zinc-500">{f.label}</span>
+                  <input defaultValue={f.def} onChange={(e) => setExtras((x) => ({ ...x, [f.key]: e.target.value }))} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+                </label>
+              ))}
               <div className="flex items-center gap-2">
                 <button onClick={submitClient} disabled={addClient.isPending} className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
                   {addClient.isPending ? "Saving…" : "Save client"}
@@ -172,7 +167,7 @@ export default function Clients() {
             {refreshServers.isPending ? "Refreshing…" : "Refresh availability"}
           </button>
         </div>
-        <p className="mb-3 text-xs text-zinc-500">Jellyfin (HTTP API) or in-memory demo. Availability sync feeds request fulfillment.</p>
+        <p className="mb-3 text-xs text-zinc-500">Jellyfin or Plex (HTTP API). Availability sync marks library items as already available.</p>
         <ul className="mb-3 space-y-2 text-sm">
           {servers.map((s, i) => (
             <li key={i} className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
@@ -187,13 +182,13 @@ export default function Clients() {
             <input value={serverDraft.name} onChange={(e) => setServerDraft({ ...serverDraft, name: e.target.value })} placeholder="Plex#1" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
           <label className="min-w-28"><span className="mb-1 block text-xs text-zinc-500">Type</span>
             <select value={serverDraft.implementation} onChange={(e) => setServerDraft({ ...serverDraft, implementation: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
-              <option value="jellyfin">Jellyfin</option><option value="memory">Memory (demo)</option>
+              <option value="jellyfin">Jellyfin</option><option value="plex">Plex</option>
             </select></label>
           <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-zinc-500">Host</span>
-            <input value={serverDraft.host} onChange={(e) => setServerDraft({ ...serverDraft, host: e.target.value })} placeholder="http://192.168.1.10:8096" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
-          <label className="min-w-32"><span className="mb-1 block text-xs text-zinc-500">API key</span>
+            <input value={serverDraft.host} onChange={(e) => setServerDraft({ ...serverDraft, host: e.target.value })} placeholder={serverDraft.implementation === "plex" ? "http://192.168.1.10:32400" : "http://192.168.1.10:8096"} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+          <label className="min-w-32"><span className="mb-1 block text-xs text-zinc-500">{SERVER_TOKEN_LABEL[serverDraft.implementation] ?? "API key"}</span>
             <input value={serverDraft.apiKey} onChange={(e) => setServerDraft({ ...serverDraft, apiKey: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
-          <button disabled={!serverDraft.name} onClick={() => saveServers.mutate([...servers, { name: serverDraft.name, implementation: serverDraft.implementation, enabled: true, settings: serverDraft.implementation === "memory" ? {} : { host: serverDraft.host, apiKey: serverDraft.apiKey } }])}
+          <button disabled={!serverDraft.name} onClick={() => saveServers.mutate([...servers, { name: serverDraft.name, implementation: serverDraft.implementation, enabled: true, settings: { host: serverDraft.host, apiKey: serverDraft.apiKey } }])}
             className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">Add server</button>
         </div>
         {saveServers.isError && <p className="mt-2 text-xs text-red-600">{saveServers.error instanceof Error ? saveServers.error.message : "Failed"}</p>}

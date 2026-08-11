@@ -7,9 +7,12 @@ criteria, upstream references, compatibility implications. Scope/status legend: 
 > watchlist/content-blocklist, and the `/api/seerr/v1` compatibility surface were **removed** — they are kept in the
 > milestone history below for context but are **no longer present**. Auth is now single-tier: any valid `X-Api-Key` is a
 > full-access system key, the same trust model as Sonarr/Radarr/Prowlarr's own API-key auth (see
-> [technology-decisions.md](../architecture/technology-decisions.md) ADR-010). The only Seerr-derived work still in
-> scope going forward is a TMDB-backed discover view and Plex account/watchlist integration — both **not yet built**;
-> everything else Seerr-shaped is deliberately out of scope, not a near-term item to restore.
+> [technology-decisions.md](../architecture/technology-decisions.md) ADR-010). The Seerr-derived work still in scope:
+> a TMDB-backed discover view (**built** — trending/popular/upcoming/top-rated, one-click add) and Plex integration,
+> split in two — library-availability sync (**built**, alongside Jellyfin) and account-linked watchlist import
+> (**not yet built**). Everything else Seerr-shaped is deliberately out of scope, not a near-term item to restore.
+> Demo/in-memory providers (indexer, download client) are kept for test infrastructure only — seeded but filtered out
+> of anything a real client browses, and no longer used as a silent fallback when a real client isn't configured.
 
 ---
 
@@ -138,8 +141,9 @@ was **deliberately removed** in a later cleanup (see the scope-reduction note at
 `0003_drop_seerr_tables.sql`).
 
 **Kept:** the **Jellyfin media-server provider** (HTTP API) + `media.availabilityRefresh` job survived the cleanup —
-moved to its own `apps/api/src/media-servers/` module, functionally unchanged, and is the seed for a **future** Plex
-watchlist integration (not yet built).
+moved to its own `apps/api/src/media-servers/` module, functionally unchanged. A **Plex media-server provider**
+(library-availability sync, same contract) was added alongside it. Account-linked **Plex watchlist** import remains
+**not yet built** — a separate, bigger feature (plex.tv OAuth/account linking) than local-server library sync.
 
 **Compatibility implications:** none currently — the Seerr-compatible read+write surfaces (`request`, `media`,
 `discover`, `auth/*`) that were delivered in M6b were removed along with this milestone's tables.
@@ -192,11 +196,16 @@ against MediaNexus; Sonarr can add MediaNexus-as-Prowlarr indexer and search thr
   `discover`/`search` just dressed up the local library as fake results. It is not on the roadmap to restore; see the
   scope-reduction note at the top of this file for what Seerr-derived work is still planned.
 - **Metadata import (TMDB), kept and unaffected by the removal:** TMDB provider (search / details / `tv/:id/season/:n`
-  episodes, `find` for tvdb↔tmdb, `memory` test-double); settings `metadata.tmdbApiKey`/`metadata.tmdbBaseUrl`;
+  episodes, `find` for tvdb↔tmdb); settings `metadata.tmdbApiKey`/`metadata.tmdbBaseUrl` (System → Metadata in the UI);
   `POST /series/:id/metadata` **auto-creates seasons + episodes**, `POST /movies/:id/metadata` enriches
   overview/genres/releaseDate, `GET /metadata/search`, and a `media.metadataRefresh` job; UI buttons (Series detail
   "Import from TMDB", Movies refresh). Verified with a mock TMDB e2e (series gains S01E01 "Pilot" with air date; movie
-  gets overview/genres). This is the real TMDB integration that the planned discover-page work will build on.
+  gets overview/genres).
+- **Discover ✅ (built on the above):** `GET /api/v1/discover` (trending/popular/upcoming/top_rated, movie or series)
+  flags results already in the library; `POST /api/v1/discover/add` one-click adds a title, resolving TMDB↔TVDB ids
+  for series and best-effort enriching via the same metadata-refresh path used above. Web UI: a **Discover** page
+  (tabs, category pills, poster grid, Add/In-library state). `series` gained a secondary `tmdbId` column (identity
+  stays `tvdbId`) purely so Discover can match "already in library" cheaply.
 
 ## M7 — Data migration from live apps
 
@@ -230,12 +239,15 @@ indexer configs.
 
 **M8 (done):** security hardening (redact credentials in native API responses for indexers/
 download-clients/config/media-servers; admin-gate config-PUT + metadata refresh; security response headers middleware),
-a security doc (`docs/security.md` + authz matrix + hardening checklist), Playwright browser E2E for critical journeys
-(config + spec + CI job), a CI publish-on-tag GHCR job, and an upgrade/migration runbook. The browser run is gated to CI
-(this dev environment has no reliable dual-server/browser autoboot); everything else is locally verified.
-Remaining follow-ups: refreshable/rotatable API keys with scope enforcement beyond `*`, Postgres support,
-load-smoke/performance pass, Docker-container verification here. (JWT/Plex login sessions are no longer planned — auth
-is deliberately single-tier API-key now, see ADR-010; a future Plex integration is scoped as watchlist sync, not login.)
+a security doc (`docs/security.md` + authz matrix + hardening checklist), a CI publish-on-tag GHCR job (single unified
+image), and an upgrade/migration runbook. `POST /api/v1/auth/regenerate-key` rotates the calling key (mint-then-delete,
+no lockout window) with a Copy/Regenerate UI in System settings — the "refreshable/rotatable API keys" follow-up below
+is now **done**; scope enforcement beyond `*` remains unbuilt (single-tier auth has no narrower scopes yet). Playwright
+browser E2E exists (`apps/web/e2e`, run locally via `npm run test:e2e`) but is no longer a CI job — it was flaky/
+non-blocking there and got removed rather than kept as noise; everything else is CI-gated (lint/typecheck/test) or
+locally verified. Remaining follow-ups: Postgres support, load-smoke/performance pass, Docker-container verification
+in this dev environment. (JWT/Plex login sessions are no longer planned — auth is deliberately single-tier API-key
+now, see ADR-010; a future Plex integration is scoped as watchlist sync, not login.)
 
 **Goal:** production-ready distribution.
 
