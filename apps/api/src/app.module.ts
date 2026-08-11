@@ -18,6 +18,7 @@ import { ObservabilityModule } from "./observability/observability.module";
 import { ActivityModule } from "./activity/activity.module";
 import { IndexersModule } from "./indexers/indexers.module";
 import { DownloadClientsModule } from "./download-clients/download-clients.module";
+import { MetadataModule } from "./metadata/metadata.module";
 import { CompatModule } from "./compat/compat.module";
 import { RequestIdMiddleware } from "./common/request-id.middleware";
 import { MetricsMiddleware } from "./observability/metrics.middleware";
@@ -38,6 +39,7 @@ import { MetricsMiddleware } from "./observability/metrics.middleware";
     ActivityModule,
     IndexersModule,
     DownloadClientsModule,
+    MetadataModule,
     RealtimeModule,
     ObservabilityModule,
     CompatModule,

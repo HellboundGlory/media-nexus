@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Plus } from "lucide-react";
+import { Search, Plus, Database } from "lucide-react";
 import { api } from "../api/client";
 import type { Movie, Paged } from "../api/types";
 import { Badge, EmptyState, ErrorState } from "../lib/ui";
@@ -24,6 +24,11 @@ export default function Movies() {
 
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/movies/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["movies"] }),
+  });
+
+  const meta = useMutation({
+    mutationFn: (id: string) => api.post(`/movies/${id}/metadata`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["movies"] }),
   });
 
@@ -96,7 +101,10 @@ export default function Movies() {
                   <td className="px-4 py-2.5"><Badge tone="neutral">{m.status}</Badge></td>
                   <td className="px-4 py-2.5"><Badge tone={m.hasFile ? "ok" : "warn"}>{m.hasFile ? "available" : "missing"}</Badge></td>
                   <td className="px-4 py-2.5 text-right">
-                    <button onClick={() => remove.mutate(m.id)} className="text-xs text-red-500 hover:underline">Remove</button>
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => meta.mutate(m.id)} title="Refresh from TMDB" className="rounded p-1 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"><Database className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => remove.mutate(m.id)} className="text-xs text-red-500 hover:underline">Remove</button>
+                    </div>
                   </td>
                 </tr>
               ))}

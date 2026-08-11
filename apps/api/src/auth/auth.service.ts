@@ -57,6 +57,23 @@ export class AuthService {
     return { id, rawKey };
   }
 
+  async deleteApiKey(id: string): Promise<void> {
+    await this.db.delete(schema.apiKey).where(eq(schema.apiKey.id, id));
+  }
+
+  async findById(id: string): Promise<(typeof schema.user.$inferSelect) | null> {
+    const rows = await this.db.select().from(schema.user).where(eq(schema.user.id, id)).limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** Find a user by username or email (for Seerr-compatible local login). */
+  async findByIdentifier(identifier: string): Promise<(typeof schema.user.$inferSelect) | null> {
+    const rows = await this.db.select().from(schema.user)
+      .where(identifier.includes("@") ? eq(schema.user.email, identifier) : eq(schema.user.username, identifier))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
   async hashPassword(plain: string): Promise<string> {
     return bcrypt.hash(plain, 10);
   }

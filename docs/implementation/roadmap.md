@@ -177,6 +177,19 @@ against MediaNexus; Sonarr can add MediaNexus-as-Prowlarr indexer and search thr
 
 **Compatibility implications:** this milestone *is* the compatibility surface; native API untouched.
 
+## M6b — Seerr-compatible surface ✅ + Metadata import (TMDB) ✅
+
+- **Seerr surface (`/api/seerr/v1`):** status, `auth/local` login (username/email + password → a fresh usable API-key
+  token via native auth), `auth/me`, `auth/logout`, requests list + create (maps Seerr `mediaId` = TMDB id to native
+  media via `(tmdbId/tvdbId)` lookup), `media/:tmdbId`, `discover/movies|tv`, `search`, `settings/public`. Contract tests
+  lock Seerr/Overseerr wire shapes + the status-code enum; an e2e logs in, creates a request (auto-approved for admins →
+  status 2), and serves discover/me.
+- **Metadata import (TMDB):** TMDB provider (search / details / `tv/:id/season/:n` episodes, `find` for tvdb↔tmdb, `memory`
+  test-double); settings `metadata.tmdbApiKey`/`metadata.tmdbBaseUrl`; `POST /series/:id/metadata` **auto-creates seasons
+  + episodes**, `POST /movies/:id/metadata` enriches overview/genres/releaseDate, `GET /metadata/search`, and a
+  `media.metadataRefresh` job; UI buttons (Series detail "Import from TMDB", Movies refresh). Verified with a mock TMDB
+  e2e (series gains S01E01 "Pilot" with air date; movie gets overview/genres).
+
 ## M7 — Data migration from live apps
 
 **Goal:** users migrate existing Sonarr/Radarr/Prowlarr/Seerr installs without data loss.

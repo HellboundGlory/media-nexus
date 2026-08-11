@@ -7,9 +7,10 @@ import { JobsController } from "./jobs.controller";
 import { AcquisitionModule } from "../acquisition/acquisition.module";
 import { IndexersModule } from "../indexers/indexers.module";
 import { RequestsModule } from "../requests/requests.module";
+import { MetadataModule } from "../metadata/metadata.module";
 
 @Module({
-  imports: [AcquisitionModule, IndexersModule, RequestsModule],
+  imports: [AcquisitionModule, IndexersModule, RequestsModule, MetadataModule],
   providers: [DrizzleJobStore, JobsService, JobHandlers],
   controllers: [JobsController],
   exports: [JobsService],

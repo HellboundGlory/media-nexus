@@ -5,7 +5,7 @@ in one coherent, self-hostable application: one UI, one backend, one domain mode
 architecture, one API, Docker-first deployment — with an explicit **compatibility layer** so existing _arr ecosystem
 clients keep working.
 
-> Status: **M0 scaffold ✅ · M1 real acquisition ✅ · M2 series ✅ · M3 indexers ✅ · M4 requests/users ✅ · M5 notifications/realtime ✅ · M6 compatibility APIs ✅**
+> Status: **M0 scaffold ✅ · M1 acquisition ✅ · M2 series ✅ · M3 indexers ✅ · M4 requests/users ✅ · M5 notifications/realtime ✅ · M6 compatibility ✅ + Seerr surface + Metadata import ✅**
 > (see [Roadmap](docs/implementation/roadmap.md)).
 
 ## Quick start
@@ -64,12 +64,18 @@ See [docs/development/setup.md](docs/development/setup.md) for the full walkthro
   `/metrics`**; **audit trail** endpoint + UI; **rate limiting** on requests/grabs; System page: Users, Notifications, Audit.
 - **Foundations (M0).** NestJS API + Vite/React web monorepo, unified Drizzle schema (SQLite; PG planned), native
   `/api/v1`, `X-Api-Key` auth + first-run bootstrap, DB-backed jobs + domain event bus.
-- **Compatibility (M6).** Real adapters served under `/api/sonarr/v3`, `/api/radarr/v3` and `/api/prowlarr/v1`:
+- **Compatibility (M6).** Real adapters under `/api/sonarr/v3`, `/api/radarr/v3`, `/api/prowlarr/v1` and `/api/seerr/v1`:
   Sonarr — series list/get/add/delete, qualityprofile, episode, `command` (maps SeriesSearch/RefreshSeries to native jobs);
   Radarr — movie list/get/add/delete, qualityprofile, command; **Prowlarr — configured indexers + an indexer search proxy**,
   i.e. Sonarr/Radarr can treat MediaNexus as their Prowlarr and search through it. Contract tests lock the wire shapes.
+- **Seerr surface (M6b).** `/api/seerr/v1` — `auth/local` login (password → a usable API-key token), `auth/me`,
+  requests list+create, `media/:tmdbId`, `discover`, `search`, `settings/public`, plus status.
+- **Metadata import (TMDB).** `metadata.tmdbApiKey` + `metadata.tmdbBaseUrl`; TMDB provider (search / details / series
+  seasons+episodes); `POST /api/v1/series/:id/metadata` **auto-creates seasons + episodes** (M2 no longer needs manual
+  seeding), `POST /api/v1/movies/:id/metadata` enriches overview/genres/releaseDate, `GET /api/v1/metadata/search` finds
+  candidates, `media.metadataRefresh` job, and UI buttons (Series detail "Import from TMDB", Movies refresh).
 
-**Not built yet (roadmap):** metadata import (TMDB/TVDB), Plex login/server-user import, Seerr-compatible surface,
+**Not built yet (roadmap):** TVDB as a secondary metadata source, Plex login/server-user import, Seerr-compatible surface,
 full Prowlarr sync (indexer push to Sonarr/Radarr native — the search-proxy read side is done), realtime polish, E2E
 (Playwright), Docker-container verification here.
 

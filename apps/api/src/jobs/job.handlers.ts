@@ -13,6 +13,7 @@ import { RssSyncService } from "../acquisition/rss-sync.service";
 import { IndexersService } from "../indexers/indexers.service";
 import { RequestFulfillmentService } from "../requests/request-fulfillment.service";
 import { MediaServersService } from "../requests/media-servers.service";
+import { MetadataService } from "../metadata/metadata.service";
 
 /** Registration of the built-in job handlers (kept small; more land per milestone). */
 @Injectable()
@@ -26,6 +27,7 @@ export class JobHandlers implements OnModuleInit {
     private readonly indexers: IndexersService,
     private readonly fulfillment: RequestFulfillmentService,
     private readonly mediaServers: MediaServersService,
+    private readonly metadata: MetadataService,
   ) {}
 
   onModuleInit(): void {
@@ -35,6 +37,7 @@ export class JobHandlers implements OnModuleInit {
     this.jobs.register("media.searchForRequest", (ctx) => this.searchForRequest(ctx));
     this.jobs.register("media.rssSync", () => this.rssSync.run());
     this.jobs.register("media.availabilityRefresh", () => this.mediaServers.refreshAll());
+    this.jobs.register("media.metadataRefresh", () => this.metadata.refreshMissing(5));
     // event -> job wiring: an approved request kicks a search job (real search in M1)
     this.events.subscribe(EventTypes.RequestApproved, (event) => {
       const payload = (event.payload ?? {}) as { mediaId?: string; mediaType?: string };

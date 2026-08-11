@@ -893,3 +893,125 @@ describe("M6: compatibility APIs — Sonarr/Radarr/Prowlarr", () => {
     expect(typeof hits[0].size).toBe("number");
   });
 });
+
+
+describe("M6b: Seerr-compatible surface", () => {
+  it("logs in via /auth/local, creates a request, and serves discover/me", async () => {
+    // ensure a native movie to request
+    const movie = await auth(request(http).post("/api/v1/movies").send({ title: "Seerr Target", tmdbId: 670216, releaseDate: "2021-01-01" }));
+    expect(movie.status).toBe(201);
+
+    const login = await request(http).post("/api/seerr/v1/auth/local").send({ username: "admin", password: "test-password-123" });
+    expect(login.status).toBe(200);
+    expect(login.body.username).toBe("admin");
+    const token = login.body.token;
+    expect(token).toBeTruthy();
+
+    // resolve the session user
+    const me = await request(http).get("/api/seerr/v1/auth/me").set("X-Api-Key", token);
+    expect(me.status).toBe(200);
+    expect(me.body.username).toBe("admin");
+
+    // create a request for the tmdbId through the Seerr surface
+    const created = await request(http).post("/api/seerr/v1/request").set("X-Api-Key", token).send({ mediaType: "movie", mediaId: "670216" });
+    expect(created.status).toBe(201);
+    expect(created.body.mediaId).toBe("670216");
+    // admin auto-approves -> Seerr status 2 (approved)
+    expect(created.body.status).toBe(2);
+
+    // it landed in the native model
+    const nativeReqs = await auth(request(http).get("/api/v1/requests"));
+    expect(nativeReqs.body.some((r: any) => r.mediaId === movie.body.id)).toBe(true);
+
+    // discover lists the movie
+    const discover = await request(http).get("/api/seerr/v1/discover/movies");
+    expect(discover.status).toBe(200);
+    expect(discover.body.some((t: any) => t.tmdbId === 670216)).toBe(true);
+
+    // status reports totals
+    const status = await request(http).get("/api/seerr/v1/status");
+    expect(status.body.totalMovies).toBeGreaterThan(0);
+
+    // bad login -> 401
+    const bad = await request(http).post("/api/seerr/v1/auth/local").send({ username: "admin", password: "wrong" });
+    expect(bad.status).toBe(401);
+  });
+});
+
+
+describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", () => {
+  let tmdbUrl: string;
+  const servers: import("node:http").Server[] = [];
+
+  beforeAll(async () => {
+    const { createServer } = await import("node:http");
+    const srv = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      const u = new URL(_req.url ?? "/", "http://x");
+      const p = u.pathname;
+      if (p.startsWith("/find/")) { res.end(JSON.stringify({ tv_results: [{ id: 5000 }] })); return; }
+      if (p === "/tv/5000") { res.end(JSON.stringify({ id: 5000, name: "Meta Show", overview: "a show", first_air_date: "2021-01-01", genres: [{ name: "Drama" }], number_of_seasons: 1, poster_path: "/s.jpg", external_ids: { tvdb_id: 8888 } })); return; }
+      const m = /^\/tv\/5000\/season\/([0-9]+)$/.exec(p);
+      if (m) {
+        const n = Number(m[1]);
+        res.end(JSON.stringify({ season_number: n, episodes: n === 0 ? [] : [{ episode_number: 1, name: "Pilot", air_date: "2021-01-02", overview: "ep one" }] }));
+        return;
+      }
+      const mv = /^\/movie\/([0-9]+)$/.exec(p);
+      if (mv) { res.end(JSON.stringify({ id: Number(mv[1]), title: "Meta Movie", overview: "a movie", release_date: "2020-06-01", genres: [{ name: "Thriller" }], poster_path: "/m.jpg" })); return; }
+      if (p === "/search/movie") { res.end(JSON.stringify({ results: [{ id: 9, title: "Dune", release_date: "2021-10-22" }] })); return; }
+      if (p === "/search/tv") { res.end(JSON.stringify({ results: [{ id: 5000, name: "Meta Show", first_air_date: "2021-01-01" }] })); return; }
+      res.end(JSON.stringify({}));
+    });
+    servers.push(srv);
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+    tmdbUrl = `http://127.0.0.1:${(srv.address() as any).port}`;
+
+    const cfg = await auth(request(http).put("/api/v1/system/config").send({
+      "metadata.tmdbApiKey": "test-key",
+      "metadata.tmdbBaseUrl": tmdbUrl,
+    }));
+    expect(cfg.status).toBe(200);
+  });
+
+  afterAll(async () => {
+    for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
+  });
+
+  it("populates series seasons + episodes from TMDB", async () => {
+    const series = await auth(request(http).post("/api/v1/series").send({ title: "Meta Show", tvdbId: 8888, firstAirYear: 2021 }));
+    expect(series.status).toBe(201);
+    const sid = series.body.id;
+
+    const refreshed = await auth(request(http).post(`/api/v1/series/${sid}/metadata`));
+    expect(refreshed.status).toBe(201);
+    expect(refreshed.body.updated).toBe(true);
+    expect(refreshed.body.episodes).toBeGreaterThanOrEqual(1);
+
+    const episodes = await auth(request(http).get(`/api/v1/series/${sid}/episodes`));
+    const ep1 = episodes.body.find((e: any) => e.seasonNumber === 1 && e.episode.episodeNumber === 1);
+    expect(ep1).toBeTruthy();
+    expect(ep1.episode.title).toBe("Pilot");
+    expect(ep1.episode.airDateUtc).toBe("2021-01-02");
+    expect(ep1.episode.monitored).toBe(true);
+
+    const got = await auth(request(http).get(`/api/v1/series/${sid}`));
+    expect(got.body.overview).toBe("a show");
+    expect(got.body.genres).toContain("Drama");
+  });
+
+  it("enriches a movie and supports metadata search", async () => {
+    const movie = await auth(request(http).post("/api/v1/movies").send({ title: "Meta Movie", tmdbId: 912345 }));
+    const refreshed = await auth(request(http).post(`/api/v1/movies/${movie.body.id}/metadata`));
+    expect(refreshed.status).toBe(201);
+    const got = await auth(request(http).get(`/api/v1/movies/${movie.body.id}`));
+    expect(got.body.overview).toBe("a movie");
+    expect(got.body.genres).toContain("Thriller");
+    expect(got.body.releaseDate).toBe("2020-06-01");
+
+    const lookup = await auth(request(http).get("/api/v1/metadata/search?query=dune&type=movie"));
+    expect(lookup.status).toBe(200);
+    expect(lookup.body[0].title).toBe("Dune");
+    expect(lookup.body[0].externalId).toBe("9");
+  });
+});

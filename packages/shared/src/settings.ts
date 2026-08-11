@@ -71,6 +71,8 @@ export const runtimeSettingsSchema = z.object({
   "notifications.discord": z.array(discordNotificationSchema).default([]),
   "notifications.telegram": z.array(telegramNotificationSchema).default([]),
   "notifications.email": z.array(emailNotificationSchema).default([]),
+  "metadata.tmdbApiKey": z.string().default(""),
+  "metadata.tmdbBaseUrl": z.string().default(""),
   "media.servers": z.array(mediaServerConfigSchema).default([]),
   "system.timezone": z.string().default("UTC"),
   "ui.theme": z.enum(["dark", "light"]).default("dark"),

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, MonitorDown, Search } from "lucide-react";
+import { ArrowLeft, Download, MonitorDown, Search, Database } from "lucide-react";
 import { api } from "../api/client";
 import type { Series as SeriesRow, Episode, Release } from "../api/types";
 import { Badge, ErrorState, formatDate } from "../lib/ui";
@@ -42,6 +42,11 @@ export default function SeriesDetail() {
     onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["series-episodes", id] }), 600),
   });
 
+  const importMeta = useMutation({
+    mutationFn: () => api.post(`/series/${id}/metadata`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["series", id] }); qc.invalidateQueries({ queryKey: ["series-episodes", id] }); },
+  });
+
   if (series.isError) return <ErrorState error={series.error} onRetry={() => series.refetch()} />;
 
   const bySeason = new Map<number, EpisodeView[]>();
@@ -63,6 +68,15 @@ export default function SeriesDetail() {
             {series.data?.seriesType} · {series.data?.firstAirYear ?? "—"} · {episodes.data?.length ?? 0} episodes
           </p>
         </div>
+        <div className="flex flex-wrap gap-2">
+        <button
+          disabled={importMeta.isPending}
+          onClick={() => importMeta.mutate()}
+          className="flex items-center gap-1.5 rounded-lg bg-zinc-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-200 dark:text-zinc-900"
+          title="Fetch seasons/episodes from TMDB (needs metadata.tmdbApiKey)"
+        >
+          <Database className="h-4 w-4" /> Import from TMDB
+        </button>
         <button
           disabled={runRss.isPending}
           onClick={() => runRss.mutate()}
@@ -70,6 +84,7 @@ export default function SeriesDetail() {
         >
           <MonitorDown className="h-4 w-4" /> {runRss.isPending ? "Syncing…" : "Auto-grab missing (RSS)"}
         </button>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
