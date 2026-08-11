@@ -28,7 +28,7 @@ services:
     ports:
       - "${WEB_PORT:-8080}:7373"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7373/health/ready"]
+      test: ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:7373/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       start_period: 40s

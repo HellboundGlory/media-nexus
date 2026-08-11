@@ -26,8 +26,9 @@ COPY packages packages
 # build shared packages + api + web
 RUN npm run build:backend
 RUN npm run build -w @medianexus/web
+RUN npm prune --omit=dev
 
-FROM node:22-bookworm-slim AS runtime
+FROM gcr.io/distroless/nodejs22-debian12 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app/package.json /app/package.json
@@ -39,5 +40,5 @@ COPY --from=build /app/packages/database/migrations /app/packages/database/migra
 COPY --from=build /app/apps/web/dist /app/web
 EXPOSE 7373
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:7373/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["node", "apps/api/dist/main.js"]
+  CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:7373/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+CMD ["apps/api/dist/main.js"]
