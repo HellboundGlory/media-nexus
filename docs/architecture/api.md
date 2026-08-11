@@ -87,6 +87,14 @@ Implemented in the scaffold (each listed endpoint exists and is covered by tests
 | Indexers | `POST /api/v1/indexers/:id/test`, `GET /api/v1/indexers/statistics` | live health check (persisted) + per-indexer grab statistics |
 | Clients | `GET /api/v1/download-clients`, `POST /api/v1/download-clients`, `DELETE /api/v1/download-clients/:id`, `POST /api/v1/download-clients/:id/test` | download client config + live health check (SABnzbd/qBittorrent/memory) |
 
+### Compatibility surfaces (M6)
+
+| Surface | Implemented routes |
+|---|---|
+| `GET /api/sonarr/v3/system/status`, `series` (list/get/add/delete), `qualityprofile`, `episode`, `command` | Sonarr v3 read+write |
+| `GET /api/radarr/v3/system/status`, `movie` (list/get/add/delete), `qualityprofile`, `command` | Radarr v3 read+write |
+| `GET /api/prowlarr/v1/system/status`, `indexer` (list), `indexer/:id/search`, `search` | Prowlarr v1 indexer + search proxy |
+
 `POST /api/v1/search` searches all enabled indexers through their providers (real Newznab/Torznab HTTP); `POST /api/v1/grabs` adds the chosen release to a real SABnzbd/qBittorrent client and mirrors it into the unified queue/history; `acquisition.downloadMonitor` executes the real filesystem import.
 
 Everything above is a *native* endpoint on the unified model. The **compatibility APIs live under their own path

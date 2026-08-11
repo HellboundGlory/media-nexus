@@ -153,7 +153,15 @@ SSE event stream for UI realtime, audit UI, metrics endpoint (Prometheus), rate 
 
 **Compatibility implications:** none (pure native capability) but enables future webhook-compat surfaces.
 
-## M6 — Compatibility APIs (Sonarr/Radarr/Prowlarr/Seerr adapters)
+## M6 — Compatibility APIs ✅
+
+**M6 (done):** Sonarr v3 + Radarr v3 + Prowlarr v1 surfaces live under their own namespaces
+(`/api/sonarr/v3`, `/api/radarr/v3`, `/api/prowlarr/v1`), translated from native services — series/movie read+write,
+quality profiles, episodes, `command` (maps to native jobs: SeriesSearch/MoviesSearch → rssSync, RefreshSales → indexer
+refresh), Prowlarr indexer list + **search proxy** (so Sonarr/Radarr can use MediaNexus-as-Prowlarr and search through it).
+Compatibility **contract tests** (packages/compatibility) lock the upstream wire shapes; an e2e adds/lists a series via
+`/api/sonarr/v3/series`, adds/lists a movie via `/api/radarr/v3/movie`, and searches via the Prowlarr proxy.
+Remaining: Seerr-compatible surface (next), Prowlarr push-sync to native *_arr apps, deeper Sonarr v5/Radarr v4 parity.
 
 **Goal:** existing ecosystem clients work against MediaNexus.
 

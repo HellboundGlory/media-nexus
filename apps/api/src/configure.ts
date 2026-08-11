@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 import { INestApplication } from "@nestjs/common";
+import express, { type Express } from "express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { parseEnv } from "@medianexus/shared";
 import { GlobalExceptionFilter } from "./common/errors.filter";
 import { CompatService } from "./compat/compat.service";
+import { CompatSurface } from "@medianexus/compatibility";
 
 /**
  * Shared application wiring used by both `main.ts` (production bootstrap) and e2e tests:
@@ -27,15 +29,19 @@ export function configureApp(app: INestApplication): void {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup("api/docs", app, document);
 
-  const express = app.getHttpAdapter().getInstance() as {
-    set?: (k: string, v: unknown) => void;
-    use: (path: string, fn: (req: unknown, res: unknown, next: unknown) => unknown) => void;
-  };
-  if (env.TRUST_PROXY > 0) express.set?.("trust proxy", env.TRUST_PROXY);
+  const httpApp = app.getHttpAdapter().getInstance() as Express & { set?: (k: string, v: unknown) => void };
+  if (env.TRUST_PROXY > 0) httpApp.set?.("trust proxy", env.TRUST_PROXY);
+
+  // ensure JSON bodies are parsed for both native and compat routes
+  httpApp.use(express.json());
+  httpApp.use(express.urlencoded({ extended: true }));
 
   // compatibility surfaces are mounted via lazily-resolved service (available post-init)
-  express.use("/api/sonarr/v3", (req: unknown, res: unknown, next: unknown) => {
-    const compat = app.get(CompatService, { strict: false });
-    return compat.handle(req as never, res as never, next as never).catch(next as never);
-  });
+  const compat = app.get(CompatService, { strict: false });
+  for (const surface of compat.surfaces as CompatSurface[]) {
+    const path = surface.basePath;
+    httpApp.use(path, (req: unknown, res: unknown, next: unknown) =>
+      compat.handleFor(surface)(req as never, res as never, next as never),
+    );
+  }
 }

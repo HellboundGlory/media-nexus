@@ -182,12 +182,16 @@ describe("MediaNexus API (e2e)", () => {
   });
 
   // ---- compatibility ----
-  it("serves the sonarr v3 status read and 501s unimplemented compat routes", async () => {
+  it("serves the sonarr v3 status + series surface and 404s unknown compat routes", async () => {
     const ok = await request(http).get("/api/sonarr/v3/system/status");
     expect(ok.status).toBe(200);
     expect(ok.body.appName).toBe("MediaNexus");
     expect(ok.body.authentication).toBe("ApiKey");
-    expect((await request(http).get("/api/sonarr/v3/series")).status).toBe(501);
+    // read surface: empty list (array) not a 501
+    const series = await request(http).get("/api/sonarr/v3/series");
+    expect(series.status).toBe(200);
+    expect(Array.isArray(series.body)).toBe(true);
+    expect((await request(http).get("/api/sonarr/v3/not-a-route")).status).toBe(404);
   });
 });
 
@@ -816,5 +820,76 @@ describe("M5: SSE realtime, notification sinks (discord/telegram), metrics, audi
     expect(Array.isArray(audit.body)).toBe(true);
     expect(audit.body.length).toBeGreaterThan(0);
     expect(audit.body.some((e: any) => e.action === "media.movie.added")).toBe(true);
+  });
+});
+
+
+describe("M6: compatibility APIs — Sonarr/Radarr/Prowlarr", () => {
+  it("adds + lists a series via the Sonarr v3 surface, and lists quality profiles", async () => {
+    const added = await auth(request(http).post("/api/sonarr/v3/series").send({
+      title: "Compat Show",
+      tvdbId: 555001,
+      rootFolderPath: "/data/media",
+      monitored: true,
+      seriesType: "standard",
+    }).set("X-Api-Key", API_KEY));
+    expect(added.status).toBe(201);
+    const body = added.body;
+    expect(body.title).toBe("Compat Show");
+    expect(body.tvdbId).toBe(555001);
+    expect(body.id).toBeTruthy();
+
+    // confirm it landed in the native model
+    const native = await auth(request(http).get("/api/v1/series?search=Compat"));
+    expect(native.body.items.some((s: any) => s.tvdbId === 555001)).toBe(true);
+
+    const list = await auth(request(http).get("/api/sonarr/v3/series"));
+    expect(list.status).toBe(200);
+    expect(list.body.some((s: any) => s.tvdbId === 555001)).toBe(true);
+
+    const qp = await auth(request(http).get("/api/sonarr/v3/qualityprofile"));
+    expect(qp.status).toBe(200);
+    expect(qp.body.length).toBeGreaterThan(0);
+    expect(qp.body[0].name).toBeTruthy();
+
+    // command surface maps to native jobs
+    const cmd = await auth(request(http).post("/api/sonarr/v3/command").send({ name: "RefreshSeries" }));
+    expect(cmd.status).toBe(201);
+    expect(cmd.body.name).toBe("RefreshSeries");
+  });
+
+  it("adds + lists a movie via the Radarr v3 surface", async () => {
+    const added = await auth(request(http).post("/api/radarr/v3/movie").send({ title: "Compat Movie", tmdbId: 557001, rootFolderPath: "/data/media" }));
+    expect(added.status).toBe(201);
+    expect(added.body.tmdbId).toBe(557001);
+
+    const list = await auth(request(http).get("/api/radarr/v3/movie"));
+    expect(list.status).toBe(200);
+    expect(list.body.some((m: any) => m.tmdbId === 557001)).toBe(true);
+  });
+
+  it("exposes configured indexers and proxies search as MediaNexus-as-Prowlarr", async () => {
+    // ensure at least one configured indexer to list
+    const idx = await auth(request(http).post("/api/v1/indexers").send({
+      definitionKey: "memory", name: "Prowlarr Probe", protocol: "torrent", settings: { title: "Demo" },
+    }));
+    expect(idx.status).toBe(201);
+
+    const indexers = await auth(request(http).get("/api/prowlarr/v1/indexer"));
+    expect(indexers.status).toBe(200);
+    const mine = indexers.body.find((i: any) => i.name === "Prowlarr Probe");
+    expect(mine).toBeTruthy();
+    expect(mine.protocol).toBe("torrent");
+    expect(Array.isArray(mine.fields)).toBe(true);
+
+    // search via the prowlarr proxy — memory provider returns canned releases
+    const search = await auth(request(http).get(`/api/prowlarr/v1/indexer/${mine.id}/search?query=matrix`));
+    expect(search.status).toBe(200);
+    expect(Array.isArray(search.body)).toBe(true);
+    const hits = search.body.filter((r: any) => r.title.toLowerCase().includes("matrix"));
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].indexer).toBe("Prowlarr Probe");
+    expect(hits[0].protocol).toBe("torrent");
+    expect(typeof hits[0].size).toBe("number");
   });
 });

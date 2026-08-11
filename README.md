@@ -5,7 +5,7 @@ in one coherent, self-hostable application: one UI, one backend, one domain mode
 architecture, one API, Docker-first deployment — with an explicit **compatibility layer** so existing _arr ecosystem
 clients keep working.
 
-> Status: **M0 scaffold ✅ · M1 real acquisition ✅ · M2 series automation ✅ · M3 indexer management ✅ · M4 requests/users ✅ · M5 notifications/realtime/hardening ✅**
+> Status: **M0 scaffold ✅ · M1 real acquisition ✅ · M2 series ✅ · M3 indexers ✅ · M4 requests/users ✅ · M5 notifications/realtime ✅ · M6 compatibility APIs ✅**
 > (see [Roadmap](docs/implementation/roadmap.md)).
 
 ## Quick start
@@ -63,11 +63,15 @@ See [docs/development/setup.md](docs/development/setup.md) for the full walkthro
   per-event subscriptions + test endpoint; **Server-Sent Events** at `/api/v1/events` with UI live-refresh; **Prometheus
   `/metrics`**; **audit trail** endpoint + UI; **rate limiting** on requests/grabs; System page: Users, Notifications, Audit.
 - **Foundations (M0).** NestJS API + Vite/React web monorepo, unified Drizzle schema (SQLite; PG planned), native
-  `/api/v1` (movies, series, requests, indexers, search, grabs, history, queue, system, auth), `X-Api-Key` auth + first-run
-  bootstrap, DB-backed jobs + domain event bus, `X-Api-Key`-authed compat surface (Sonarr v3 status adapter, explicit 501s).
+  `/api/v1`, `X-Api-Key` auth + first-run bootstrap, DB-backed jobs + domain event bus.
+- **Compatibility (M6).** Real adapters served under `/api/sonarr/v3`, `/api/radarr/v3` and `/api/prowlarr/v1`:
+  Sonarr — series list/get/add/delete, qualityprofile, episode, `command` (maps SeriesSearch/RefreshSeries to native jobs);
+  Radarr — movie list/get/add/delete, qualityprofile, command; **Prowlarr — configured indexers + an indexer search proxy**,
+  i.e. Sonarr/Radarr can treat MediaNexus as their Prowlarr and search through it. Contract tests lock the wire shapes.
 
-**Not built yet (roadmap):** metadata import (TMDB/TVDB) to auto-populate episodes, Plex login/server-user import,
-Prowlarr indexer-sync compatibility (M6), realtime polish, E2E (Playwright), Docker-container verification here.
+**Not built yet (roadmap):** metadata import (TMDB/TVDB), Plex login/server-user import, Seerr-compatible surface,
+full Prowlarr sync (indexer push to Sonarr/Radarr native — the search-proxy read side is done), realtime polish, E2E
+(Playwright), Docker-container verification here.
 
 ## Repository layout
 

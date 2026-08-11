@@ -61,8 +61,14 @@ adapter's router, not by polluting the native router. Auth for compat surfaces: 
    rather than silently pretending.
 3. **Read paths first** (`GET series`, `GET qualityprofile`, `GET system/status`) — cheapest and most-used by dashboards.
 4. **Write paths next** (`POST series`, `command` search/grab) using the domain services + job system.
-5. **Prowlarr sync** — the meatiest piece: emulate Prowlarr's "sync indexer config to Sonarr/Radarr" and the RSS/search
-   proxy endpoints that Sonarr/Radarr call to consume indexers from Prowlarr. This *is* the interop most users depend on.
+5. **Prowlarr sync** — the search-proxy + indexer-list side is delivered (Sonarr/Radarr can treat MediaNexus as their
+   Prowlarr); the push-side "sync my indexer configs to your Sonarr/Radarr native apps" remains a follow-up.
+
+### Delivered (M6)
+
+Sonarr v3 (`/api/sonarr/v3`), Radarr v3 (`/api/radarr/v3`) and Prowlarr v1 (`/api/prowlarr/v1`) surfaces are mounted with
+contract-tested shapes: identity/status, series & movie read/write, quality profiles, episodes, and a Prowlarr indexer
+search proxy. Commands map onto the native job system. See [api.md](./api.md).
 
 ### Compatibility implications of the native model
 

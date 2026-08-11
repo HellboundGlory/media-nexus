@@ -1,65 +1,84 @@
 // SPDX-License-Identifier: MIT
 /**
- * First, deliberately-small compatibility slice: the Sonarr-compatible `system/status` read.
- * Proves the translation pattern (compat wire shape → native domain) with a contract test.
- * Full Sonarr surface is milestone M6.
+ * Sonarr v3-compatible surface builder.
+ * Translates the native domain (via a narrow `source` facade) into the Sonarr wire
+ * shapes the ecosystem depends on. No Sonarr source is copied — shapes derive from
+ * Sonarr's published OpenAPI (functional interop).
  */
-import { createSurface, type CompatRoute, type CompatContext } from "./types";
-import { json, notImplemented } from "./endpoints";
+import { createSurface, type CompatRoute } from "./types";
+import { json } from "./endpoints";
+import type { CompatSeries, CompatEpisode, CompatQualityProfile } from "./wire-shapes";
 
-export interface NativeStatusSource {
+export interface SonarrNativeSource {
   appVersion(): string;
   appName(): string;
   started(): string;
   databaseVersion(): string;
+  listSeries(): Promise<CompatSeries[]>;
+  getSeries(id: string): Promise<CompatSeries | null>;
+  addSeries(input: Record<string, unknown>): Promise<CompatSeries>;
+  removeSeries(id: string): Promise<void>;
+  qualityProfiles(): Promise<CompatQualityProfile[]>;
+  episodes(seriesId: string, season?: number): Promise<CompatEpisode[]>;
+  runCommand(name: string, body: Record<string, unknown>): Promise<{ id: string; name: string }>;
 }
 
-export function sonarrStatusAdapter(source: NativeStatusSource): CompatRoute {
-  return {
-    method: "GET",
-    path: "/system/status",
-    description: "Sonarr v3-compatible /api/v3/system/status",
-    handler: async (_ctx: CompatContext) =>
-      json({
-        appName: "MediaNexus",
-        version: source.appVersion(),
-        appVersion: source.appVersion(),
-        isMono: false,
-        isWindows: false,
-        isLinux: true,
-        isOsx: false,
-        isDocker: true,
-        startupPath: "/data/config",
-        started: source.started(),
-        databaseVersion: source.databaseVersion(),
-        branch: "develop",
-        authentication: "ApiKey",
-      }),
+function seriesRoutes(s: SonarrNativeSource): CompatRoute[] {
+  const status: CompatRoute = {
+    method: "GET", path: "/system/status",
+    handler: async () => json({
+      appName: "MediaNexus", version: s.appVersion(), appVersion: s.appVersion(),
+      isMono: false, isWindows: false, isLinux: true, isOsx: false, isDocker: true,
+      startupPath: "/data/config", started: s.started(), databaseVersion: s.databaseVersion(),
+      branch: "develop", authentication: "ApiKey",
+    }),
   };
+  const list: CompatRoute = {
+    method: "GET", path: "/series",
+    handler: async () => json(await s.listSeries()),
+  };
+  const get: CompatRoute = {
+    method: "GET", path: "/series/:id",
+    handler: async (ctx) => {
+      const row = await s.getSeries(ctx.params.id);
+      return row ? json(row) : json({ message: "Not Found" }, 404);
+    },
+  };
+  const add: CompatRoute = {
+    method: "POST", path: "/series",
+    handler: async (ctx) => json(await s.addSeries(ctx.body as Record<string, unknown>), 201),
+  };
+  const del: CompatRoute = {
+    method: "DELETE", path: "/series/:id",
+    handler: async (ctx) => { await s.removeSeries(ctx.params.id); return json(null, 200); },
+  };
+  const qp: CompatRoute = {
+    method: "GET", path: "/qualityprofile",
+    handler: async () => json(await s.qualityProfiles()),
+  };
+  const episodes: CompatRoute = {
+    method: "GET", path: "/episode",
+    handler: async (ctx) => {
+      const sid = String(ctx.query.seriesId ?? "");
+      const season = ctx.query.seasonNumber ? Number(ctx.query.seasonNumber) : undefined;
+      if (!sid) return json({ message: "seriesId required" }, 400);
+      return json(await s.episodes(sid, season));
+    },
+  };
+  const command: CompatRoute = {
+    method: "POST", path: "/command",
+    handler: async (ctx) => {
+      const body = (ctx.body ?? {}) as { name?: string };
+      if (!body.name) return json({ message: "command name required" }, 400);
+      return json(await s.runCommand(body.name, body), 201);
+    },
+  };
+  return [status, list, get, add, del, qp, episodes, command];
 }
 
-// Stub surface for the rest of the Sonarr v3 read/write surface — explicit 501s.
-const pendingRoutes: CompatRoute[] = [
-  ["GET", "/series"],
-  ["GET", "/series/:id"],
-  ["POST", "/series"],
-  ["GET", "/episode"],
-  ["GET", "/episodefile"],
-  ["GET", "/qualityprofile"],
-  ["GET", "/command"],
-  ["POST", "/command"],
-  ["GET", "/queue"],
-  ["GET", "/history"],
-  ["GET", "/wanted/missing"],
-  ["GET", "/calendar"],
-  ["GET", "/health"],
-].map(([method, path]) => ({
-  method: method as CompatRoute["method"],
-  path,
-  handler: notImplemented(`sonarr v3 ${method} ${path}`),
-}));
-
-export function buildSonarrV3Surface(source: NativeStatusSource) {
-  const routes: CompatRoute[] = [sonarrStatusAdapter(source), ...pendingRoutes];
-  return createSurface({ name: "sonarr-v3", basePath: "/api/sonarr/v3", routes });
+export function buildSonarrV3SurfaceSource(s: SonarrNativeSource) {
+  return createSurface({ name: "sonarr-v3", basePath: "/api/sonarr/v3", routes: seriesRoutes(s) });
 }
+
+// keep the existing status-only helper name compatible for any importers
+export { seriesRoutes };
