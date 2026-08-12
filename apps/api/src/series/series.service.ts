@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable } from "@nestjs/common";
-import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
+import { ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
@@ -17,15 +18,8 @@ export class SeriesService {
   ) {}
 
   async list(q: { search?: string; page?: number; pageSize?: number }) {
-    const search = q.search?.trim();
-    const page = Math.max(1, q.page ?? 1);
-    const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 50));
-    const where = search ? sql`lower(${schema.series.title}) like ${`%${search.toLowerCase()}%`}` : undefined;
-    const [rows, totals] = await Promise.all([
-      this.db.select().from(schema.series).where(where).orderBy(desc(schema.series.addedAt)).limit(pageSize).offset((page - 1) * pageSize),
-      this.db.select({ n: sql<number>`count(*)` }).from(schema.series).where(where),
-    ]);
-    return { items: rows, total: Number(totals[0]?.n ?? 0), page, pageSize };
+    const where = titleSearchCondition(schema.series.title, q.search);
+    return listPaged<typeof schema.series.$inferSelect>(this.db, schema.series, where, q);
   }
 
   async get(id: string) {
@@ -71,9 +65,9 @@ export class SeriesService {
         monitored: true,
       });
     }
-    await this.db.insert(schema.mediaAvailability).values({
-      id: newEntityId("av"), mediaType: "series", mediaId: id, status: "unknown",
-    }).catch(() => {});
+    // Not fire-and-forget: swallowing this left series with no availability row, which
+    // in turn made every later availability update a silent no-op.
+    await ensureAvailability(this.db, "series", id);
     this.events.publish(EventTypes.SeriesAdded, { seriesId: id, title: row.title }, { aggType: "series", aggId: id });
     return row;
   }

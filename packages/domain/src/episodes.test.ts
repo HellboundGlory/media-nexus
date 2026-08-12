@@ -34,6 +34,32 @@ describe("episode release parser", () => {
     const m = parseEpisodeRelease("Interstellar 2014 1080p BluRay x264");
     expect(m.confidence).toBe(0);
     expect(m.episodes).toEqual([]);
+    expect(m.isSeasonPack).toBe(false);
+  });
+
+  it("detects season packs in their common forms", () => {
+    for (const title of [
+      "Test.Show.S02.1080p.WEB-DL",
+      "Test Show Season 2 COMPLETE 1080p",
+      "Test.Show.Complete.Season.2.1080p.WEB",
+      "Test.Show.Season.2.1080p.WEB",
+    ]) {
+      const m = parseEpisodeRelease(title);
+      expect(m.season, title).toBe(2);
+      expect(m.episodes, title).toEqual([]);
+      expect(m.isSeasonPack, title).toBe(true);
+    }
+  });
+
+  it("does not mistake an episode release for a season pack", () => {
+    for (const title of ["Test.Show.S02E05.1080p", "Test Show Season 2 Episode 5", "Test.Show.S02E05-E06.720p"]) {
+      expect(parseEpisodeRelease(title).isSeasonPack, title).toBe(false);
+    }
+  });
+
+  it("does not read a season out of a movie title", () => {
+    const m = parseEpisodeRelease("Interstellar 2014 1080p BluRay x264");
+    expect(m.season).toBeUndefined();
   });
 });
 

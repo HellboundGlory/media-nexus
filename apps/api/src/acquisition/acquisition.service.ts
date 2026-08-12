@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { and, count, eq, inArray, isNull } from "drizzle-orm";
+import { and, count, eq, isNull } from "drizzle-orm";
 import { extname, join, relative, resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { ApiError, newEntityId } from "@medianexus/shared";
@@ -14,7 +14,9 @@ import { EventTypes } from "@medianexus/events";
 import { ProvidersService, type ConfiguredClient } from "../providers/demo.providers";
 import { LocalStorageProvider, findLargestVideo } from "@medianexus/integrations";
 import type { ClientQueueItem, DownloadClientContract } from "@medianexus/integrations";
-import { parseEpisodeRelease, episodeQueryTag } from "@medianexus/domain";
+import { parseEpisodeRelease, episodeQueryTag, targetEpisodeIds } from "@medianexus/domain";
+import { MediaRepository } from "../media/media.repository";
+import { ensureAvailability } from "../media/library.helpers";
 
 /**
  * Acquisition: drives download clients, mirrors their queues into download_queue_entry,
@@ -39,6 +41,7 @@ export class AcquisitionService {
     private readonly config: ConfigService,
     private readonly events: EventsService,
     private readonly providers: ProvidersService,
+    private readonly media: MediaRepository,
   ) {}
 
   /** Poll every configured download client and import anything completed. */
@@ -220,23 +223,21 @@ export class AcquisitionService {
     let baseName: string;
 
     if (match.season !== undefined && match.episodes.length > 0) {
-      // Resolve the episode rows this release covers. The season number is part of the
-      // key: without it, "S02E01" would also match S01E01, S03E01, ... in the same series
-      // and mark every one of them as having a file.
-      const rows = await this.db
-        .select({ id: schema.episode.id })
-        .from(schema.episode)
-        .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
-        .where(and(
-          eq(schema.episode.seriesId, series[0].id),
-          eq(schema.season.seasonNumber, match.season),
-          inArray(schema.episode.episodeNumber, match.episodes),
-        ));
-      episodeIds = rows.map((r) => r.id);
+      // Which episodes this release covers is resolved once, in MediaRepository, so the
+      // season predicate cannot be forgotten here or in any other consumer.
+      const target = await this.media.resolveTarget("series", series[0].id, releaseTitle);
+      episodeIds = target ? targetEpisodeIds(target) : [];
       // season folder from matched season number
       targetDir = join(root, safeSeries, `Season ${match.season}`);
       const tag = episodeQueryTag(match.season, match.episodes[0]) + (match.episodes.length > 1 ? `-E${pad2(match.episodes[match.episodes.length - 1])}` : "");
       baseName = `${safeSeries} - ${tag}`;
+    } else if (match.season !== undefined && match.isSeasonPack) {
+      // A season pack contains many files; this single-file importer cannot say which
+      // episode the one file it picked belongs to, so no episode is marked as having a
+      // file. It is still filed under the right season rather than "Season Unknown".
+      // Multi-file pack import lands with the import engine (roadmap P0.5).
+      targetDir = join(root, safeSeries, `Season ${match.season}`);
+      baseName = `${safeSeries} - S${pad2(match.season)}`;
     } else {
       targetDir = join(root, safeSeries, "Season Unknown");
       baseName = safeSeries;
@@ -270,19 +271,34 @@ export class AcquisitionService {
     return { mediaFileId, path: targetFile, size, hardlinked, episodes: updatedEps };
   }
 
+  /**
+   * Update the availability row for a title.
+   *
+   * This previously matched on mediaId alone with no upsert and swallowed every error, so
+   * when the row was missing — which happened for any series added before the availability
+   * insert was made reliable, and for anything created by the upstream importer — the
+   * update matched nothing and availability stayed "unknown" forever, silently.
+   */
   private async markAvailability(mediaType: "movie" | "series", mediaId: string, now: string): Promise<void> {
-    if (mediaType === "movie") {
-      await this.db.update(schema.mediaAvailability)
-        .set({ status: "available", lastAvailabilitySyncAt: now })
-        .where(eq(schema.mediaAvailability.mediaId, mediaId)).catch(() => {});
-      return;
-    }
-    const missing = await this.db.select({ n: count() }).from(schema.episode)
-      .where(and(eq(schema.episode.seriesId, mediaId), eq(schema.episode.monitored, true), eq(schema.episode.hasFile, false)));
-    const status = Number(missing[0]?.n ?? 0) === 0 ? "available" : "partially_available";
+    const status = mediaType === "movie" ? "available" : await this.seriesAvailability(mediaId);
+    await ensureAvailability(this.db, mediaType, mediaId);
     await this.db.update(schema.mediaAvailability)
       .set({ status, lastAvailabilitySyncAt: now })
-      .where(eq(schema.mediaAvailability.mediaId, mediaId)).catch(() => {});
+      .where(and(
+        eq(schema.mediaAvailability.mediaType, mediaType),
+        eq(schema.mediaAvailability.mediaId, mediaId),
+      ));
+  }
+
+  /** A series is fully available only once no monitored episode is still missing. */
+  private async seriesAvailability(seriesId: string): Promise<"available" | "partially_available"> {
+    const missing = await this.db.select({ n: count() }).from(schema.episode)
+      .where(and(
+        eq(schema.episode.seriesId, seriesId),
+        eq(schema.episode.monitored, true),
+        eq(schema.episode.hasFile, false),
+      ));
+    return Number(missing[0]?.n ?? 0) === 0 ? "available" : "partially_available";
   }
 
   private async insertHistory(mediaType: string, mediaId: string, now: string, data: Record<string, unknown>): Promise<void> {

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable } from "@nestjs/common";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { newEntityId } from "@medianexus/shared";
 import { ApiError } from "@medianexus/shared";
+import { combine, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
@@ -20,20 +21,12 @@ export class MoviesService {
   ) {}
 
   async list(q: ListQuery) {
-    const search = q.search?.trim();
-    const page = Math.max(1, q.page ?? 1);
-    const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 50));
-    const conds = [];
-    if (search) conds.push(sql`lower(${schema.movie.title}) like ${`%${search.toLowerCase()}%`}`);
-    if (q.monitored === "true") conds.push(eq(schema.movie.monitored, true));
-    if (q.monitored === "false") conds.push(eq(schema.movie.monitored, false));
-    const where = conds.length ? and(...conds) : undefined;
-
-    const [rows, totals] = await Promise.all([
-      this.db.select().from(schema.movie).where(where).orderBy(desc(schema.movie.addedAt)).limit(pageSize).offset((page - 1) * pageSize),
-      this.db.select({ n: sql<number>`count(*)` }).from(schema.movie).where(where),
+    const where = combine([
+      titleSearchCondition(schema.movie.title, q.search),
+      q.monitored === "true" ? eq(schema.movie.monitored, true) : undefined,
+      q.monitored === "false" ? eq(schema.movie.monitored, false) : undefined,
     ]);
-    return { items: rows, total: Number(totals[0]?.n ?? 0), page, pageSize };
+    return listPaged<typeof schema.movie.$inferSelect>(this.db, schema.movie, where, q);
   }
 
   async get(id: string) {
@@ -83,14 +76,6 @@ export class MoviesService {
   }
 
   async upsertAvailability(mediaType: "movie" | "series", mediaId: string): Promise<void> {
-    const existing = await this.db.select().from(schema.mediaAvailability)
-      .where(sql`${schema.mediaAvailability.mediaType} = ${mediaType} AND ${schema.mediaAvailability.mediaId} = ${mediaId}`).limit(1);
-    if (existing.length) return;
-    await this.db.insert(schema.mediaAvailability).values({
-      id: newEntityId("av"),
-      mediaType,
-      mediaId,
-      status: "unknown",
-    });
+    await ensureAvailability(this.db, mediaType, mediaId);
   }
 }

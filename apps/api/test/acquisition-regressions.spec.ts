@@ -15,6 +15,7 @@ import { EventBus } from "@medianexus/events";
 import { createDb, schema } from "@medianexus/database";
 import type { ClientQueueItem, DownloadClientContract, HealthResult, AddDownloadInput } from "@medianexus/integrations";
 import { AcquisitionService } from "../src/acquisition/acquisition.service";
+import { MediaRepository } from "../src/media/media.repository";
 import { ConfigService } from "../src/system/config.service";
 import { EventsService } from "../src/events/events.service";
 import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
@@ -69,7 +70,7 @@ async function harness(): Promise<Harness> {
     configuredDownloadClients: async () => [{ row: null, provider: client }],
   } as unknown as ProvidersService;
 
-  const service = new AcquisitionService(handle.db, config, events, providers);
+  const service = new AcquisitionService(handle.db, config, events, providers, new MediaRepository(handle.db));
   return { db: handle.db, service, client, configured: { row: null, provider: client }, downloadsRoot, mediaRoot };
 }
 

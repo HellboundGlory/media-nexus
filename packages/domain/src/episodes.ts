@@ -16,6 +16,8 @@ export interface EpisodeReleaseMatch {
   /** one or more episode numbers this release contains */
   episodes: number[];
   isMultiEpisode: boolean;
+  /** the release names a season but no episodes — it covers the whole season */
+  isSeasonPack: boolean;
   quality: Quality;
   year?: number;
   /** 0..1 heuristic confidence that this is really an episode release */
@@ -25,6 +27,12 @@ export interface EpisodeReleaseMatch {
 const SXXEXX = /S(\d{1,2})E(\d{1,3})(?:-E?(\d{1,3})|E(\d{1,3})|-(\d{1,3}))?/i;
 const MULTI_SXXEXX = /S(\d{1,2})E(\d{1,3})[.,-]?E(\d{1,3})/i;
 const SEASON_EPISODE = /Season\s*(\d{1,2})[\s,-]*(?:Episode|EP|E)\s*(\d{1,3})/i;
+/**
+ * Season-pack forms: "Show.S02.1080p", "Show Season 2 COMPLETE", "Show.Complete.Season.2".
+ * The negative lookahead keeps this from firing on an episode release; SxxExx is matched
+ * first regardless, so this only ever sees titles that named no episode.
+ */
+const SEASON_ONLY = /(?:^|[._\s-])(?:S(\d{1,2})|Season[._\s-]*(\d{1,2}))(?![._\s-]*(?:E|Episode)[._\s-]*\d)/i;
 
 /** Tokens that terminate the series-name portion of an episode title. */
 const TITLE_STOP_PATTERNS = [
@@ -45,6 +53,7 @@ export function parseEpisodeRelease(title: string): EpisodeReleaseMatch {
       season,
       episodes,
       isMultiEpisode: episodes.length > 1,
+      isSeasonPack: false,
       seriesTitle: extractSeriesTitle(title, sxx.index),
       quality: parseQualityFromTitle(title),
       year: parseYear(title),
@@ -58,6 +67,7 @@ export function parseEpisodeRelease(title: string): EpisodeReleaseMatch {
       season: Number(se[1]),
       episodes: [Number(se[2])],
       isMultiEpisode: false,
+      isSeasonPack: false,
       seriesTitle: extractSeriesTitle(title, se.index),
       quality: parseQualityFromTitle(title),
       year: parseYear(title),
@@ -65,11 +75,28 @@ export function parseEpisodeRelease(title: string): EpisodeReleaseMatch {
     };
   }
 
-  // no explicit numbers — could be a season pack or non-episodic; low confidence
+  // A season with no episode numbers is a season pack: it covers every episode of that
+  // season. Confidence is below an explicit SxxExx match because the pattern is weaker.
+  const pack = SEASON_ONLY.exec(title);
+  if (pack) {
+    return {
+      season: Number(pack[1] ?? pack[2]),
+      episodes: [],
+      isMultiEpisode: false,
+      isSeasonPack: true,
+      seriesTitle: extractSeriesTitle(title, pack.index),
+      quality: parseQualityFromTitle(title),
+      year: parseYear(title),
+      confidence: 0.8,
+    };
+  }
+
+  // nothing episodic found — probably a movie or an unparseable title
   return {
     seriesTitle: extractSeriesTitle(title, -1),
     episodes: [],
     isMultiEpisode: false,
+    isSeasonPack: false,
     quality: parseQualityFromTitle(title),
     year: parseYear(title),
     confidence: 0,
