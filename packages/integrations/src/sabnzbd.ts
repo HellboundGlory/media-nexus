@@ -17,6 +17,8 @@ interface SabSlot {
   percentage?: number | string;
   timeleft?: string;
   path?: string;
+  /** history slots report the completed job's final folder here */
+  storage?: string;
   category?: string;
 }
 
@@ -92,8 +94,20 @@ export class SabnzbdProvider implements DownloadClientContract {
     return out;
   }
 
-  async remove(downloadId: string): Promise<void> {
-    await this.get<SabResponse>(new URL(this.url("queue", { name: "delete", value: downloadId })));
+  /**
+   * Remove a download. A finished job lives in SABnzbd's *history*, not its queue, so
+   * deleting only from the queue leaves the item visible to getQueue() forever. Both
+   * surfaces are cleared; `del_files` is opt-in for the same reason as qBittorrent's
+   * deleteFiles (the imported library file may be a hardlink to this data).
+   */
+  async remove(downloadId: string, deleteData = false): Promise<void> {
+    await this.get<SabResponse>(new URL(this.url("queue", { name: "delete", value: downloadId })))
+      .catch(() => undefined);
+    await this.get<SabResponse>(new URL(this.url("history", {
+      name: "delete",
+      value: downloadId,
+      del_files: deleteData ? "1" : "0",
+    }))).catch(() => undefined);
   }
 
   async healthcheck(): Promise<HealthResult> {
@@ -122,6 +136,9 @@ function slotToItem(s: SabSlot, fallbackStatus: string): ClientQueueItem {
     size: toNum(s.mb, 0) * 1024 * 1024,
     remainingTimeSeconds: parseTimeleft(s.timeleft),
     errorMessage: undefined,
+    // History slots carry the final storage path — pass it through so the importer can
+    // use it directly instead of guessing directory layouts under the downloads root.
+    contentPath: s.storage || s.path || undefined,
   };
 }
 

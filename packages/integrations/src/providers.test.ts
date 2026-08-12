@@ -132,4 +132,46 @@ describe("QbittorrentProvider (HTTP)", () => {
     expect(queue[0].contentPath).toBe("/downloads/Blade-Runner-2049");
     expect((await client.healthcheck()).ok).toBe(true);
   });
+
+  // Regression: remove() hardcoded deleteFiles=true, so importing a torrent deleted its
+  // payload and killed the seed.
+  it("keeps the payload unless deletion is explicitly requested", async () => {
+    const bodies: string[] = [];
+    const { url, server } = await listen((req, res, u) => {
+      if (u.pathname === "/api/v2/torrents/delete") {
+        let body = "";
+        req.on("data", (c) => { body += c; });
+        req.on("end", () => { bodies.push(body); res.writeHead(200); res.end("Ok."); });
+        return;
+      }
+      res.writeHead(200); res.end("Ok.");
+    });
+    servers.push(server);
+    const client = new QbittorrentProvider({ host: url, category: "movies", tag: "mn" } as never);
+
+    await client.remove("deadbeef");
+    expect(bodies[0]).toContain("deleteFiles=false");
+
+    await client.remove("deadbeef", true);
+    expect(bodies[1]).toContain("deleteFiles=true");
+  });
+});
+
+describe("SabnzbdProvider removal", () => {
+  // Regression: remove() only cleared the queue, so a finished job stayed visible in
+  // history and the monitor re-imported it on every poll.
+  it("clears both the queue and the history slot", async () => {
+    const { url, server, seen } = await listen((_req, res) => { json(res, { status: true }); });
+    servers.push(server);
+    const client = new SabnzbdProvider({ host: url, apiKey: "k", category: "movies" } as never);
+
+    await client.remove("NZO1");
+
+    const modes = seen.map((s) => new URLSearchParams(s.split("?")[1]).get("mode"));
+    expect(modes).toContain("queue");
+    expect(modes).toContain("history");
+    const historyCall = seen.find((s) => s.includes("mode=history"))!;
+    expect(historyCall).toContain("name=delete");
+    expect(historyCall).toContain("del_files=0");
+  });
 });

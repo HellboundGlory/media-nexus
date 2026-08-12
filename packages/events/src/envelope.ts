@@ -48,6 +48,7 @@ export const EventTypes = {
   DownloadStarted: "acquisition.download.started",
   DownloadCompleted: "acquisition.download.completed",
   ImportCompleted: "acquisition.import.completed",
+  ImportFailed: "acquisition.import.failed",
   DownloadFailed: "acquisition.download.failed",
   IndexerFailed: "discovery.indexer.failed",
   DownloadClientFailed: "acquisition.client.failed",

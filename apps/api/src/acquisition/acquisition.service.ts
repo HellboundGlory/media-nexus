@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, count, eq, inArray, isNull } from "drizzle-orm";
 import { extname, join, relative, resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { ApiError, newEntityId } from "@medianexus/shared";
@@ -23,6 +23,12 @@ import { parseEpisodeRelease, episodeQueryTag } from "@medianexus/domain";
  * hardlink/copy it into the library root with the naming template, then mark the
  * movie available. Deeper heuristics (per-downloader layouts, series episodes) land in M2.
  */
+/** Queue states the download monitor must never act on again. */
+export const TERMINAL_QUEUE_STATUSES = new Set(["imported", "removed", "failed"]);
+
+/** How many times an import may fail before the queue entry is parked as failed. */
+export const MAX_IMPORT_ATTEMPTS = 3;
+
 @Injectable()
 export class AcquisitionService {
   private readonly logger = new Logger(AcquisitionService.name);
@@ -61,9 +67,19 @@ export class AcquisitionService {
     for (const item of items) {
       const entry = await this.findEntry(clientId, item.downloadId);
       if (!entry) continue;
+      // Terminal entries must never be re-processed. Some clients (SABnzbd) keep completed
+      // items visible in their history after removal, so without this guard the monitor
+      // would re-import the same download on every poll.
+      if (TERMINAL_QUEUE_STATUSES.has(entry.status)) continue;
       if (item.status === "completed") {
-        await this.importCompletedEntry(entry, item, client.provider);
-        imported++;
+        // Per-item isolation: one failing import must not abort the rest of this client's
+        // queue, and must not be reported as a download-client outage.
+        try {
+          await this.importCompletedEntry(entry, item, client.provider);
+          imported++;
+        } catch (err) {
+          await this.recordImportFailure(entry, err as Error);
+        }
       } else {
         await this.db.update(schema.downloadQueueEntry)
           .set({
@@ -81,6 +97,51 @@ export class AcquisitionService {
     return { imported, updated };
   }
 
+  /**
+   * Persist an import failure on the queue entry rather than losing it. Transient causes
+   * (a mount not ready, a still-unpacking download) clear themselves on a later poll, so
+   * the entry is retried until MAX_IMPORT_ATTEMPTS, then parked as `failed` so it stops
+   * being retried forever and becomes visible for manual intervention.
+   */
+  private async recordImportFailure(
+    entry: (typeof schema.downloadQueueEntry.$inferSelect),
+    err: Error,
+  ): Promise<void> {
+    const data = (entry.data ?? {}) as Record<string, unknown>;
+    const attempts = Number(data.importAttempts ?? 0) + 1;
+    const exhausted = attempts >= MAX_IMPORT_ATTEMPTS;
+    const now = new Date().toISOString();
+
+    await this.db.update(schema.downloadQueueEntry)
+      .set({
+        status: exhausted ? "failed" : entry.status,
+        errorMessage: err.message,
+        data: { ...data, importAttempts: attempts, lastImportError: err.message },
+        updatedAt: now,
+      })
+      .where(eq(schema.downloadQueueEntry.id, entry.id));
+
+    this.logger.warn(
+      `import failed for "${entry.title}" (attempt ${attempts}/${MAX_IMPORT_ATTEMPTS}${exhausted ? ", giving up" : ""}): ${err.message}`,
+    );
+
+    if (exhausted) {
+      await this.db.insert(schema.historyEntry).values({
+        id: newEntityId("hist"),
+        mediaType: entry.mediaType,
+        mediaId: entry.mediaId,
+        action: "import_failed",
+        data: { title: entry.title, downloadId: entry.downloadId, error: err.message, attempts },
+        createdAt: now,
+      });
+      this.events.publish(
+        EventTypes.ImportFailed,
+        { mediaType: entry.mediaType, mediaId: entry.mediaId, title: entry.title, downloadId: entry.downloadId, error: err.message },
+        { aggType: entry.mediaType as never, aggId: entry.mediaId },
+      );
+    }
+  }
+
   private async findEntry(downloadClientId: string | null, downloadId: string) {
     const cond = downloadClientId
       ? and(eq(schema.downloadQueueEntry.downloadClientId, downloadClientId), eq(schema.downloadQueueEntry.downloadId, downloadId))
@@ -93,7 +154,7 @@ export class AcquisitionService {
   async importCompletedEntry(
     entry: (typeof schema.downloadQueueEntry.$inferSelect),
     item: ClientQueueItem,
-    provider: DownloadClientContract,
+    _provider?: DownloadClientContract,
   ): Promise<{ mediaFileId: string; path: string; size: number; hardlinked: boolean; episodes?: string[] }> {
     const cfg = await this.config.get();
     const downloadsRoot = cfg["paths.downloads"] || resolve(process.cwd(), "data", "downloads");
@@ -102,8 +163,8 @@ export class AcquisitionService {
       throw new Error(`No video file found for "${entry.title}" under ${downloadsRoot}`);
     }
 
-    if (entry.mediaType === "movie") return this.importMovie(entry, source, cfg, item, provider);
-    return this.importSeries(entry, source, cfg, provider, item);
+    if (entry.mediaType === "movie") return this.importMovie(entry, source, cfg, item);
+    return this.importSeries(entry, source, cfg, item);
   }
 
   private async importMovie(
@@ -111,7 +172,6 @@ export class AcquisitionService {
     source: { path: string; size: number },
     cfg: RuntimeSettings,
     item: ClientQueueItem,
-    provider: DownloadClientContract,
   ): Promise<{ mediaFileId: string; path: string; size: number; hardlinked: boolean }> {
     const movie = await this.db.select().from(schema.movie).where(eq(schema.movie.id, entry.mediaId)).limit(1);
     if (!movie[0]) throw ApiError.notFound("movie", entry.mediaId);
@@ -136,7 +196,7 @@ export class AcquisitionService {
     await this.db.update(schema.movie).set({ hasFile: true, updatedAt: now }).where(eq(schema.movie.id, movie[0].id));
     await this.markAvailability("movie", movie[0].id, now);
     await this.insertHistory("movie", movie[0].id, now, { title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked });
-    await this.removeQueueEntry(entry, item, provider, now);
+    await this.markEntryImported(entry, now);
     this.emitImport("movie", movie[0].id, movie[0].title, item.downloadId, targetFile, mediaFileId);
     return { mediaFileId, path: targetFile, size, hardlinked };
   }
@@ -145,7 +205,6 @@ export class AcquisitionService {
     entry: (typeof schema.downloadQueueEntry.$inferSelect),
     source: { path: string; size: number },
     cfg: RuntimeSettings,
-    provider: DownloadClientContract,
     item: ClientQueueItem,
   ): Promise<{ mediaFileId: string; path: string; size: number; hardlinked: boolean; episodes: string[] }> {
     const series = await this.db.select().from(schema.series).where(eq(schema.series.id, entry.mediaId)).limit(1);
@@ -161,14 +220,19 @@ export class AcquisitionService {
     let baseName: string;
 
     if (match.season !== undefined && match.episodes.length > 0) {
-      // resolve matching episode rows (any existing episode with those numbers)
-      const rows = await this.db.select().from(schema.episode).where(and(
-        eq(schema.episode.seriesId, series[0].id),
-        inArray(sql`${schema.episode.episodeNumber}`, match.episodes),
-      ));
-      episodeIds = rows
-        .filter((r) => r.monitored || !episodeIds.length || true)
-        .map((r) => r.id);
+      // Resolve the episode rows this release covers. The season number is part of the
+      // key: without it, "S02E01" would also match S01E01, S03E01, ... in the same series
+      // and mark every one of them as having a file.
+      const rows = await this.db
+        .select({ id: schema.episode.id })
+        .from(schema.episode)
+        .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
+        .where(and(
+          eq(schema.episode.seriesId, series[0].id),
+          eq(schema.season.seasonNumber, match.season),
+          inArray(schema.episode.episodeNumber, match.episodes),
+        ));
+      episodeIds = rows.map((r) => r.id);
       // season folder from matched season number
       targetDir = join(root, safeSeries, `Season ${match.season}`);
       const tag = episodeQueryTag(match.season, match.episodes[0]) + (match.episodes.length > 1 ? `-E${pad2(match.episodes[match.episodes.length - 1])}` : "");
@@ -201,7 +265,7 @@ export class AcquisitionService {
       title: releaseTitle, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked,
       episodeMatched: episodeIds.length > 0, episodes: match.episodes, season: match.season,
     });
-    await this.removeQueueEntry(entry, item, provider, now);
+    await this.markEntryImported(entry, now);
     this.emitImport("series", series[0].id, series[0].title, item.downloadId, targetFile, mediaFileId, { episodes: match.episodes, season: match.season });
     return { mediaFileId, path: targetFile, size, hardlinked, episodes: updatedEps };
   }
@@ -227,14 +291,22 @@ export class AcquisitionService {
     });
   }
 
-  private async removeQueueEntry(
+  /**
+   * Close out a queue entry after a successful import.
+   *
+   * The download is deliberately LEFT IN THE CLIENT. Torrents need to keep seeding to meet
+   * tracker ratio requirements, and the imported library file is typically a hardlink to
+   * the client's data, so pulling the download also risks the payload. Reaping completed
+   * downloads belongs to a seed-goal policy (roadmap P2), not to import. The `imported`
+   * status is terminal, so the monitor will not touch this entry again.
+   */
+  private async markEntryImported(
     entry: (typeof schema.downloadQueueEntry.$inferSelect),
-    item: ClientQueueItem,
-    provider: DownloadClientContract,
     now: string,
   ): Promise<void> {
-    await this.db.update(schema.downloadQueueEntry).set({ status: "imported", progress: 100, updatedAt: now }).where(eq(schema.downloadQueueEntry.id, entry.id));
-    await provider.remove(item.downloadId).catch(() => {});
+    await this.db.update(schema.downloadQueueEntry)
+      .set({ status: "imported", progress: 100, errorMessage: null, updatedAt: now })
+      .where(eq(schema.downloadQueueEntry.id, entry.id));
   }
 
   private emitImport(

@@ -4,6 +4,7 @@ import { getCorrelationId } from "@medianexus/shared";
 import type {
   JobStore, JobRunRecord, JobTrigger, JobDefinitionSnapshot,
 } from "./types";
+import { JobTimeoutError } from "./types";
 
 export interface JobContext {
   runId: string;
@@ -117,7 +118,20 @@ export class JobEngine {
     const ac = new AbortController();
     const def = this.defs.get(record.jobKey);
     const timeoutMs = def?.timeoutMs ?? 60_000;
-    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    let timedOut = false;
+    let timer: NodeJS.Timeout | undefined;
+
+    // The abort signal alone is advisory: a handler that never reads ctx.signal (or is
+    // blocked in a socket read) would otherwise hold its worker slot forever, and once
+    // every slot is held the engine stops draining entirely. Racing the handler against
+    // the deadline guarantees the slot is always released.
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        ac.abort();
+        reject(new JobTimeoutError(record.jobKey, timeoutMs));
+      }, timeoutMs);
+    });
 
     const ctx: JobContext = {
       runId: record.id,
@@ -129,8 +143,13 @@ export class JobEngine {
       progress: (percent, message) => this.opts.store.updateProgress(record.id, percent, message),
     };
 
+    // Keep a reference to the handler's promise so that, when the deadline wins the race,
+    // a later rejection from the abandoned handler doesn't surface as an unhandled rejection.
+    const work = handler(ctx);
+    work.catch(() => {});
+
     try {
-      const result = await handler(ctx);
+      const result = await Promise.race([work, deadline]);
       await this.opts.store.succeed(record.id, result ?? {}, new Date().toISOString());
       this.log("info", "job succeeded", { jobKey: record.jobKey, runId: record.id });
     } catch (err) {
@@ -138,8 +157,8 @@ export class JobEngine {
       const def2 = this.defs.get(record.jobKey);
       const maxRetries = def2?.maxRetries ?? 0;
       const backoff = def2?.retryBackoffMs ?? 0;
-      if (ac.signal.aborted) {
-        await this.opts.store.fail(record.id, "Timed out: " + error, null, new Date().toISOString());
+      if (timedOut || ac.signal.aborted) {
+        await this.opts.store.timeout(record.id, error, new Date().toISOString());
         this.log("error", "job timed out", { jobKey: record.jobKey, runId: record.id, error });
         return;
       }

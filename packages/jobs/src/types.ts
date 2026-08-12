@@ -44,5 +44,15 @@ export interface JobStore {
   succeed(runId: string, result: unknown, finishedIso: string): Promise<void>;
   /** fail or requeue-for-retry deterministic on retryAt */
   fail(runId: string, error: string, retryAtIso: string | null, finishedIso: string): Promise<void>;
+  /** terminal: the run exceeded its definition's timeoutMs and was abandoned */
+  timeout(runId: string, error: string, finishedIso: string): Promise<void>;
   cancel(runId: string): Promise<void>;
+}
+
+/** Thrown by the engine when a handler outlives its definition's timeoutMs. */
+export class JobTimeoutError extends Error {
+  constructor(public readonly jobKey: string, public readonly timeoutMs: number) {
+    super(`Job "${jobKey}" exceeded its ${timeoutMs}ms timeout and was abandoned`);
+    this.name = "JobTimeoutError";
+  }
 }

@@ -97,8 +97,14 @@ export class QbittorrentProvider implements DownloadClientContract {
     });
   }
 
-  async remove(downloadId: string): Promise<void> {
-    const body = new URLSearchParams({ hashes: downloadId, deleteFiles: "true" });
+  /**
+   * Remove a torrent from the client. `deleteData` defaults to FALSE: the library file is
+   * usually a hardlink to the downloaded data, and deleting that data stops the torrent
+   * seeding — which on private trackers costs ratio and, eventually, the account. Callers
+   * that genuinely want the payload gone (a failed download being cleaned up) opt in.
+   */
+  async remove(downloadId: string, deleteData = false): Promise<void> {
+    const body = new URLSearchParams({ hashes: downloadId, deleteFiles: deleteData ? "true" : "false" });
     await this.request("/api/v2/torrents/delete", { method: "POST", body });
   }
 

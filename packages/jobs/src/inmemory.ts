@@ -59,6 +59,11 @@ export class InMemoryJobStore implements JobStore {
     if (r) this.runs.set(runId, { ...r, status: "failed", error, finishedAt: finishedIso });
   }
 
+  async timeout(runId: string, error: string, finishedIso: string): Promise<void> {
+    const r = this.runs.get(runId);
+    if (r) this.runs.set(runId, { ...r, status: "timed_out", error, finishedAt: finishedIso });
+  }
+
   async cancel(runId: string): Promise<void> {
     const r = this.runs.get(runId);
     if (r) this.runs.set(runId, { ...r, status: "cancelled" });

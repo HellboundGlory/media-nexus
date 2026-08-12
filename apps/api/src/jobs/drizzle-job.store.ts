@@ -89,6 +89,12 @@ export class DrizzleJobStore implements JobStore {
       .where(eq(schema.jobRun.id, runId));
   }
 
+  async timeout(runId: string, error: string, finishedIso: string): Promise<void> {
+    await this.db.update(schema.jobRun)
+      .set({ status: "timed_out" as JobStatus, error, finishedAt: finishedIso })
+      .where(eq(schema.jobRun.id, runId));
+  }
+
   async cancel(runId: string): Promise<void> {
     await this.db.update(schema.jobRun).set({ status: "cancelled", finishedAt: new Date().toISOString() }).where(eq(schema.jobRun.id, runId));
   }
