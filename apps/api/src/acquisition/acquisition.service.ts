@@ -17,6 +17,7 @@ import type { ClientQueueItem, DownloadClientContract } from "@medianexus/integr
 import { parseEpisodeRelease, episodeQueryTag, targetEpisodeIds } from "@medianexus/domain";
 import { MediaRepository } from "../media/media.repository";
 import { ensureAvailability } from "../media/library.helpers";
+import { BlocklistService } from "../blocklist/blocklist.service";
 
 /**
  * Acquisition: drives download clients, mirrors their queues into download_queue_entry,
@@ -42,6 +43,7 @@ export class AcquisitionService {
     private readonly events: EventsService,
     private readonly providers: ProvidersService,
     private readonly media: MediaRepository,
+    private readonly blocklist: BlocklistService,
   ) {}
 
   /** Poll every configured download client and import anything completed. */
@@ -136,6 +138,17 @@ export class AcquisitionService {
         action: "import_failed",
         data: { title: entry.title, downloadId: entry.downloadId, error: err.message, attempts },
         createdAt: now,
+      });
+      // Release-level failure (we downloaded it and it wasn't usable N times running) —
+      // blocklist it so RSS sync and manual grab both stop offering it again. Deliberately
+      // NOT done for client/indexer-outage failures (DownloadClientFailed/IndexerFailed) —
+      // those mean "try again later," not "never again."
+      await this.blocklist.add({
+        mediaType: entry.mediaType as "movie" | "series",
+        mediaId: entry.mediaId,
+        title: entry.title,
+        indexerId: (data as { indexerId?: string }).indexerId ?? null,
+        reason: `import failed after ${attempts} attempts: ${err.message}`,
       });
       this.events.publish(
         EventTypes.ImportFailed,

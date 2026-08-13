@@ -5,6 +5,10 @@
  *   I2 — completed downloads were re-imported on every poll
  *   I3 — torrent payloads were deleted (and seeding killed) at import time
  *   I5 — one failing import aborted the whole client's queue pass
+ *
+ * Also covers roadmap P0.4 (blocklist, gap report B6): an import that fails
+ * MAX_IMPORT_ATTEMPTS times must blocklist the release, not just mark the queue
+ * entry `failed` and go quiet.
  */
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
@@ -18,6 +22,7 @@ import { AcquisitionService } from "../src/acquisition/acquisition.service";
 import { MediaRepository } from "../src/media/media.repository";
 import { ConfigService } from "../src/system/config.service";
 import { EventsService } from "../src/events/events.service";
+import { BlocklistService } from "../src/blocklist/blocklist.service";
 import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
 
 const dir = mkdtempSync(join(tmpdir(), "mn-acq-"));
@@ -42,6 +47,7 @@ class StubClient implements DownloadClientContract {
 interface Harness {
   db: ReturnType<typeof createDb>["db"];
   service: AcquisitionService;
+  blocklist: BlocklistService;
   client: StubClient;
   configured: ConfiguredClient;
   downloadsRoot: string;
@@ -70,8 +76,9 @@ async function harness(): Promise<Harness> {
     configuredDownloadClients: async () => [{ row: null, provider: client }],
   } as unknown as ProvidersService;
 
-  const service = new AcquisitionService(handle.db, config, events, providers, new MediaRepository(handle.db));
-  return { db: handle.db, service, client, configured: { row: null, provider: client }, downloadsRoot, mediaRoot };
+  const blocklist = new BlocklistService(handle.db);
+  const service = new AcquisitionService(handle.db, config, events, providers, new MediaRepository(handle.db), blocklist);
+  return { db: handle.db, service, blocklist, client, configured: { row: null, provider: client }, downloadsRoot, mediaRoot };
 }
 
 /** Create a completed download on disk that resolveSource() will find. */

@@ -12,6 +12,7 @@ import { IndexersService } from "../indexers/indexers.service";
 import { SeriesService } from "../series/series.service";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
+import { BlocklistService } from "../blocklist/blocklist.service";
 
 /**
  * RSS sync (M2): for monitored episodes that are missing, search configured indexers
@@ -27,6 +28,7 @@ export class RssSyncService {
     private readonly indexers: IndexersService,
     private readonly series: SeriesService,
     private readonly events: EventsService,
+    private readonly blocklist: BlocklistService,
   ) {}
 
   async run(opts: { maxSeries?: number; perSeries?: number } = {}): Promise<{ scannedSeries: number; grabbed: number; skipped: number }> {
@@ -73,7 +75,8 @@ export class RssSyncService {
 
     // filter releases whose title actually contains the target episode (SxxExx match)
     const candidates = res.releases.filter((r) => this.matchesTarget(r, season, episode));
-    const best = bestRelease(candidates ?? res.releases);
+    const allowed = await this.filterBlocklisted(seriesId, candidates);
+    const best = bestRelease(allowed);
     if (!best) return false;
 
     try {
@@ -84,6 +87,17 @@ export class RssSyncService {
       this.events.publish(EventTypes.DownloadClientFailed, { seriesId, error: (err as Error).message });
       return false;
     }
+  }
+
+  /** Drop candidates a previous grab of this exact release already failed on — see
+   *  BlocklistService for the match key and why this only applies to release-level
+   *  failures, not client/indexer outages. */
+  private async filterBlocklisted(seriesId: string, releases: Release[]): Promise<Release[]> {
+    if (releases.length === 0) return releases;
+    const blocked = await Promise.all(releases.map((r) =>
+      this.blocklist.isBlocklisted({ mediaType: "series", mediaId: seriesId, title: r.title, indexerId: r.indexerId }),
+    ));
+    return releases.filter((_, i) => !blocked[i]);
   }
 
   private matchesTarget(r: Release, season: number, episode: number): boolean {

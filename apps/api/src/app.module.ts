@@ -3,6 +3,7 @@ import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { DatabaseModule } from "./db/database.module";
 import { MediaModule } from "./media/media.module";
+import { BlocklistModule } from "./blocklist/blocklist.module";
 import { EventsModule } from "./events/events.module";
 import { AuthModule } from "./auth/auth.module";
 import { ApiKeyGuard } from "./auth/api-key.guard";
@@ -32,6 +33,7 @@ import { SecurityHeadersMiddleware } from "./common/security-headers.middleware"
   imports: [
     DatabaseModule,
     MediaModule,
+    BlocklistModule,
     EventsModule,
     AuthModule,
     HealthModule,

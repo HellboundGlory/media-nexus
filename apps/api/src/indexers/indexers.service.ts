@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { episodeQueryTag } from "@medianexus/domain";
 import { parseCardigannYaml, cardigannSettingsSchema } from "@medianexus/integrations";
+import { BlocklistService } from "../blocklist/blocklist.service";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   memory: memoryIndexerSettingsSchema,
@@ -31,6 +32,7 @@ export class IndexersService {
     private readonly providers: ProvidersService,
     private readonly events: EventsService,
     private readonly config: ConfigService,
+    private readonly blocklist: BlocklistService,
   ) {}
 
   async definitions() {
@@ -242,6 +244,10 @@ export class IndexersService {
         if (found) { release = { ...found, indexerId: row.id, indexerName: row.name }; break; }
       }
       if (!release) throw ApiError.notFound("release", input.releaseId);
+    }
+
+    if (await this.blocklist.isBlocklisted({ mediaType: input.mediaType, mediaId: input.mediaId, title: release.title, indexerId: release.indexerId })) {
+      throw new ApiError({ code: "CONFLICT", message: `"${release.title}" is blocklisted and won't be grabbed again` });
     }
 
     const client = await this.providers.pickDownloadClient(release.protocol as "usenet" | "torrent", input.downloadClientId);
