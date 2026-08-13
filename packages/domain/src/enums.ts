@@ -42,7 +42,15 @@ export const historyActionSchema = z.enum([
 // --- Queue ---
 export const queueStatusSchema = z.enum([
   "queued", "downloading", "paused", "completed", "failed", "importing", "imported", "removed",
+  "stalled", "download_failed",
 ]);
+
+/** Queue statuses that still represent an in-progress download for a title — used to guard
+ *  re-search/re-grab of the same media until the entry resolves one way or another.
+ *  `stalled` MUST be active: while an entry is stalled it hasn't failed yet, so treating it
+ *  as inactive would let re-search fire before the failure-escalation path (which blocklists
+ *  and genuinely clears the way) has had a chance to run. */
+export const ACTIVE_QUEUE_STATUSES = ["queued", "downloading", "paused", "importing", "stalled"] as const;
 
 // --- Jobs ---
 export const jobStatusSchema = z.enum([

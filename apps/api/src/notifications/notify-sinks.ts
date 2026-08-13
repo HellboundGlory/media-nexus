@@ -26,6 +26,8 @@ export function humanTitle(type: string): string {
   const map: Record<string, string> = {
     "acquisition.release.grabbed": "Release grabbed",
     "acquisition.import.completed": "Import completed",
+    "acquisition.import.failed": "Import failed",
+    "acquisition.download.failed": "Download failed",
     "discovery.indexer.failed": "Indexer failed",
     "acquisition.client.failed": "Download client failed",
   };

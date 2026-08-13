@@ -18,6 +18,8 @@ export type NotifyKind = "webhook" | "discord" | "telegram" | "email";
 export const WATCHED = new Set([
   "acquisition.release.grabbed",
   "acquisition.import.completed",
+  "acquisition.import.failed",
+  "acquisition.download.failed",
   "discovery.indexer.failed",
   "acquisition.client.failed",
 ]);

@@ -66,6 +66,7 @@ export const runtimeSettingsSchema = z.object({
     episodes: "{Series Title} - S{season:00}E{episode:00} - {Episode Title}",
   }),
   "media.preferredProtocol": z.enum(["usenet", "torrent", "any"]).default("any"),
+  "media.downloadStallMinutes": z.number().int().positive().default(60),
   "discovery.flareSolverrBaseUrl": z.string().default(""),
   "notifications.webhooks": z.array(webhookNotificationSchema).default([]),
   "notifications.discord": z.array(discordNotificationSchema).default([]),

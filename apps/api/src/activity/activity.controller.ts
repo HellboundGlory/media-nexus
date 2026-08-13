@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { Controller, Get, Inject, Query } from "@nestjs/common";
+import { Controller, Delete, Get, Inject, Param, Query } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { and, desc, eq } from "drizzle-orm";
 import { schema } from "@medianexus/database";
@@ -7,6 +7,7 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import { z } from "zod";
 import { ZodValidationPipe } from "../common/zod.pipe";
+import { ActivityService } from "./activity.service";
 
 const historyQuery = z.object({
   mediaType: z.enum(["movie", "series"]).optional(),
@@ -20,7 +21,10 @@ const queueQuery = z.object({ mediaType: z.enum(["movie", "series"]).optional() 
 @ApiTags("activity")
 @Controller("api/v1")
 export class ActivityController {
-  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
+  constructor(
+    @Inject(DB_TOKEN) private readonly db: Db,
+    private readonly activity: ActivityService,
+  ) {}
 
   @Get("history")
   @ApiOperation({ summary: "Unified activity history (movies + series)" })
@@ -44,5 +48,11 @@ export class ActivityController {
       .where(conds.length ? and(...conds) : undefined)
       .orderBy(desc(schema.downloadQueueEntry.addedAt));
     return { items: rows, total: rows.length };
+  }
+
+  @Delete("queue/:id")
+  @ApiOperation({ summary: "Clear a stuck queue entry (does not delete client-side data)" })
+  async removeQueueEntry(@Param("id") id: string) {
+    return this.activity.removeQueueEntry(id);
   }
 }

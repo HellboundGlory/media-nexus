@@ -6,7 +6,7 @@ import { newEntityId } from "@medianexus/shared";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import {
-  episodeQueryTag, parseEpisodeRelease, titleMatches, pickBest,
+  episodeQueryTag, parseEpisodeRelease, titleMatches, pickBest, ACTIVE_QUEUE_STATUSES,
 } from "@medianexus/domain";
 import type { Release } from "@medianexus/domain";
 import { IndexersService } from "../indexers/indexers.service";
@@ -326,12 +326,7 @@ export class RssSyncService {
       .where(and(
         eq(schema.downloadQueueEntry.mediaType, mediaType),
         eq(schema.downloadQueueEntry.mediaId, mediaId),
-        or(
-          eq(schema.downloadQueueEntry.status, "queued"),
-          eq(schema.downloadQueueEntry.status, "downloading"),
-          eq(schema.downloadQueueEntry.status, "paused"),
-          eq(schema.downloadQueueEntry.status, "importing"),
-        ),
+        or(...ACTIVE_QUEUE_STATUSES.map((s) => eq(schema.downloadQueueEntry.status, s))),
       )).limit(1);
     return rows.length > 0;
   }

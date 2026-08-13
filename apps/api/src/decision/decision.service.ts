@@ -6,14 +6,12 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import {
   evaluate, type Decision, type DecisionContext,
-  type Release, type MediaType,
+  type Release, type MediaType, ACTIVE_QUEUE_STATUSES,
 } from "@medianexus/domain";
 import { MediaRepository } from "../media/media.repository";
 import { BlocklistService } from "../blocklist/blocklist.service";
 import { ConfigService } from "../system/config.service";
 import { getQualityProfile } from "../media/library.helpers";
-
-const ACTIVE_QUEUE_STATUSES = ["queued", "downloading", "paused", "importing"];
 
 /**
  * Assembles `DecisionContext` (DB-backed) and calls the pure domain `evaluate()` from

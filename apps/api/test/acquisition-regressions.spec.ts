@@ -15,10 +15,11 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { EventBus } from "@medianexus/events";
+import { EventBus, EventTypes } from "@medianexus/events";
 import { createDb, schema } from "@medianexus/database";
 import type { ClientQueueItem, DownloadClientContract, HealthResult, AddDownloadInput } from "@medianexus/integrations";
 import { AcquisitionService } from "../src/acquisition/acquisition.service";
+import { ActivityService } from "../src/activity/activity.service";
 import { MediaRepository } from "../src/media/media.repository";
 import { ConfigService } from "../src/system/config.service";
 import { EventsService } from "../src/events/events.service";
@@ -48,8 +49,10 @@ interface Harness {
   db: ReturnType<typeof createDb>["db"];
   service: AcquisitionService;
   blocklist: BlocklistService;
+  events: EventsService;
   client: StubClient;
   configured: ConfiguredClient;
+  providers: ProvidersService;
   downloadsRoot: string;
   mediaRoot: string;
 }
@@ -78,7 +81,10 @@ async function harness(): Promise<Harness> {
 
   const blocklist = new BlocklistService(handle.db);
   const service = new AcquisitionService(handle.db, config, events, providers, new MediaRepository(handle.db), blocklist);
-  return { db: handle.db, service, blocklist, client, configured: { row: null, provider: client }, downloadsRoot, mediaRoot };
+  return {
+    db: handle.db, service, blocklist, events, client, configured: { row: null, provider: client },
+    providers, downloadsRoot, mediaRoot,
+  };
 }
 
 /** Create a completed download on disk that resolveSource() will find. */
@@ -263,5 +269,190 @@ describe("I5 — a failing import is isolated to its own queue entry", () => {
 
     const history = await h.db.select().from(schema.historyEntry);
     expect(history.filter((r) => r.action === "import_failed")).toHaveLength(1);
+  });
+});
+
+/** Fetch a fresh copy of a queue entry row (the harness helpers only return the row as
+ *  inserted, not as later mutated by the reconciler). */
+async function reload(db: Harness["db"], id: string) {
+  const rows = await db.select().from(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, id));
+  return rows[0];
+}
+
+async function pushLastProgressIntoPast(db: Harness["db"], id: string, minutesAgo: number, extraData: Record<string, unknown> = {}) {
+  const entry = await reload(db, id);
+  const data = (entry.data ?? {}) as Record<string, unknown>;
+  await db.update(schema.downloadQueueEntry)
+    .set({ data: { ...data, ...extraData, lastProgressAt: new Date(Date.now() - minutesAgo * 60_000).toISOString() } })
+    .where(eq(schema.downloadQueueEntry.id, id));
+}
+
+describe("B5 — download-failure detection (debounced)", () => {
+  let h: Harness;
+  beforeEach(async () => { h = await harness(); await seedSeries(h.db, h.mediaRoot); });
+
+  it("does not change status after a single failed poll", async () => {
+    await queueEntry(h.db, { id: "q1", downloadId: "d1", status: "downloading" });
+    h.client.items = [{ downloadId: "d1", title: "Test.Show.S02E01.1080p.WEB-DL", status: "failed", progress: 50, size: 2048, errorMessage: "disk full" }];
+
+    await h.service.syncForClient(h.configured);
+
+    const entry = await reload(h.db, "q1");
+    expect(entry.status).toBe("downloading");
+    expect((entry.data as { consecutiveFailures?: number }).consecutiveFailures).toBe(1);
+    expect(await h.db.select().from(schema.blocklistEntry)).toHaveLength(0);
+    expect(h.client.removals).toEqual([]);
+  });
+
+  it("escalates to download_failed, blocklists the release, and purges the client on the second consecutive failed poll", async () => {
+    await queueEntry(h.db, { id: "q1", downloadId: "d1", status: "downloading" });
+    h.client.items = [{ downloadId: "d1", title: "Test.Show.S02E01.1080p.WEB-DL", status: "failed", progress: 50, size: 2048, errorMessage: "disk full" }];
+
+    let published: unknown;
+    h.events.subscribe(EventTypes.DownloadFailed, (e) => { published = e; }, false);
+
+    await h.service.syncForClient(h.configured);
+    await h.service.syncForClient(h.configured);
+
+    const entry = await reload(h.db, "q1");
+    expect(entry.status).toBe("download_failed");
+
+    const blocklisted = await h.db.select().from(schema.blocklistEntry);
+    expect(blocklisted).toHaveLength(1);
+    expect(blocklisted[0].mediaId).toBe("s1");
+
+    expect(h.client.removals).toEqual([{ downloadId: "d1", deleteData: true }]);
+    expect(published).toBeDefined();
+
+    const history = await h.db.select().from(schema.historyEntry);
+    expect(history.filter((r) => r.action === "download_failed")).toHaveLength(1);
+
+    // Terminal — a third poll must not process this entry again.
+    await h.service.syncForClient(h.configured);
+    expect(h.client.removals).toHaveLength(1);
+  });
+});
+
+describe("B5 — stall detection and recovery", () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await harness();
+    await seedSeries(h.db, h.mediaRoot);
+    // 1-minute stall window keeps the test fast — the "elapsed" clock is driven by
+    // backdating data.lastProgressAt directly rather than by real waiting.
+    const config = new ConfigService(h.db);
+    await config.upsert({ "media.downloadStallMinutes": 1 });
+  });
+
+  it("flips to stalled once progress hasn't moved for the configured window", async () => {
+    await queueEntry(h.db, { id: "q1", downloadId: "d1", status: "downloading", progress: 50 });
+    h.client.items = [{ downloadId: "d1", title: "Test.Show.S02E01.1080p.WEB-DL", status: "downloading", progress: 50, size: 2048 }];
+
+    // First poll establishes the lastProgress baseline — no basis to call it stalled yet.
+    await h.service.syncForClient(h.configured);
+    expect((await reload(h.db, "q1")).status).toBe("downloading");
+
+    await pushLastProgressIntoPast(h.db, "q1", 2);
+    await h.service.syncForClient(h.configured);
+
+    expect((await reload(h.db, "q1")).status).toBe("stalled");
+  });
+
+  it("recovers to downloading once progress resumes", async () => {
+    await queueEntry(h.db, { id: "q1", downloadId: "d1", status: "stalled", progress: 50 });
+    await pushLastProgressIntoPast(h.db, "q1", 2, { lastProgress: 50 });
+    h.client.items = [{ downloadId: "d1", title: "Test.Show.S02E01.1080p.WEB-DL", status: "downloading", progress: 60, size: 2048 }];
+
+    await h.service.syncForClient(h.configured);
+
+    const entry = await reload(h.db, "q1");
+    expect(entry.status).toBe("downloading");
+    expect((entry.data as { lastProgress?: number }).lastProgress).toBe(60);
+  });
+
+  it("escalates to download_failed after a second full stall window with no movement", async () => {
+    await queueEntry(h.db, { id: "q1", downloadId: "d1", status: "stalled", progress: 50 });
+    // 2x the 1-minute window, still stuck at the same progress.
+    await pushLastProgressIntoPast(h.db, "q1", 3, { lastProgress: 50 });
+    h.client.items = [{ downloadId: "d1", title: "Test.Show.S02E01.1080p.WEB-DL", status: "downloading", progress: 50, size: 2048 }];
+
+    await h.service.syncForClient(h.configured);
+
+    const entry = await reload(h.db, "q1");
+    expect(entry.status).toBe("download_failed");
+    expect(await h.db.select().from(schema.blocklistEntry)).toHaveLength(1);
+    expect(h.client.removals).toEqual([{ downloadId: "d1", deleteData: true }]);
+  });
+});
+
+describe("B5 — entries removed from the client are reconciled", () => {
+  let h: Harness;
+  beforeEach(async () => { h = await harness(); await seedSeries(h.db, h.mediaRoot); });
+
+  it("does not flip on the first missing poll", async () => {
+    await queueEntry(h.db, { id: "q1", downloadId: "d1", status: "downloading" });
+    h.client.items = [];
+
+    await h.service.syncForClient(h.configured);
+
+    const entry = await reload(h.db, "q1");
+    expect(entry.status).toBe("downloading");
+    expect((entry.data as { missingSince?: string }).missingSince).toBeDefined();
+  });
+
+  it("flips to removed on the second consecutive missing poll", async () => {
+    await queueEntry(h.db, { id: "q1", downloadId: "d1", status: "downloading" });
+    h.client.items = [];
+
+    await h.service.syncForClient(h.configured);
+    await h.service.syncForClient(h.configured);
+
+    const entry = await reload(h.db, "q1");
+    expect(entry.status).toBe("removed");
+    const history = await h.db.select().from(schema.historyEntry);
+    expect(history.filter((r) => r.action === "removed")).toHaveLength(1);
+    // Ambiguous cause (could be a manual removal in the client's own UI) — not blocklisted.
+    expect(await h.db.select().from(schema.blocklistEntry)).toHaveLength(0);
+  });
+
+  it("clears the miss-tracking if the entry reappears before the second poll", async () => {
+    await queueEntry(h.db, { id: "q1", downloadId: "d1", status: "downloading", progress: 50 });
+    h.client.items = [];
+    await h.service.syncForClient(h.configured);
+    expect((await reload(h.db, "q1")).data).toHaveProperty("missingSince");
+
+    h.client.items = [{ downloadId: "d1", title: "Test.Show.S02E01.1080p.WEB-DL", status: "downloading", progress: 50, size: 2048 }];
+    await h.service.syncForClient(h.configured);
+
+    const entry = await reload(h.db, "q1");
+    expect(entry.status).toBe("downloading");
+    expect((entry.data as { missingSince?: string }).missingSince).toBeUndefined();
+  });
+});
+
+describe("B5 — DELETE /queue/:id clears a stuck entry", () => {
+  it("removes the row, records history, and asks the client to remove it (without deleting data)", async () => {
+    const h = await harness();
+    await seedSeries(h.db, h.mediaRoot);
+    const now = new Date().toISOString();
+    await h.db.insert(schema.downloadClient).values({
+      id: "dc1", name: "Stub", implementation: "memory", kind: "torrent",
+      enabled: true, priority: 1, settings: {}, tags: [], createdAt: now, updatedAt: now,
+    });
+    await queueEntry(h.db, { id: "q1", downloadId: "d1", downloadClientId: "dc1", status: "stalled" });
+
+    const providers = {
+      configuredDownloadClients: async () => [{ row: { id: "dc1" }, provider: h.client }],
+    } as unknown as ProvidersService;
+    const activity = new ActivityService(h.db, providers);
+
+    const result = await activity.removeQueueEntry("q1");
+
+    expect(result).toEqual({ removed: "q1" });
+    expect(await reload(h.db, "q1")).toBeUndefined();
+    expect(h.client.removals).toEqual([{ downloadId: "d1", deleteData: false }]);
+
+    const history = await h.db.select().from(schema.historyEntry);
+    expect(history.filter((r) => r.action === "removed")).toHaveLength(1);
   });
 });

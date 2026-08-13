@@ -35,10 +35,16 @@ import { BlocklistService } from "../blocklist/blocklist.service";
  * there is no season-pack analog for a movie.
  */
 /** Queue states the download monitor must never act on again. */
-export const TERMINAL_QUEUE_STATUSES = new Set(["imported", "removed", "failed"]);
+export const TERMINAL_QUEUE_STATUSES = new Set(["imported", "removed", "failed", "download_failed"]);
 
 /** How many times an import may fail before the queue entry is parked as failed. */
 export const MAX_IMPORT_ATTEMPTS = 3;
+
+/** A single "failed"/missing poll can be transient (a client mid-retry, a snapshot glitch),
+ *  so both the download-failure and removed-from-client paths require this many consecutive
+ *  polls reporting the same thing before committing — see applyLiveStatus/
+ *  reconcileMissingEntries (roadmap B5, gap report). */
+const CONSECUTIVE_POLLS_BEFORE_COMMIT = 2;
 
 type QueueEntryRow = typeof schema.downloadQueueEntry.$inferSelect;
 
@@ -100,9 +106,12 @@ export class AcquisitionService {
   async syncForClient(client: ConfiguredClient): Promise<{ imported: number; updated: number }> {
     const clientId = client.row?.id ?? null;
     const items = await client.provider.getQueue();
+    const cfg = await this.config.get();
+    const presentIds = new Set<string>();
     let imported = 0;
     let updated = 0;
     for (const item of items) {
+      presentIds.add(item.downloadId);
       const entry = await this.findEntry(clientId, item.downloadId);
       if (!entry) continue;
       // Terminal entries must never be re-processed. Some clients (SABnzbd) keep completed
@@ -119,20 +128,229 @@ export class AcquisitionService {
           await this.recordImportFailure(entry, err as Error);
         }
       } else {
-        await this.db.update(schema.downloadQueueEntry)
-          .set({
-            status: item.status,
-            progress: item.progress,
-            size: item.size || entry.size,
-            remainingTime: item.remainingTimeSeconds ?? null,
-            errorMessage: item.errorMessage ?? null,
-            updatedAt: new Date().toISOString(),
-          })
-          .where(eq(schema.downloadQueueEntry.id, entry.id));
+        await this.applyLiveStatus(entry, item, cfg, client.provider);
         updated++;
       }
     }
+    // Entries the client's own snapshot no longer mentions (cancelled/purged externally) —
+    // the loop above never visits these, since it only iterates what the client reported.
+    await this.reconcileMissingEntries(clientId, presentIds);
     return { imported, updated };
+  }
+
+  /**
+   * Apply one poll's worth of live status for a non-completed, non-terminal entry:
+   * debounced download-failure detection, then stall detection/recovery, then a plain
+   * field copy for the ordinary case. Never called for `item.status === "completed"` —
+   * that path is `importCompletedEntry`/`recordImportFailure`.
+   */
+  private async applyLiveStatus(
+    entry: QueueEntryRow,
+    item: ClientQueueItem,
+    cfg: RuntimeSettings,
+    provider: DownloadClientContract,
+  ): Promise<void> {
+    const data = (entry.data ?? {}) as Record<string, unknown>;
+    const now = new Date().toISOString();
+
+    if (item.status === "failed") {
+      // A single "error"/"failing" read from a client can be transient — require two
+      // consecutive polls reporting failure before committing, since there's no recovery
+      // path after recordDownloadFailure() runs (it blocklists and purges the download).
+      const consecutiveFailures = Number(data.consecutiveFailures ?? 0) + 1;
+      if (consecutiveFailures >= CONSECUTIVE_POLLS_BEFORE_COMMIT) {
+        await this.recordDownloadFailure(
+          entry, provider, `download reported failed: ${item.errorMessage ?? "unknown error"}`,
+        );
+        return;
+      }
+      await this.db.update(schema.downloadQueueEntry)
+        .set({ errorMessage: item.errorMessage ?? null, data: { ...data, consecutiveFailures }, updatedAt: now })
+        .where(eq(schema.downloadQueueEntry.id, entry.id));
+      return;
+    }
+
+    await this.detectStall(entry, item, cfg, provider, data, now);
+  }
+
+  /**
+   * Track progress across polls to notice a download stuck at the same percentage — a
+   * client-reported status alone (`downloading`/`queued`/`paused`) never surfaces this.
+   * `data.lastProgress`/`data.lastProgressAt` record the last time progress actually moved.
+   * No movement for `media.downloadStallMinutes` flips the entry to `stalled` (still
+   * active — see ACTIVE_QUEUE_STATUSES); renewed movement flips it back; no movement for a
+   * second full window escalates to a download failure.
+   */
+  private async detectStall(
+    entry: QueueEntryRow,
+    item: ClientQueueItem,
+    cfg: RuntimeSettings,
+    provider: DownloadClientContract,
+    data: Record<string, unknown>,
+    now: string,
+  ): Promise<void> {
+    const lastProgress = data.lastProgress as number | undefined;
+    const lastProgressAt = data.lastProgressAt as string | undefined;
+    // No prior reading to compare against (first poll for this entry) counts as "moved" —
+    // there is no basis yet to call it stalled.
+    const progressMoved = lastProgress === undefined || item.progress !== lastProgress;
+
+    const baseFields = {
+      progress: item.progress,
+      size: item.size || entry.size,
+      remainingTime: item.remainingTimeSeconds ?? null,
+      errorMessage: item.errorMessage ?? null,
+      updatedAt: now,
+    };
+
+    if (progressMoved) {
+      // Explicit recovery direction: a previously-stalled entry whose progress has resumed
+      // goes back to `downloading`, not just forward escalation.
+      const recovered = entry.status === "stalled";
+      await this.db.update(schema.downloadQueueEntry)
+        .set({
+          ...baseFields,
+          status: recovered ? "downloading" : entry.status,
+          data: { ...data, consecutiveFailures: 0, lastProgress: item.progress, lastProgressAt: now },
+        })
+        .where(eq(schema.downloadQueueEntry.id, entry.id));
+      return;
+    }
+
+    const stallMs = cfg["media.downloadStallMinutes"] * 60_000;
+    const referenceAt = lastProgressAt ? new Date(lastProgressAt).getTime() : new Date(now).getTime();
+    const elapsed = new Date(now).getTime() - referenceAt;
+
+    if (entry.status === "stalled" && elapsed >= 2 * stallMs) {
+      await this.recordDownloadFailure(
+        entry, provider,
+        `download stalled with no progress for over ${Math.round((2 * stallMs) / 60_000)} minutes`,
+      );
+      return;
+    }
+
+    const nextStatus = elapsed >= stallMs ? "stalled" : entry.status;
+    await this.db.update(schema.downloadQueueEntry)
+      .set({
+        ...baseFields,
+        status: nextStatus,
+        data: { ...data, consecutiveFailures: 0, lastProgress: item.progress, lastProgressAt: lastProgressAt ?? now },
+      })
+      .where(eq(schema.downloadQueueEntry.id, entry.id));
+  }
+
+  /**
+   * Commit a confirmed download-level failure: the client itself gave up, or a stalled
+   * entry never recovered through a second full stall window. Mirrors
+   * recordImportFailure()'s shape but with no retry budget — a download that has already
+   * exhausted the client's own retries (or sat stalled for two full windows) gets
+   * blocklisted immediately, not after N more attempts.
+   */
+  private async recordDownloadFailure(
+    entry: QueueEntryRow,
+    provider: DownloadClientContract,
+    reason: string,
+  ): Promise<void> {
+    const data = (entry.data ?? {}) as Record<string, unknown>;
+    const now = new Date().toISOString();
+
+    this.db.transaction((tx) => {
+      tx.update(schema.downloadQueueEntry)
+        .set({ status: "download_failed", errorMessage: reason, data: { ...data, consecutiveFailures: 0 }, updatedAt: now })
+        .where(eq(schema.downloadQueueEntry.id, entry.id))
+        .run();
+
+      tx.insert(schema.historyEntry).values({
+        id: newEntityId("hist"),
+        mediaType: entry.mediaType,
+        mediaId: entry.mediaId,
+        action: "download_failed",
+        data: { title: entry.title, downloadId: entry.downloadId, error: reason },
+        createdAt: now,
+      }).run();
+
+      this.blocklist.addSync(tx, {
+        mediaType: entry.mediaType as "movie" | "series",
+        mediaId: entry.mediaId,
+        title: entry.title,
+        indexerId: (data as { indexerId?: string }).indexerId ?? null,
+        reason,
+      });
+    });
+
+    this.logger.warn(`download failed for "${entry.title}": ${reason}`);
+
+    // Best-effort: a permanently failed download has no seeding value, unlike the deliberate
+    // "leave completed downloads in the client" policy for successful imports
+    // (markEntryImportedSync) — purge it, and its data, from the client.
+    if (entry.downloadId) {
+      try {
+        await provider.remove(entry.downloadId, true);
+      } catch (err) {
+        this.logger.warn(`failed to remove failed download "${entry.title}" from client: ${(err as Error).message}`);
+      }
+    }
+
+    this.events.publish(
+      EventTypes.DownloadFailed,
+      { mediaType: entry.mediaType, mediaId: entry.mediaId, title: entry.title, downloadId: entry.downloadId, error: reason },
+      { aggType: entry.mediaType as never, aggId: entry.mediaId },
+    );
+  }
+
+  /**
+   * An entry the client's snapshot no longer mentions was cancelled or purged externally —
+   * without this, it would stay at its last-known status forever. Debounced the same way as
+   * download failures (two consecutive misses), and deliberately NOT blocklisted: unlike a
+   * confirmed failure, disappearing from the client is ambiguous — it could be a legitimate
+   * manual removal in the client's own UI.
+   */
+  private async reconcileMissingEntries(clientId: string | null, presentIds: Set<string>): Promise<void> {
+    const clientCond = clientId
+      ? eq(schema.downloadQueueEntry.downloadClientId, clientId)
+      : isNull(schema.downloadQueueEntry.downloadClientId);
+    const rows = await this.db.select().from(schema.downloadQueueEntry).where(clientCond);
+    const now = new Date().toISOString();
+
+    for (const entry of rows) {
+      if (TERMINAL_QUEUE_STATUSES.has(entry.status)) continue;
+      const data = (entry.data ?? {}) as Record<string, unknown>;
+
+      if (!entry.downloadId || presentIds.has(entry.downloadId)) {
+        // Present again (or nothing to match against) — clear any missing-tracking so a
+        // future disappearance starts its debounce window fresh.
+        if (data.missingSince !== undefined) {
+          const { missingSince: _drop, ...rest } = data;
+          await this.db.update(schema.downloadQueueEntry)
+            .set({ data: rest, updatedAt: now })
+            .where(eq(schema.downloadQueueEntry.id, entry.id));
+        }
+        continue;
+      }
+
+      if (data.missingSince === undefined) {
+        await this.db.update(schema.downloadQueueEntry)
+          .set({ data: { ...data, missingSince: now }, updatedAt: now })
+          .where(eq(schema.downloadQueueEntry.id, entry.id));
+        continue;
+      }
+
+      this.db.transaction((tx) => {
+        const { missingSince: _drop, ...rest } = data;
+        tx.update(schema.downloadQueueEntry)
+          .set({ status: "removed", data: rest, updatedAt: now })
+          .where(eq(schema.downloadQueueEntry.id, entry.id))
+          .run();
+        tx.insert(schema.historyEntry).values({
+          id: newEntityId("hist"),
+          mediaType: entry.mediaType,
+          mediaId: entry.mediaId,
+          action: "removed",
+          data: { title: entry.title, downloadId: entry.downloadId },
+          createdAt: now,
+        }).run();
+      });
+    }
   }
 
   /**

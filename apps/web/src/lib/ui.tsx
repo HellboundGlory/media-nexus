@@ -56,8 +56,8 @@ export function statusTone(status: string): "ok" | "warn" | "danger" | "info" | 
   switch (status) {
     case "available": case "succeeded": case "imported": case "ok": return "ok";
     case "downloading": case "processing": case "approved": case "running": case "queued": case "retrying": return "info";
-    case "failed": case "declined": case "error": return "danger";
-    case "pending": case "unknown": return "warn";
+    case "failed": case "download_failed": case "declined": case "error": return "danger";
+    case "pending": case "unknown": case "stalled": return "warn";
     default: return "neutral";
   }
 }
