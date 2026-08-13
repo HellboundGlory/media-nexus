@@ -715,6 +715,154 @@ describe("M-movie: movie auto-grab via RSS sync + import (mock HTTP + real files
   });
 });
 
+describe("D2: media.rssSync is a passive poll (no query), media.missingSearch is an active per-title search", () => {
+  let newznabUrl: string;
+  let sabUrl: string;
+  let dIdxId: string;
+  let dDcId: string;
+  const requests: string[] = [];
+  const servers: import("node:http").Server[] = [];
+
+  beforeAll(async () => {
+    const { mkdtempSync, writeFileSync, mkdirSync } = await import("node:fs");
+    const { createServer } = await import("node:http");
+    const { join: j } = await import("node:path");
+    const { tmpdir: osTmp } = await import("node:os");
+    const base = mkdtempSync(j(osTmp(), "mn-d2-"));
+    const downloadsRoot = j(base, "downloads");
+    const mediaRoot = j(base, "library");
+    mkdirSync(downloadsRoot, { recursive: true });
+    mkdirSync(mediaRoot, { recursive: true });
+
+    // Returns the same canned release regardless of query — the point of this suite is
+    // the REQUEST shape (is `q` present or absent), not what comes back.
+    const releaseTitle = "The.Poll.Movie.2023.1080p.WEB-DL.x264-GROUP";
+    const nz = createServer((req, res) => {
+      requests.push(req.url ?? "");
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        channel: { title: "mock", item: [{
+          title: releaseTitle, guid: "nz-d2-1", link: "https://mock/getnzb/d2.nzb",
+          "newznab:attr": [{ name: "size", value: "3000000000" }, { name: "seeders", value: "10" }],
+        }] },
+      }));
+    });
+    const sab = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      const u = new URL(_req.url ?? "/", "http://x");
+      const mode = u.searchParams.get("mode");
+      if (mode === "addurl") res.end(JSON.stringify({ status: true, nzo_ids: ["NZO-D2"] }));
+      else if (mode === "queue") res.end(JSON.stringify({ queue: { slots: [] } }));
+      else if (mode === "history") res.end(JSON.stringify({ history: { slots: [{ nzo_id: "NZO-D2", filename: releaseTitle, status: "Completed" }] } }));
+      else res.end(JSON.stringify({ status: false }));
+    });
+    await new Promise<void>((r) => nz.listen(0, "127.0.0.1", () => r()));
+    await new Promise<void>((r) => sab.listen(0, "127.0.0.1", () => r()));
+    servers.push(nz, sab);
+    newznabUrl = `http://127.0.0.1:${(nz.address() as any).port}`;
+    sabUrl = `http://127.0.0.1:${(sab.address() as any).port}`;
+
+    const dir = j(downloadsRoot, "complete", releaseTitle);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(j(dir, `${releaseTitle}.mkv`), Buffer.alloc(2048));
+
+    const r = await auth(request(http).put("/api/v1/system/config").send({
+      "paths.downloads": downloadsRoot,
+      "paths.rootFolders": [{ path: mediaRoot }],
+    }));
+    expect(r.status).toBe(200);
+  });
+
+  afterAll(async () => {
+    for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
+    if (dIdxId) await auth(request(http).delete(`/api/v1/indexers/${dIdxId}`)).catch(() => {});
+    if (dDcId) await auth(request(http).delete(`/api/v1/download-clients/${dDcId}`)).catch(() => {});
+  });
+
+  it("media.rssSync sends no title query and still grabs via reverse-matching alone", async () => {
+    const idx = await auth(request(http).post("/api/v1/indexers").send({
+      definitionKey: "generic-newznab", name: "Mock NZB D2", protocol: "usenet",
+      settings: { baseUrl: newznabUrl, apiKey: "k", categories: [2000] },
+    }));
+    expect(idx.status).toBe(201);
+    dIdxId = idx.body.id;
+    const dc = await auth(request(http).post("/api/v1/download-clients").send({
+      name: "Mock SAB D2", implementation: "sabnzbd", kind: "usenet", priority: 1,
+      settings: { host: sabUrl, apiKey: "k", category: "movies" },
+    }));
+    expect(dc.status).toBe(201);
+    dDcId = dc.body.id;
+
+    const movie = await auth(request(http).post("/api/v1/movies").send({
+      title: "The Poll Movie", tmdbId: 999003, releaseDate: "2023-01-01", minimumAvailability: "released",
+    }));
+    expect(movie.status).toBe(201);
+    const mid = movie.body.id;
+
+    requests.length = 0;
+    const rss = await auth(request(http).post("/api/v1/system/commands/media.rssSync"));
+    expect(rss.status).toBe(201);
+
+    // Job dispatch is fire-and-forget (JobsService.dispatch() doesn't await drain()), and
+    // the engine has one worker (JOB_CONCURRENCY=1) shared with every other job in this
+    // suite's growing background traffic — a single dispatch can sit queued behind
+    // whatever currently holds the slot until the 15s scheduler tick. Re-dispatching on
+    // each retry (each call triggers its own drain()) is far more reliable than passively
+    // waiting for one dispatch to eventually get a slot — same principle the existing
+    // acquisition.downloadMonitor retry loop below already relies on.
+    for (let i = 0; i < 30 && requests.length === 0; i++) {
+      await auth(request(http).post("/api/v1/system/commands/media.rssSync"));
+      await new Promise((rq) => setTimeout(rq, 500));
+    }
+
+    // the poll hit the indexer at least once, and none of those requests carried a `q=`
+    // title query — confirming runFeedPoll() drives IndexersService.pollRecent(), not a
+    // per-title search.
+    expect(requests.length).toBeGreaterThan(0);
+    for (const url of requests) {
+      const q = new URL(url, "http://x").searchParams.get("q");
+      expect(q).toBeFalsy();
+    }
+
+    await auth(request(http).post("/api/v1/system/commands/acquisition.downloadMonitor"));
+    let hasFile = false;
+    for (let i = 0; i < 30 && !hasFile; i++) {
+      const m = await auth(request(http).get(`/api/v1/movies/${mid}`));
+      hasFile = m.body.hasFile === true;
+      if (!hasFile) { await auth(request(http).post("/api/v1/system/commands/acquisition.downloadMonitor")); await new Promise((rq) => setTimeout(rq, 150)); }
+    }
+    expect(hasFile).toBe(true);
+  });
+
+  it("media.missingSearch still sends a targeted title query", async () => {
+    const movie = await auth(request(http).post("/api/v1/movies").send({
+      // Earliest-possible release date: wantedMissing() orders ascending by releaseDate
+      // and runMissingSearch() only scans the first `maxMovies` (default 5) — other
+      // wanted-but-never-grabbed movies may exist from earlier blocks in this suite, so
+      // this has to sort first to guarantee it's actually reached.
+      title: "The Search Movie", tmdbId: 999004, releaseDate: "1970-01-01", minimumAvailability: "released",
+    }));
+    expect(movie.status).toBe(201);
+
+    requests.length = 0;
+    const search = await auth(request(http).post("/api/v1/system/commands/media.missingSearch"));
+    expect(search.status).toBe(201);
+
+    // See the media.rssSync test above for why this re-dispatches rather than passively
+    // waiting for one dispatch to eventually get a worker slot.
+    for (let i = 0; i < 30 && requests.length === 0; i++) {
+      await auth(request(http).post("/api/v1/system/commands/media.missingSearch"));
+      await new Promise((rq) => setTimeout(rq, 500));
+    }
+    expect(requests.length).toBeGreaterThan(0);
+    // Don't assume this was the only wanted title in scope for the run — assert that at
+    // least one captured request carried a targeted query for this title, not that it
+    // was specifically the last one.
+    const queried = requests.some((url) => (new URL(url, "http://x").searchParams.get("q") ?? "").includes("The Search Movie"));
+    expect(queried).toBe(true);
+  });
+});
+
 describe("M3: indexer health, Cardigann custom definitions, and statistics", () => {
   let nzUrl: string;
   let cgUrl: string;

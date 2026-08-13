@@ -200,13 +200,33 @@ export class IndexersService {
    *  interactive search can show *why* a release is greyed out, and RssSyncService reuses
    *  these decisions instead of re-evaluating each candidate itself. */
   async search(input: { mediaType: "movie" | "series"; mediaId: string; query?: string; seasons?: number[]; episodes?: number[]; limit?: number }) {
-    const limit = input.limit ?? 20;
     const query = this.buildQuery(input.query, input.seasons, input.episodes);
+    const results = await this.fetchReleases(query, input.limit ?? 20, input.mediaType);
+    const decisions = await this.decisions.evaluateMany(input.mediaType, input.mediaId, results);
+    const releases = results.map((r, i) => ({ ...r, decision: decisions[i] }));
+    return { mediaType: input.mediaType, mediaId: input.mediaId, query, releases };
+  }
+
+  /** Category-only "recent releases" poll across every configured indexer (roadmap D2,
+   *  real RSS sync) — an empty query with no target yet, so no decision is attached here;
+   *  the caller (RssSyncService.runFeedPoll()) resolves a target per release first via
+   *  reverse-matching, then evaluates a decision for just the ones that matched. Neither
+   *  Newznab/Torznab nor Cardigann read `mediaType`/`categories` from search params — an
+   *  indexer's category list is fixed at indexer-setup time — so this doesn't need to know
+   *  movie-vs-series in advance; `parseEpisodeRelease()` gives that signal per release. */
+  async pollRecent(limitPerIndexer = 100): Promise<Release[]> {
+    return this.fetchReleases("", limitPerIndexer);
+  }
+
+  /** Fan out a query over every configured indexer, collecting whatever comes back.
+   *  Shared by search() (query-scoped, decision-attached) and pollRecent() (empty query,
+   *  no decision — the target isn't known yet). */
+  private async fetchReleases(query: string, limit: number, mediaType: "movie" | "series" = "movie"): Promise<Release[]> {
     const configured = await this.providers.configuredIndexers();
     const results: Release[] = [];
     for (const { row, provider } of configured) {
       try {
-        const releases = await provider.search({ mediaType: input.mediaType, query, categories: undefined, limit });
+        const releases = await provider.search({ mediaType, query, categories: undefined, limit });
         for (const r of releases) {
           results.push({ ...r, indexerId: row.id, indexerName: row.name });
         }
@@ -214,9 +234,7 @@ export class IndexersService {
         this.events.publish(EventTypes.IndexerFailed, { indexerId: row.id, error: (err as Error).message }, { aggType: "indexer", aggId: row.id });
       }
     }
-    const decisions = await this.decisions.evaluateMany(input.mediaType, input.mediaId, results);
-    const releases = results.map((r, i) => ({ ...r, decision: decisions[i] }));
-    return { mediaType: input.mediaType, mediaId: input.mediaId, query, releases };
+    return results;
   }
 
   private buildQuery(base: string | undefined, seasons?: number[], episodes?: number[]): string {

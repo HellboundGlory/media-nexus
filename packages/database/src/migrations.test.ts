@@ -190,3 +190,47 @@ describe("migration 0008 — foreign keys", () => {
     sqlite.close();
   });
 });
+
+/**
+ * Roadmap D2 (real RSS sync) acceptance criterion: a database created before this
+ * migration migrates cleanly, and the new seen_release -> indexer FK actually cascades.
+ */
+describe("migration 0009 — seen_release", () => {
+  let tmpDir: string | null = null;
+
+  afterEach(() => {
+    if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = null;
+  });
+
+  it("adds seen_release with a cascading FK to indexer", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "mn-migration-0009-test-"));
+    migrationsFolderBefore("0009_seen_release", tmpDir);
+
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+    const db = drizzle(sqlite);
+    migrate(db, { migrationsFolder: tmpDir });
+
+    const now = new Date().toISOString();
+    sqlite.prepare(
+      "INSERT INTO indexer (id,definition_key,name,protocol,enabled,implementation,settings,priority,status,tags,created_at,updated_at) VALUES ('idx1','newznab','Test','usenet',1,'newznab','{}',25,'ok','[]',?,?)",
+    ).run(now, now);
+
+    // Now apply the real, full migration chain (including 0009) on top.
+    migrate(db, { migrationsFolder: MIGRATIONS_DIR });
+
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM indexer").get()).toEqual({ c: 1 });
+
+    sqlite.prepare(
+      "INSERT INTO seen_release (id,indexer_id,guid,first_seen_at) VALUES ('sr1','idx1','guid-1',?)",
+    ).run(now);
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM seen_release").get()).toEqual({ c: 1 });
+
+    // Cascade: deleting the indexer deletes its seen_release rows.
+    sqlite.prepare("DELETE FROM indexer WHERE id='idx1'").run();
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM seen_release").get()).toEqual({ c: 0 });
+
+    sqlite.close();
+  });
+});

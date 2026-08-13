@@ -31,7 +31,8 @@ export class JobHandlers implements OnModuleInit {
     this.jobs.register("system.healthCheck", (ctx) => this.healthCheck(ctx));
     this.jobs.register("discovery.indexerRefresh", () => this.indexerRefresh());
     this.jobs.register("acquisition.downloadMonitor", (ctx) => this.downloadMonitor(ctx));
-    this.jobs.register("media.rssSync", () => this.rssSync.run());
+    this.jobs.register("media.rssSync", () => this.rssSync.runFeedPoll());
+    this.jobs.register("media.missingSearch", () => this.rssSync.runMissingSearch());
     this.jobs.register("media.availabilityRefresh", () => this.mediaServers.refreshAll());
     this.jobs.register("media.metadataRefresh", () => this.metadata.refreshMissing(5));
     this.jobs.register("library.scan", () => this.libraryScan.scanAll());

@@ -24,7 +24,13 @@ import { SeriesService } from "../src/series/series.service";
 import { ConfigService } from "../src/system/config.service";
 import { EventsService } from "../src/events/events.service";
 import type { IndexersService } from "../src/indexers/indexers.service";
+import type { DecisionService } from "../src/decision/decision.service";
 import type { TmdbProvider } from "@medianexus/integrations";
+
+// runMissingSearch() (unlike runFeedPoll()) never calls DecisionService itself — it reuses
+// decisions IndexersService.search() already attached, exactly like the stubbed indexers
+// below already do — so an empty stub satisfies the constructor without needing real logic.
+const decisionsStub = {} as unknown as DecisionService;
 
 const dir = mkdtempSync(join(tmpdir(), "mn-movie-auto-"));
 const handles: { close: () => void }[] = [];
@@ -125,9 +131,9 @@ describe("RssSyncService — movie pass", () => {
     const grabbed: string[] = [];
     const indexers = stubIndexers([release()], grabbed);
     const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()));
+    const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
-    const result = await rss.run({ maxMovies: 5 });
+    const result = await rss.runMissingSearch({ maxMovies: 5 });
     expect(result.grabbedMovies).toBe(1);
     expect(grabbed).toEqual(["r1"]);
   });
@@ -136,9 +142,9 @@ describe("RssSyncService — movie pass", () => {
     const grabbed: string[] = [];
     const indexers = stubIndexers([release({ title: "Interstellar.2015.720p.WEB-DL" })], grabbed);
     const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()));
+    const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
-    const result = await rss.run({ maxMovies: 5 });
+    const result = await rss.runMissingSearch({ maxMovies: 5 });
     expect(result.grabbedMovies).toBe(1);
   });
 
@@ -146,9 +152,9 @@ describe("RssSyncService — movie pass", () => {
     const grabbed: string[] = [];
     const indexers = stubIndexers([release({ title: "Interstellar.2020.720p.WEB-DL" })], grabbed);
     const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()));
+    const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
-    const result = await rss.run({ maxMovies: 5 });
+    const result = await rss.runMissingSearch({ maxMovies: 5 });
     expect(result.grabbedMovies).toBe(0);
     expect(grabbed).toEqual([]);
   });
@@ -157,9 +163,9 @@ describe("RssSyncService — movie pass", () => {
     const grabbed: string[] = [];
     const indexers = stubIndexers([release({ title: "Some.Other.Movie.2014.1080p.WEB-DL" })], grabbed);
     const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()));
+    const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
-    const result = await rss.run({ maxMovies: 5 });
+    const result = await rss.runMissingSearch({ maxMovies: 5 });
     expect(result.grabbedMovies).toBe(0);
     expect(grabbed).toEqual([]);
   });
@@ -191,9 +197,9 @@ describe("RssSyncService — generalized active-queue / recently-grabbed dedupe 
     const grabbed: string[] = [];
     const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
     const seriesStub = { wantedMissing: async () => [] } as unknown as SeriesService;
-    const rss = new RssSyncService(db, stubIndexers(grabbed), seriesStub, movies, new EventsService(new EventBus()));
+    const rss = new RssSyncService(db, stubIndexers(grabbed), seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
-    const result = await rss.run({ maxMovies: 5 });
+    const result = await rss.runMissingSearch({ maxMovies: 5 });
     expect(result.grabbedMovies).toBe(0);
     expect(grabbed).toEqual([]);
   });
@@ -208,9 +214,9 @@ describe("RssSyncService — generalized active-queue / recently-grabbed dedupe 
     const grabbed: string[] = [];
     const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
     const seriesStub = { wantedMissing: async () => [] } as unknown as SeriesService;
-    const rss = new RssSyncService(db, stubIndexers(grabbed), seriesStub, movies, new EventsService(new EventBus()));
+    const rss = new RssSyncService(db, stubIndexers(grabbed), seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
-    const result = await rss.run({ maxMovies: 5 });
+    const result = await rss.runMissingSearch({ maxMovies: 5 });
     expect(result.grabbedMovies).toBe(0);
     expect(grabbed).toEqual([]);
   });

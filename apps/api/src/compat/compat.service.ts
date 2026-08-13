@@ -131,7 +131,7 @@ export class CompatService {
         } satisfies CompatEpisode));
       },
       runCommand: async (name, _body) => {
-        if (name === "SeriesSearch" || name === "MissingEpisodeSearch") await this.jobs.dispatch({ jobKey: "media.rssSync", trigger: "manual" });
+        if (name === "SeriesSearch" || name === "MissingEpisodeSearch") await this.jobs.dispatch({ jobKey: "media.missingSearch", trigger: "manual" });
         else if (name === "RefreshSeries" || name === "RssSync") await this.jobs.dispatch({ jobKey: "discovery.indexerRefresh", trigger: "manual" });
         return { id: `cmd_${Date.now()}`, name };
       },
@@ -170,7 +170,7 @@ export class CompatService {
       removeMovie: async (id) => { await this.movies.remove(id); },
       qualityProfiles: async () => (await this.db.select().from(schema.qualityProfile)).map(toCompatQualityProfile),
       runCommand: async (name, _body) => {
-        if (name === "MoviesSearch" || name.startsWith("MovieSearch")) await this.jobs.dispatch({ jobKey: "media.rssSync", trigger: "manual" });
+        if (name === "MoviesSearch" || name.startsWith("MovieSearch")) await this.jobs.dispatch({ jobKey: "media.missingSearch", trigger: "manual" });
         else if (name === "RefreshMovie") await this.jobs.dispatch({ jobKey: "discovery.indexerRefresh", trigger: "manual" });
         return { id: `cmd_${Date.now()}`, name };
       },

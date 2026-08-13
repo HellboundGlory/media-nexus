@@ -223,9 +223,10 @@ describe("P0.4/P0.3 — RssSyncService grabs the best *approved* candidate, not 
     // go through the same select().from().where().limit() chain, so one stub covers both.
     const dbStub = { select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) } as never;
     const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
-    const rss = new RssSyncService(dbStub, indexers, series, movies, events);
+    const decisionsStub = {} as unknown as DecisionService;
+    const rss = new RssSyncService(dbStub, indexers, series, movies, events, decisionsStub);
 
-    const result = await rss.run({ maxSeries: 5, perSeries: 1 });
+    const result = await rss.runMissingSearch({ maxSeries: 5, perSeries: 1 });
 
     expect(result.grabbed).toBe(1);
     expect(grabbed).toEqual(["r2"]); // not r1, which is blocklisted

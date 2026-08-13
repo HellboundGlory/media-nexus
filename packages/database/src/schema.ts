@@ -195,6 +195,22 @@ export const indexer = sqliteTable("indexer", {
   updatedAt: iso("updated_at"),
 });
 
+// Seen-release cache (roadmap D2, real RSS sync): a category-only "recent releases" poll
+// against an indexer returns a heavily-overlapping set on every tick (feeds have a rolling
+// window; polls run every few minutes). This is what lets a poll skip re-parsing/re-matching
+// releases it already evaluated, independent of whether a release ever matched anything —
+// a separate concern from download_queue_entry/history_entry's "don't re-grab this title"
+// dedupe. Pruned inline by the poll itself; no separate housekeeping job.
+export const seenRelease = sqliteTable("seen_release", {
+  id: text("id").primaryKey(),
+  indexerId: text("indexer_id").notNull().references(() => indexer.id, { onDelete: "cascade" }),
+  guid: text("guid").notNull(), // Release.id — provider-assigned stable id
+  firstSeenAt: iso("first_seen_at"),
+}, (t) => [
+  uniqueIndex("seen_release_indexer_guid_idx").on(t.indexerId, t.guid),
+  index("seen_release_first_seen_idx").on(t.firstSeenAt),
+]);
+
 export const downloadClient = sqliteTable("download_client", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -332,6 +348,7 @@ export const schema = {
   mediaFile,
   indexerDefinition,
   indexer,
+  seenRelease,
   downloadClient,
   downloadQueueEntry,
   historyEntry,

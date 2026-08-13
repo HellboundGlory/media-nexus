@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, eq, lt, or, sql } from "drizzle-orm";
 import { schema } from "@medianexus/database";
+import { newEntityId } from "@medianexus/shared";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import {
@@ -11,17 +12,33 @@ import type { Release } from "@medianexus/domain";
 import { IndexersService } from "../indexers/indexers.service";
 import { SeriesService } from "../series/series.service";
 import { MoviesService, type WantedMovie } from "../movies/movies.service";
+import { DecisionService } from "../decision/decision.service";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 
 /**
- * RSS sync: for monitored movies and episodes that are missing, search configured
- * indexers and auto-grab the best matching release — the "new title appears and gets
- * downloaded automatically" behavior. One job (`media.rssSync`), one service, for both
- * media types (roadmap C1 extended this from series-only to also cover movies — the job
- * was always registered under a media-neutral name and `compat.service.ts` already
- * dispatched it for Radarr-compat movie-search commands, which were a silent no-op until
- * now). Bounded per run, duplicate-safe.
+ * Two related but distinct mechanisms, both against monitored movies/episodes that are
+ * missing (roadmap D2, real RSS sync):
+ *
+ * - `runFeedPoll()` (job `media.rssSync`, frequent — every ~10 min) — the real thing: one
+ *   category-only "recent releases" pull per configured indexer, no per-title queries,
+ *   reverse-matched against the whole wanted/missing list, deduped against a seen-release
+ *   cache so the same rolling-window overlap isn't reprocessed every tick.
+ * - `runMissingSearch()` (job `media.missingSearch`, infrequent — daily) — the previous
+ *   implementation of this file, unchanged in logic, kept as a safety-net active sweep for
+ *   whatever the passive poll hasn't caught (a title added after its release already
+ *   scrolled off the RSS window, an indexer that was down when a release appeared).
+ *
+ * Before this split, both jobs ran under one key (`media.rssSync`) and this file only ever
+ * did the active per-title search — "closer to Sonarr's MissingEpisodeSearchService than to
+ * RssSyncService," in the gap report's own words. Running a cheap feed poll and an expensive
+ * per-title search on the same frequent schedule wouldn't have reduced indexer load at all;
+ * splitting them onto different cadences is what actually does, matching upstream's own
+ * separation (`FetchAndParseRssService.cs`/`RssSyncService.cs` vs
+ * `MissingEpisodeSearchService.cs`).
+ *
+ * Both entry points share the active-queue/recently-grabbed dedupe and the grab-and-emit
+ * pattern, so they stay one service rather than splitting into two.
  */
 @Injectable()
 export class RssSyncService {
@@ -33,9 +50,134 @@ export class RssSyncService {
     private readonly series: SeriesService,
     private readonly movies: MoviesService,
     private readonly events: EventsService,
+    private readonly decisions: DecisionService,
   ) {}
 
-  async run(opts: { maxSeries?: number; perSeries?: number; maxMovies?: number } = {}): Promise<{
+  // ---------- real RSS sync: passive feed poll ----------
+
+  async runFeedPoll(opts: { limitPerIndexer?: number; maxGrabs?: number } = {}): Promise<{
+    polled: number; unseen: number; matched: number; grabbed: number; skipped: number;
+  }> {
+    await this.pruneSeenReleases();
+    const releases = await this.indexers.pollRecent(opts.limitPerIndexer ?? 100);
+    const unseen = await this.filterAndMarkSeen(releases);
+
+    // Candidate enumeration MUST go through wantedMissing() — the load-bearing definition
+    // of "wanted" (monitored, missing, minimum-availability gate for movies). The decision
+    // engine has no monitored/missing check of its own (only upgradeSpecification, a
+    // quality comparison), so reverse-matching against anything broader than this would let
+    // an unmonitored title match and auto-grab.
+    const movieCandidates = await this.movies.wantedMissing(5000);
+    const wantedEpisodes = await this.series.wantedMissing(5000);
+    const seriesTitles = new Map<string, string>();
+    for (const ep of wantedEpisodes) if (!seriesTitles.has(ep.seriesId)) seriesTitles.set(ep.seriesId, ep.seriesTitle);
+
+    // Group matches by target: an uncapped poll can return several encodes of the same
+    // release across indexers in one tick — grabbing raw feed order would grab whichever
+    // appeared first, not the best. pickBest() per group, same as the per-title path does
+    // for its own search results.
+    const byTarget = new Map<string, { mediaType: "movie" | "series"; mediaId: string; decision: Awaited<ReturnType<DecisionService["evaluate"]>> }[]>();
+    for (const release of unseen) {
+      const match = this.matchRelease(release, movieCandidates, seriesTitles, wantedEpisodes);
+      if (!match) continue;
+      const decision = await this.decisions.evaluate(match.mediaType, match.mediaId, release);
+      const key = `${match.mediaType}:${match.mediaId}`;
+      const bucket = byTarget.get(key) ?? [];
+      bucket.push({ ...match, decision });
+      byTarget.set(key, bucket);
+    }
+
+    let grabbed = 0;
+    let skipped = 0;
+    const maxGrabs = opts.maxGrabs ?? 20;
+    // Sequential, not Promise.all: hasActiveQueue() must see the effect of a grab earlier
+    // in the same tick, same as runMovies()/runSeries() below.
+    for (const [, group] of byTarget) {
+      if (grabbed >= maxGrabs) { skipped += group.length; continue; }
+      const { mediaType, mediaId } = group[0];
+      if (await this.hasActiveQueue(mediaType, mediaId)) { skipped += group.length; continue; }
+      if (await this.grabbedRecently(mediaType, mediaId)) { skipped += group.length; continue; }
+      const best = pickBest(group.map((g) => g.decision));
+      if (!best) { skipped += group.length; continue; }
+      try {
+        await this.indexers.grab({ mediaType, mediaId, releaseId: best.release.id, indexerId: best.release.indexerId, release: best.release });
+        grabbed++;
+      } catch (err) {
+        this.logger.warn(`auto-grab (feed poll) failed for ${mediaType}:${mediaId}: ${(err as Error).message}`);
+        this.events.publish(EventTypes.DownloadClientFailed, { mediaId, error: (err as Error).message });
+        skipped++;
+      }
+    }
+
+    const result = { polled: releases.length, unseen: unseen.length, matched: byTarget.size, grabbed, skipped };
+    this.logger.log(`rssFeedPoll: polled=${result.polled} unseen=${result.unseen} matched=${result.matched} grabbed=${result.grabbed} skipped=${result.skipped}`);
+    return result;
+  }
+
+  /** Title/year fuzzy match only — which (mediaType, mediaId) does this release belong to,
+   *  if any. Deliberately does NOT resolve a full ReleaseTarget (episode narrowing, season
+   *  packs): DecisionService.evaluate() already does that internally via
+   *  MediaRepository.resolveTarget(), so doing it again here would just repeat the work.
+   *  For an episode-shaped release, the series title must fuzzy-match exactly one wanted
+   *  series AND the specific season/episode(s) the release names must actually be among
+   *  that series' wanted (missing+monitored) episodes — matching on series title alone
+   *  would let a release for an already-complete season match a series that merely has
+   *  *some* other wanted episode. Ambiguous matches (0 or 2+ candidates) return null —
+   *  skip rather than risk grabbing into the wrong title. */
+  private matchRelease(
+    release: Release,
+    movieCandidates: WantedMovie[],
+    seriesTitles: Map<string, string>,
+    wantedEpisodes: Awaited<ReturnType<SeriesService["wantedMissing"]>>,
+  ): { mediaType: "movie" | "series"; mediaId: string } | null {
+    const parsed = parseEpisodeRelease(release.title);
+    if (parsed.season !== undefined) {
+      const hits = [...seriesTitles.entries()].filter(([, title]) => titleMatches(parsed.seriesTitle, title));
+      if (hits.length !== 1) return null;
+      const [seriesId] = hits[0];
+      const inSeason = wantedEpisodes.filter((e) => e.seriesId === seriesId && e.seasonNumber === parsed.season);
+      if (inSeason.length === 0) return null;
+      if (!parsed.isSeasonPack && parsed.episodes.length > 0 && !inSeason.some((e) => parsed.episodes.includes(e.episodeNumber))) return null;
+      return { mediaType: "series", mediaId: seriesId };
+    }
+    const hits = movieCandidates.filter((m) => this.matchesMovie(release, m.title, movieYear(m)));
+    return hits.length === 1 ? { mediaType: "movie", mediaId: hits[0].id } : null;
+  }
+
+  private async pruneSeenReleases(): Promise<void> {
+    const cutoff = new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString();
+    await this.db.delete(schema.seenRelease).where(lt(schema.seenRelease.firstSeenAt, cutoff));
+  }
+
+  /** Filters a poll's releases to ones not already recorded as seen for their indexer, and
+   *  records ALL of them — matched or not — as seen. Separate concern from
+   *  hasActiveQueue/grabbedRecently, which guard re-grabbing a *title*; this guards
+   *  re-processing the same *feed entry* on the next tick, given a rolling-window feed
+   *  returns heavy overlap between consecutive polls. Not transaction-wrapped: this is a
+   *  best-effort cache (onConflictDoNothing, idempotent), not a consistency-critical write
+   *  — a crash partway through just means a few releases get reprocessed next tick, which
+   *  is exactly the kind of thing this cache already has to tolerate. */
+  private async filterAndMarkSeen(releases: Release[]): Promise<Release[]> {
+    if (releases.length === 0) return [];
+    const rows = await this.db.select({ indexerId: schema.seenRelease.indexerId, guid: schema.seenRelease.guid }).from(schema.seenRelease);
+    const seen = new Set(rows.map((r) => `${r.indexerId}:${r.guid}`));
+    const unseen: Release[] = [];
+    const now = new Date().toISOString();
+    for (const release of releases) {
+      const key = `${release.indexerId}:${release.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key); // guard duplicate guids within the same poll (e.g. same release under two categories)
+      unseen.push(release);
+      await this.db.insert(schema.seenRelease).values({
+        id: newEntityId("sr"), indexerId: release.indexerId, guid: release.id, firstSeenAt: now,
+      }).onConflictDoNothing();
+    }
+    return unseen;
+  }
+
+  // ---------- missing search: active per-title safety-net sweep ----------
+
+  async runMissingSearch(opts: { maxSeries?: number; perSeries?: number; maxMovies?: number } = {}): Promise<{
     scannedSeries: number; scannedMovies: number;
     grabbed: number; grabbedMovies: number; grabbedSeries: number;
     skipped: number;
@@ -51,13 +193,11 @@ export class RssSyncService {
       skipped: movieResult.skipped + seriesResult.skipped,
     };
     this.logger.log(
-      `rssSync: movies(scanned=${result.scannedMovies} grabbed=${result.grabbedMovies}) ` +
+      `missingSearch: movies(scanned=${result.scannedMovies} grabbed=${result.grabbedMovies}) ` +
       `series(scanned=${result.scannedSeries} grabbed=${result.grabbedSeries}) skipped=${result.skipped}`,
     );
     return result;
   }
-
-  // ---------- movies ----------
 
   private async runMovies(maxMovies: number): Promise<{ scannedMovies: number; grabbed: number; skipped: number }> {
     const wanted = await this.movies.wantedMissing(500);
@@ -78,8 +218,8 @@ export class RssSyncService {
   }
 
   private async tryGrabMovie(movie: WantedMovie): Promise<boolean> {
-    const year = movie.releaseDate ? Number(movie.releaseDate.slice(0, 4)) : undefined;
-    const query = year && !Number.isNaN(year) ? `${movie.title} ${year}` : movie.title;
+    const year = movieYear(movie);
+    const query = year ? `${movie.title} ${year}` : movie.title;
     const res = await this.indexers.search({ mediaType: "movie", mediaId: movie.id, query, limit: 50 });
     if (res.releases.length === 0) return false;
 
@@ -105,8 +245,6 @@ export class RssSyncService {
     if (year !== undefined && m.year !== undefined && Math.abs(m.year - year) > 1) return false;
     return titleMatches(m.seriesTitle, title);
   }
-
-  // ---------- series ----------
 
   private async runSeries(maxSeries: number, perSeries: number): Promise<{ scannedSeries: number; grabbed: number; skipped: number }> {
     const wanted = await this.series.wantedMissing(500);
@@ -221,4 +359,9 @@ export class RssSyncService {
     }
     return false;
   }
+}
+
+function movieYear(movie: WantedMovie): number | undefined {
+  const year = movie.releaseDate ? Number(movie.releaseDate.slice(0, 4)) : undefined;
+  return year && !Number.isNaN(year) ? year : undefined;
 }
