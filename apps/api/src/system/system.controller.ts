@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
-import { Body, Controller, Get, Put } from "@nestjs/common";
+import { Body, Controller, Get, Put, Query } from "@nestjs/common";
 import { ApiBody, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import { ApiError, runtimeSettingsSchema } from "@medianexus/shared";
 import { UseGuards } from "@nestjs/common";
+import { validateNamingTemplate, namingPreview as buildNamingPreview } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { redactDeep } from "../common/redact";
 import { AdminGuard } from "../common/admin.guard";
 import { SystemStatusService } from "./system-status.service";
 import { ConfigService } from "./config.service";
 
-// eslint-disable-next-line no-useless-assignment  -- referenced only inside a NestJS decorator; ESLint 10 doesn't count decorator usage
 const upsertSchema = z.record(z.string(), z.unknown());
 
 @ApiTags("system")
@@ -44,6 +44,25 @@ export class SystemController {
     if (unknownKeys.length > 0) {
       throw new ApiError({ code: "VALIDATION_ERROR", message: `Unknown setting keys: ${unknownKeys.join(", ")}` });
     }
+    const naming = body["media.naming"] as { movies?: unknown; episodes?: unknown } | undefined;
+    if (naming) {
+      if (typeof naming.movies === "string") {
+        const result = validateNamingTemplate("movie", naming.movies);
+        if (!result.valid) throw new ApiError({ code: "VALIDATION_ERROR", message: `media.naming.movies: ${result.error}` });
+      }
+      if (typeof naming.episodes === "string") {
+        const result = validateNamingTemplate("episode", naming.episodes);
+        if (!result.valid) throw new ApiError({ code: "VALIDATION_ERROR", message: `media.naming.episodes: ${result.error}` });
+      }
+    }
     return this.configSvc.upsert(body as never);
+  }
+
+  @Get("naming/preview")
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "Preview sample filenames for the given (or currently saved) naming templates" })
+  async namingPreview(@Query("movieTemplate") movieTemplate?: string, @Query("episodeTemplate") episodeTemplate?: string) {
+    const cfg = await this.configSvc.get();
+    return buildNamingPreview(movieTemplate ?? cfg["media.naming"].movies, episodeTemplate ?? cfg["media.naming"].episodes);
   }
 }

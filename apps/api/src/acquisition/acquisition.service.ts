@@ -15,15 +15,16 @@ import { ProvidersService, type ConfiguredClient } from "../providers/demo.provi
 import { LocalStorageProvider, findLargestVideo, findAllVideos } from "@medianexus/integrations";
 import type { ClientQueueItem, DownloadClientContract } from "@medianexus/integrations";
 import {
-  parseEpisodeRelease, episodeQueryTag, episodeTarget, compareQuality,
+  parseEpisodeRelease, episodeTarget, compareQuality,
   decideImportFile, type KnownEpisode, type ImportRejection, type Quality,
 } from "@medianexus/domain";
 import { MediaRepository } from "../media/media.repository";
 import { ensureAvailabilitySync, getQualityProfile, type Tx } from "../media/library.helpers";
-import { movieFolderName, seriesFolderName } from "../media/naming.helpers";
+import { movieFolderName, seriesFolderName, movieFileName, episodeFileName } from "../media/naming.helpers";
 import { BlocklistService } from "../blocklist/blocklist.service";
 import { RootFoldersService } from "../root-folders/root-folders.service";
 import { RemotePathMappingsService } from "../remote-path-mappings/remote-path-mappings.service";
+import { RecycleBinService } from "../media/recycle-bin.service";
 
 /**
  * Acquisition: drives download clients, mirrors their queues into download_queue_entry,
@@ -87,6 +88,7 @@ export class AcquisitionService {
     private readonly blocklist: BlocklistService,
     private readonly rootFolders: RootFoldersService,
     private readonly remotePathMappings: RemotePathMappingsService,
+    private readonly recycleBin: RecycleBinService,
   ) {}
 
   /** Poll every configured download client and import anything completed. */
@@ -459,17 +461,18 @@ export class AcquisitionService {
 
     const root = await this.resolveRoot(movie[0].rootFolderPath, resolve(process.cwd(), "data", "media", "movies"));
     await this.assertSufficientFreeSpace(root, source.size, cfg);
+    const quality = spQuality(entry);
     const folderName = movieFolderName(movie[0].title, movie[0].releaseDate);
     const targetDir = join(root, folderName);
     await this.storage.ensureDir(targetDir);
-    const targetFile = join(targetDir, `${folderName}${extname(source.path)}`);
+    const fileName = movieFileName(cfg, movie[0].title, movie[0].releaseDate, quality);
+    const targetFile = join(targetDir, `${fileName}${extname(source.path)}`);
     const hardlinked = await this.storage.hardlink(source.path, targetFile);
     if (!existsSync(targetFile)) await this.storage.copy(source.path, targetFile);
     const size = statSync(targetFile).size;
 
     const now = new Date().toISOString();
     const mediaFileId = newEntityId("mf");
-    const quality = spQuality(entry);
     const relativePath = relative(root, targetFile);
 
     this.db.transaction((tx) => {
@@ -518,6 +521,7 @@ export class AcquisitionService {
 
     const seasonEpisodes = await this.media.episodesInSeason(series[0].id, match.season);
     const epNumberById = new Map(seasonEpisodes.map((e) => [e.id, e.episodeNumber]));
+    const epTitleById = new Map(seasonEpisodes.map((e) => [e.id, e.title]));
     const target = episodeTarget(series[0].id, match.season, seasonEpisodes, match.isSeasonPack);
     const existing = await this.media.existingFiles(target);
     const bestExistingByEpisode = new Map<string, { quality: Quality }>();
@@ -557,7 +561,8 @@ export class AcquisitionService {
       }
       try {
         const io = await this.hardlinkSeriesFile(
-          file, decision.episodeIds, epNumberById, targetDir, root, match.season, safeSeries, fileIndex++,
+          file, decision.episodeIds, epNumberById, epTitleById, targetDir, root, match.season,
+          safeSeries, series[0].title, releaseQuality, cfg, fileIndex++,
         );
         appliedIO.push(io);
       } catch (err) {
@@ -573,9 +578,9 @@ export class AcquisitionService {
 
     // Upgrade-replace: an old file is only removed once every episode it covered has a
     // newly-imported file — an old multi-episode file where only some episodes were
-    // superseded this round is left alone rather than partially invalidated. No recycle
-    // bin (gap report B7, file organiser, still open) — the superseded file is deleted
-    // outright, not moved aside.
+    // superseded this round is left alone rather than partially invalidated. The
+    // superseded file goes through the recycle bin (gap report B7) rather than an outright
+    // delete, when one is configured.
     const newlyCovered = new Set(appliedIO.flatMap((f) => f.episodeIds));
     const toDeleteOld = existing.filter((f) => f.episodeIds.length > 0 && f.episodeIds.every((id) => newlyCovered.has(id)));
 
@@ -611,7 +616,9 @@ export class AcquisitionService {
     // which is recoverable (a later scan/cleanup), unlike deleting the file before the DB
     // change is durable, which would be silent data loss with no compensating record.
     for (const f of toDeleteOld) {
-      await this.storage.delete(join(root, f.relativePath)).catch(() => {});
+      await this.recycleBin.dispose(join(root, f.relativePath)).catch((err) => {
+        this.logger.warn(`Failed to dispose of superseded file ${f.relativePath}: ${(err as Error).message}`);
+      });
     }
 
     const first = imported[0];
@@ -628,16 +635,23 @@ export class AcquisitionService {
     file: { path: string; size: number },
     episodeIds: string[],
     epNumberById: Map<string, number>,
+    epTitleById: Map<string, string>,
     targetDir: string,
     root: string,
     season: number,
     safeSeries: string,
+    rawSeriesTitle: string,
+    quality: Quality,
+    cfg: RuntimeSettings,
     fileIndex: number,
   ): Promise<{ mediaFileId: string; path: string; relativePath: string; size: number; hardlinked: boolean; episodeIds: string[] }> {
     const baseName = episodeIds.length > 0
-      ? `${safeSeries} - ${episodeIds.map((id) => episodeQueryTag(season, epNumberById.get(id) ?? 0)).join("-")}`
+      ? episodeFileName(cfg, rawSeriesTitle, season, episodeIds.map((id) => ({
+          number: epNumberById.get(id) ?? 0, title: epTitleById.get(id) ?? "",
+        })), quality)
       // Unmatched file inside a pack (couldn't tell which episode it is) — disambiguate
       // with the original filename rather than colliding with siblings on a shared name.
+      // No episode identity to build a template from, so this keeps its ad hoc naming.
       : `${safeSeries} - S${pad2(season)} - ${fileIndex}-${baseNameOf(file.path).replace(extname(file.path), "")}`;
     const targetFile = join(targetDir, `${baseName}${extname(file.path)}`);
     const hardlinked = await this.storage.hardlink(file.path, targetFile);

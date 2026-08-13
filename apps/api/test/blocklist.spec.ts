@@ -22,6 +22,7 @@ import { EventsService } from "../src/events/events.service";
 import { BlocklistService } from "../src/blocklist/blocklist.service";
 import { RootFoldersService } from "../src/root-folders/root-folders.service";
 import { RemotePathMappingsService } from "../src/remote-path-mappings/remote-path-mappings.service";
+import { RecycleBinService } from "../src/media/recycle-bin.service";
 import type { DecisionService } from "../src/decision/decision.service";
 import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
 import type { SeriesService } from "../src/series/series.service";
@@ -128,7 +129,7 @@ describe("P0.4 — an exhausted import failure blocklists the release", () => {
     const blocklist = new BlocklistService(db);
     const service = new AcquisitionService(
       db, config, events, providers, new MediaRepository(db), blocklist,
-      rootFolders, new RemotePathMappingsService(db),
+      rootFolders, new RemotePathMappingsService(db), new RecycleBinService(config),
     );
     const configured: ConfiguredClient = { row: null, provider: client };
 

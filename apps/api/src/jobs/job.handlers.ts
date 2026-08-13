@@ -12,6 +12,7 @@ import { IndexersService } from "../indexers/indexers.service";
 import { MediaServersService } from "../media-servers/media-servers.service";
 import { MetadataService } from "../metadata/metadata.service";
 import { LibraryScanService } from "../library-scan/library-scan.service";
+import { RecycleBinService } from "../media/recycle-bin.service";
 
 /** Registration of the built-in job handlers (kept small; more land per milestone). */
 @Injectable()
@@ -25,6 +26,7 @@ export class JobHandlers implements OnModuleInit {
     private readonly mediaServers: MediaServersService,
     private readonly metadata: MetadataService,
     private readonly libraryScan: LibraryScanService,
+    private readonly recycleBin: RecycleBinService,
   ) {}
 
   onModuleInit(): void {
@@ -36,6 +38,7 @@ export class JobHandlers implements OnModuleInit {
     this.jobs.register("media.availabilityRefresh", () => this.mediaServers.refreshAll());
     this.jobs.register("media.metadataRefresh", () => this.metadata.refreshMissing(5));
     this.jobs.register("library.scan", () => this.libraryScan.scanAll());
+    this.jobs.register("media.recycleBinTrim", () => this.recycleBin.purgeExpired());
   }
 
   private async healthCheck(_ctx: JobContext): Promise<unknown> {

@@ -49,8 +49,8 @@ export const mediaServerConfigSchema = z.object({
 export type MediaServerConfig = z.infer<typeof mediaServerConfigSchema>;
 
 export const namingSchema = z.object({
-  movies: z.string().default("{Movie Title} ({Release Year})"),
-  episodes: z.string().default("{Series Title} - S{season:00}E{episode:00} - {Episode Title}"),
+  movies: z.string().min(1).default("{Movie Title} ({Release Year})"),
+  episodes: z.string().min(1).default("{Series Title} - S{season:00}E{episode:00} - {Episode Title}"),
 });
 
 export const runtimeSettingsSchema = z.object({
@@ -66,6 +66,11 @@ export const runtimeSettingsSchema = z.object({
   // Space When Importing" default. Root folders themselves are a real entity now (the
   // `root_folder` table), not a setting — see RootFoldersService.
   "media.minimumFreeSpaceMb": z.number().int().nonnegative().default(100),
+  // Recycle bin for superseded/deleted media files (roadmap P1, gap report B7). Empty path
+  // means disabled — files are deleted outright, matching pre-B7 behavior. Retention is
+  // enforced by the media.recycleBinTrim job (packages/database/src/seed.ts).
+  "media.recycleBinPath": z.string().default(""),
+  "media.recycleBinRetentionDays": z.number().int().nonnegative().default(7),
   "discovery.flareSolverrBaseUrl": z.string().default(""),
   "notifications.webhooks": z.array(webhookNotificationSchema).default([]),
   "notifications.discord": z.array(discordNotificationSchema).default([]),

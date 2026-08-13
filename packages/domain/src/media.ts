@@ -99,6 +99,7 @@ export interface EpisodeRef {
   id: string;
   seasonNumber: number;
   episodeNumber: number;
+  title: string;
   monitored: boolean;
   hasFile: boolean;
 }

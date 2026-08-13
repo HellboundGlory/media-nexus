@@ -7,11 +7,20 @@
  * already default to, so the two must never drift into two conventions.
  *
  * This is deliberately not the general file-naming system (`media.naming`, gap report B7,
- * roadmap P1) — that's user-configurable templates for the actual media *filename*. This is
- * the fixed folder-per-title convention both import and scan need to agree on regardless.
+ * roadmap P1) — that's user-configurable templates for the actual media *filename*, built
+ * below via `movieFileName`/`episodeFileName`. This file's `movieFolderName`/
+ * `seriesFolderName` remain the fixed folder-per-title convention both import and scan need
+ * to agree on regardless of the user's naming template.
  */
+import type { RuntimeSettings } from "@medianexus/shared";
+import { sanitizeForPath, buildMovieFilename, buildEpisodeFilename, type Quality } from "@medianexus/domain";
+
+/** @deprecated kept for the folder-naming call sites below; use `sanitizeForPath` from
+ *  `@medianexus/domain` directly for new code. Was a Latin-only whitelist strip that
+ *  collapsed any non-Latin title to "" (gap report B7) — now delegates to the
+ *  transliterate-then-strip-illegal-chars implementation. */
 export function sanitizeTitle(title: string): string {
-  return title.replace(/[^A-Za-z0-9 _()[\]-]/g, "").trim();
+  return sanitizeForPath(title);
 }
 
 export function movieFolderName(title: string, releaseDate?: string | null): string {
@@ -22,4 +31,22 @@ export function movieFolderName(title: string, releaseDate?: string | null): str
 
 export function seriesFolderName(title: string): string {
   return sanitizeTitle(title) || "Series";
+}
+
+/** Builds the on-disk movie filename (no extension) from the configured `media.naming`
+ *  template. */
+export function movieFileName(cfg: RuntimeSettings, title: string, releaseDate: string | null | undefined, quality: Quality): string {
+  return buildMovieFilename(cfg["media.naming"].movies, { title, year: releaseDate, quality });
+}
+
+/** Builds the on-disk episode filename (no extension) from the configured `media.naming`
+ *  template. Multi-episode files use Sonarr's "Range" style (S01E01-02). */
+export function episodeFileName(
+  cfg: RuntimeSettings,
+  seriesTitle: string,
+  season: number,
+  episodes: { number: number; title: string }[],
+  quality: Quality,
+): string {
+  return buildEpisodeFilename(cfg["media.naming"].episodes, { seriesTitle, season, episodes, quality });
 }

@@ -21,6 +21,7 @@ import { EventsService } from "../src/events/events.service";
 import { BlocklistService } from "../src/blocklist/blocklist.service";
 import { RootFoldersService } from "../src/root-folders/root-folders.service";
 import { RemotePathMappingsService } from "../src/remote-path-mappings/remote-path-mappings.service";
+import { RecycleBinService } from "../src/media/recycle-bin.service";
 import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
 
 const dir = mkdtempSync(join(tmpdir(), "mn-rootfolders-"));
@@ -173,7 +174,7 @@ describe("AcquisitionService — remote path mapping (roadmap P1, gap report B8)
     } as unknown as ProvidersService;
     const blocklist = new BlocklistService(db);
     const service = new AcquisitionService(
-      db, config, events, providers, new MediaRepository(db), blocklist, rootFolders, remotePathMappings,
+      db, config, events, providers, new MediaRepository(db), blocklist, rootFolders, remotePathMappings, new RecycleBinService(config),
     );
 
     const configured = { row: { id: "dc1" }, provider: client } as unknown as ConfiguredClient;
@@ -222,7 +223,7 @@ describe("AcquisitionService — import-time free-space guard (roadmap P1, gap r
     } as unknown as ProvidersService;
     const blocklist = new BlocklistService(db);
     const service = new AcquisitionService(
-      db, config, events, providers, new MediaRepository(db), blocklist, rootFolders, new RemotePathMappingsService(db),
+      db, config, events, providers, new MediaRepository(db), blocklist, rootFolders, new RemotePathMappingsService(db), new RecycleBinService(config),
     );
 
     const configured = { row: null, provider: client } as unknown as ConfiguredClient;

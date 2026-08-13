@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { Global, Module } from "@nestjs/common";
 import { MediaRepository } from "./media.repository";
+import { RecycleBinService } from "./recycle-bin.service";
 
 /**
  * Global because the media abstraction is a leaf dependency of nearly every other
@@ -8,7 +9,7 @@ import { MediaRepository } from "./media.repository";
  */
 @Global()
 @Module({
-  providers: [MediaRepository],
-  exports: [MediaRepository],
+  providers: [MediaRepository, RecycleBinService],
+  exports: [MediaRepository, RecycleBinService],
 })
 export class MediaModule {}

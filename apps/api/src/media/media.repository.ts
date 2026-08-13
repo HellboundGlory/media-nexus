@@ -84,6 +84,7 @@ export class MediaRepository {
         id: schema.episode.id,
         seasonNumber: schema.season.seasonNumber,
         episodeNumber: schema.episode.episodeNumber,
+        title: schema.episode.title,
         monitored: schema.episode.monitored,
         hasFile: schema.episode.hasFile,
       })
@@ -107,6 +108,7 @@ export class MediaRepository {
         id: schema.episode.id,
         seasonNumber: schema.season.seasonNumber,
         episodeNumber: schema.episode.episodeNumber,
+        title: schema.episode.title,
         monitored: schema.episode.monitored,
         hasFile: schema.episode.hasFile,
       })

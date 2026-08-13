@@ -7,7 +7,7 @@
  * upgrade-vs-existing-file), and approved files replace (not duplicate) a superseded one.
  */
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq, and } from "drizzle-orm";
@@ -22,6 +22,7 @@ import { EventsService } from "../src/events/events.service";
 import { BlocklistService } from "../src/blocklist/blocklist.service";
 import { RootFoldersService } from "../src/root-folders/root-folders.service";
 import { RemotePathMappingsService } from "../src/remote-path-mappings/remote-path-mappings.service";
+import { RecycleBinService } from "../src/media/recycle-bin.service";
 import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
 
 const dir = mkdtempSync(join(tmpdir(), "mn-import-"));
@@ -45,6 +46,7 @@ interface Harness {
   configured: ConfiguredClient;
   downloadsRoot: string;
   mediaRoot: string;
+  config: ConfigService;
 }
 
 let counter = 0;
@@ -70,9 +72,9 @@ async function harness(): Promise<Harness> {
   const blocklist = new BlocklistService(handle.db);
   const service = new AcquisitionService(
     handle.db, config, events, providers, new MediaRepository(handle.db), blocklist,
-    rootFolders, new RemotePathMappingsService(handle.db),
+    rootFolders, new RemotePathMappingsService(handle.db), new RecycleBinService(config),
   );
-  return { db: handle.db, service, client, configured: { row: null, provider: client }, downloadsRoot, mediaRoot };
+  return { db: handle.db, service, client, configured: { row: null, provider: client }, downloadsRoot, mediaRoot, config };
 }
 
 /** Stage a multi-file pack directory the way a torrent client would deliver one. */
@@ -260,5 +262,112 @@ describe("P0.5 — upgrade-replace", () => {
     expect(entry.errorMessage).toMatch(/cutoff_already_met/);
     const files = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaId, "s1"));
     expect(files).toHaveLength(1); // still just the old one — nothing replaced it
+  });
+});
+
+async function seedMovie(db: Harness["db"], mediaRoot: string) {
+  const now = new Date().toISOString();
+  await db.insert(schema.movie).values({
+    id: "m1", tmdbId: 1, title: "Mission: Impossible", overview: "", status: "released", releaseDate: "1996-05-22",
+    monitored: true, qualityProfileId: null, rootFolderPath: mediaRoot, minimumAvailability: "announced",
+    genres: [], images: [], tags: [], hasFile: false, addedAt: now, updatedAt: now,
+  });
+}
+
+async function movieQueueEntry(db: Harness["db"], title: string, quality: { source: string; resolution: string; edition: string }) {
+  const now = new Date().toISOString();
+  const row = {
+    id: "q1", mediaType: "movie", mediaId: "m1", downloadClientId: null, downloadId: "d1",
+    title, status: "downloading", progress: 50, size: 2048, remainingTime: null, errorMessage: null,
+    data: { releaseTitle: title, quality } as Record<string, unknown>,
+    addedAt: now, updatedAt: now,
+  };
+  await db.insert(schema.downloadQueueEntry).values(row);
+  return row;
+}
+
+describe("B7 — naming templates honored on import", () => {
+  it("builds the movie filename from the configured media.naming template, sanitizing the title", async () => {
+    const h = await harness();
+    await h.config.upsert({ "media.naming": { movies: "{Quality Full} - {Movie Title} ({Release Year})", episodes: "{Series Title} - S{season:00}E{episode:00} - {Episode Title}" } });
+    await seedMovie(h.db, h.mediaRoot);
+    const downloadDir = stagePack(h.downloadsRoot, "Mission.Impossible.1996.1080p.BluRay", [{ name: "movie.mkv", size: 4096 }]);
+    await movieQueueEntry(h.db, "Mission.Impossible.1996.1080p.BluRay", { source: "bluray", resolution: "1080p", edition: "" });
+    h.client.items = [{ downloadId: "d1", title: "Mission.Impossible.1996.1080p.BluRay", status: "completed", progress: 100, size: 4096, contentPath: downloadDir }];
+
+    await h.service.syncForClient(h.configured);
+
+    const files = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaType, "movie"));
+    expect(files).toHaveLength(1);
+    // ":" is illegal in a filename — the title is sanitized, not passed through raw.
+    expect(files[0].relativePath).toContain("Bluray 1080p - Mission Impossible (1996).mkv");
+  });
+
+  it("formats a multi-episode file in Range style (S01E01-02) via the configured template", async () => {
+    const h = await harness();
+    await h.config.upsert({ "media.naming": { movies: "{Movie Title} ({Release Year})", episodes: "{Series Title} - S{season:00}E{episode:00} - {Episode Title}" } });
+    await seedSeries(h.db, h.mediaRoot);
+    await h.db.update(schema.episode).set({ title: "Part One" }).where(eq(schema.episode.id, "s2e1"));
+    await h.db.update(schema.episode).set({ title: "Part Two" }).where(eq(schema.episode.id, "s2e2"));
+
+    const downloadDir = stagePack(h.downloadsRoot, "Pack.Show.S02E01E02.1080p.WEB-DL", [{ name: "multi.mkv", size: 3000 }]);
+    await packQueueEntry(h.db, "Pack.Show.S02E01E02.1080p.WEB-DL", { source: "web", resolution: "1080p", edition: "" });
+    h.client.items = [{ downloadId: "d1", title: "Pack.Show.S02E01E02.1080p.WEB-DL", status: "completed", progress: 100, size: 3000, contentPath: downloadDir }];
+
+    await h.service.syncForClient(h.configured);
+
+    const files = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaType, "series"));
+    expect(files).toHaveLength(1);
+    expect(files[0].relativePath).toContain("Pack Show - S02E01-02 - Part One + Part Two.mkv");
+    expect(files[0].episodeIds.sort()).toEqual(["s2e1", "s2e2"]);
+  });
+});
+
+describe("B7 — recycle bin", () => {
+  async function upgradeHarness() {
+    const h = await harness();
+    await seedProfile(h.db, "qp1", [
+      qualityId({ source: "hdtv", resolution: "720p", edition: "" } as never),
+      qualityId({ source: "web", resolution: "1080p", edition: "" } as never),
+    ], qualityId({ source: "web", resolution: "1080p", edition: "" } as never));
+    await seedSeries(h.db, h.mediaRoot, "qp1");
+
+    const now = new Date().toISOString();
+    await h.db.insert(schema.mediaFile).values({
+      id: "mf_old", mediaType: "series", mediaId: "s1", episodeIds: ["s2e1"],
+      relativePath: "Pack Show/Season 2/old.mkv", size: 500,
+      quality: { source: "hdtv", resolution: "720p", edition: "" }, dateAdded: now,
+    });
+    mkdirSync(join(h.mediaRoot, "Pack Show", "Season 2"), { recursive: true });
+    writeFileSync(join(h.mediaRoot, "Pack Show", "Season 2", "old.mkv"), Buffer.alloc(500));
+    await h.db.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, "s2e1"));
+
+    const packDir = stagePack(h.downloadsRoot, "Pack.Show.S02E01.1080p.WEB-DL", [{ name: "Pack.Show.S02E01.1080p.WEB-DL.mkv", size: 2000 }]);
+    await packQueueEntry(h.db, "Pack.Show.S02E01.1080p.WEB-DL", { source: "web", resolution: "1080p", edition: "" });
+    h.client.items = [{ downloadId: "d1", title: "Pack.Show.S02E01.1080p.WEB-DL", status: "completed", progress: 100, size: 2000, contentPath: packDir }];
+    return h;
+  }
+
+  it("deletes the superseded file outright when no recycle bin is configured (default, unchanged behavior)", async () => {
+    const h = await upgradeHarness();
+    const oldPath = join(h.mediaRoot, "Pack Show", "Season 2", "old.mkv");
+
+    await h.service.syncForClient(h.configured);
+
+    expect(existsSync(oldPath)).toBe(false);
+  });
+
+  it("moves the superseded file into the recycle bin instead of deleting it when configured", async () => {
+    const h = await upgradeHarness();
+    const recycleBinPath = join(h.mediaRoot, "..", "recycle-bin");
+    await h.config.upsert({ "media.recycleBinPath": recycleBinPath });
+    const oldPath = join(h.mediaRoot, "Pack Show", "Season 2", "old.mkv");
+
+    await h.service.syncForClient(h.configured);
+
+    expect(existsSync(oldPath)).toBe(false);
+    const recycled = readdirSync(recycleBinPath);
+    expect(recycled).toHaveLength(1);
+    expect(recycled[0]).toMatch(/^\d+-old\.mkv$/);
   });
 });

@@ -9,3 +9,4 @@ export * from "./parser";
 export * from "./episodes";
 export * from "./decision";
 export * from "./import-decision";
+export * from "./naming";

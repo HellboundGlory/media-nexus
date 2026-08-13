@@ -32,6 +32,7 @@ import { EventsService } from "../src/events/events.service";
 import { BlocklistService } from "../src/blocklist/blocklist.service";
 import { RootFoldersService } from "../src/root-folders/root-folders.service";
 import { RemotePathMappingsService } from "../src/remote-path-mappings/remote-path-mappings.service";
+import { RecycleBinService } from "../src/media/recycle-bin.service";
 import { MoviesService } from "../src/movies/movies.service";
 import { SeriesService } from "../src/series/series.service";
 import type { DecisionService } from "../src/decision/decision.service";
@@ -146,7 +147,7 @@ describe("AcquisitionService import-apply is transactional", () => {
     const blocklist = new BlocklistService(db);
     const service = new AcquisitionService(
       db, config, events, providers, new MediaRepository(db), blocklist,
-      new RootFoldersService(db), new RemotePathMappingsService(db),
+      new RootFoldersService(db), new RemotePathMappingsService(db), new RecycleBinService(config),
     );
 
     const item: ClientQueueItem = { downloadId: "d1", title: entry.title, status: "completed", progress: 100, size: 2048, contentPath: folder };

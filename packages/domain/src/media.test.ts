@@ -7,7 +7,7 @@ import {
 } from "./media";
 
 const ep = (over: Partial<EpisodeRef> = {}): EpisodeRef => ({
-  id: "e1", seasonNumber: 1, episodeNumber: 1, monitored: true, hasFile: false, ...over,
+  id: "e1", seasonNumber: 1, episodeNumber: 1, title: "", monitored: true, hasFile: false, ...over,
 });
 
 const movie: MovieMediaItem = {
