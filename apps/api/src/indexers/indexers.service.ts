@@ -17,7 +17,7 @@ import { join, resolve } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { episodeQueryTag } from "@medianexus/domain";
 import { parseCardigannYaml, cardigannSettingsSchema } from "@medianexus/integrations";
-import { BlocklistService } from "../blocklist/blocklist.service";
+import { DecisionService } from "../decision/decision.service";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   memory: memoryIndexerSettingsSchema,
@@ -32,7 +32,7 @@ export class IndexersService {
     private readonly providers: ProvidersService,
     private readonly events: EventsService,
     private readonly config: ConfigService,
-    private readonly blocklist: BlocklistService,
+    private readonly decisions: DecisionService,
   ) {}
 
   async definitions() {
@@ -195,7 +195,10 @@ export class IndexersService {
   }
 
   /** Search all enabled indexers through their providers (real HTTP for newznab/torznab).
-   *  For series, an optional episode target augments the query with an SxxExx tag. */
+   *  For series, an optional episode target augments the query with an SxxExx tag.
+   *  Every release carries the decision engine's verdict (roadmap P0.3, gap report C3) —
+   *  interactive search can show *why* a release is greyed out, and RssSyncService reuses
+   *  these decisions instead of re-evaluating each candidate itself. */
   async search(input: { mediaType: "movie" | "series"; mediaId: string; query?: string; seasons?: number[]; episodes?: number[]; limit?: number }) {
     const limit = input.limit ?? 20;
     const query = this.buildQuery(input.query, input.seasons, input.episodes);
@@ -211,7 +214,9 @@ export class IndexersService {
         this.events.publish(EventTypes.IndexerFailed, { indexerId: row.id, error: (err as Error).message }, { aggType: "indexer", aggId: row.id });
       }
     }
-    return { mediaType: input.mediaType, mediaId: input.mediaId, query, releases: results };
+    const decisions = await this.decisions.evaluateMany(input.mediaType, input.mediaId, results);
+    const releases = results.map((r, i) => ({ ...r, decision: decisions[i] }));
+    return { mediaType: input.mediaType, mediaId: input.mediaId, query, releases };
   }
 
   private buildQuery(base: string | undefined, seasons?: number[], episodes?: number[]): string {
@@ -246,8 +251,15 @@ export class IndexersService {
       if (!release) throw ApiError.notFound("release", input.releaseId);
     }
 
-    if (await this.blocklist.isBlocklisted({ mediaType: input.mediaType, mediaId: input.mediaId, title: release.title, indexerId: release.indexerId })) {
-      throw new ApiError({ code: "CONFLICT", message: `"${release.title}" is blocklisted and won't be grabbed again` });
+    // Re-evaluate at grab time even if the caller already saw a decision from search() —
+    // a manual grab may use a stale client-side result, and RssSyncService always re-checks
+    // here too rather than trusting its own earlier evaluation blindly.
+    const decision = await this.decisions.evaluate(input.mediaType, input.mediaId, release);
+    if (!decision.approved) {
+      throw new ApiError({
+        code: "CONFLICT",
+        message: `"${release.title}" was rejected: ${decision.rejections.map((r) => r.message).join("; ")}`,
+      });
     }
 
     const client = await this.providers.pickDownloadClient(release.protocol as "usenet" | "torrent", input.downloadClientId);

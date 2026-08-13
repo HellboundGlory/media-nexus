@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventBus } from "@medianexus/events";
 import { createDb, schema } from "@medianexus/database";
-import type { Release } from "@medianexus/domain";
+import { evaluate, type Release, type Decision } from "@medianexus/domain";
 import type { ClientQueueItem, DownloadClientContract, HealthResult, AddDownloadInput } from "@medianexus/integrations";
 import { AcquisitionService } from "../src/acquisition/acquisition.service";
 import { RssSyncService } from "../src/acquisition/rss-sync.service";
@@ -20,6 +20,7 @@ import { MediaRepository } from "../src/media/media.repository";
 import { ConfigService } from "../src/system/config.service";
 import { EventsService } from "../src/events/events.service";
 import { BlocklistService } from "../src/blocklist/blocklist.service";
+import type { DecisionService } from "../src/decision/decision.service";
 import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
 import type { SeriesService } from "../src/series/series.service";
 
@@ -141,19 +142,27 @@ describe("P0.4 — an exhausted import failure blocklists the release", () => {
   });
 });
 
-describe("P0.4 — IndexersService.grab() refuses a blocklisted release", () => {
+describe("P0.4/P0.3 — IndexersService.grab() refuses a release the decision engine rejects", () => {
+  // grab()'s own call to DecisionService.evaluate() is stubbed directly here — the engine's
+  // own logic (including its blocklist spec) is covered by packages/domain/src/decision.test.ts
+  // and by the DecisionService integration test below; this checks grab()'s wiring only.
+  function stubDecisions(verdict: (release: Release) => Decision): DecisionService {
+    return { evaluate: async (_mt: string, _mid: string, r: Release) => verdict(r) } as unknown as DecisionService;
+  }
+
   it("throws instead of adding it to a download client", async () => {
     const db = await freshDb();
-    const blocklist = new BlocklistService(db);
-    await blocklist.add({ mediaType: "movie", mediaId: "m1", title: "Bad.Release.1080p.WEB-DL", indexerId: "idx1", reason: "test" });
-
     const events = new EventsService(new EventBus());
     const config = new ConfigService(db);
     let addCalled = false;
     const providers = {
       pickDownloadClient: async () => ({ row: null, provider: { addRelease: async () => { addCalled = true; return { downloadId: "d1" }; } } }),
     } as unknown as ProvidersService;
-    const svc = new IndexersService(db, providers, events, config, blocklist);
+    const decisions = stubDecisions((r) => ({
+      release: r, approved: false, profile: null,
+      rejections: [{ reason: "blocklisted", message: "this release has failed before and is blocklisted" }],
+    }));
+    const svc = new IndexersService(db, providers, events, config, decisions);
 
     await expect(svc.grab({
       mediaType: "movie", mediaId: "m1", releaseId: "r1", indexerId: "idx1",
@@ -162,16 +171,16 @@ describe("P0.4 — IndexersService.grab() refuses a blocklisted release", () => 
     expect(addCalled).toBe(false);
   });
 
-  it("still grabs a release that isn't blocklisted", async () => {
+  it("still grabs a release the engine approves", async () => {
     const db = await freshDb();
-    const blocklist = new BlocklistService(db);
     const events = new EventsService(new EventBus());
     const config = new ConfigService(db);
     let addCalled = false;
     const providers = {
       pickDownloadClient: async () => ({ row: null, provider: { addRelease: async () => { addCalled = true; return { downloadId: "d1" }; } } }),
     } as unknown as ProvidersService;
-    const svc = new IndexersService(db, providers, events, config, blocklist);
+    const decisions = stubDecisions((r) => ({ release: r, approved: true, profile: null, rejections: [] }));
+    const svc = new IndexersService(db, providers, events, config, decisions);
 
     await svc.grab({
       mediaType: "movie", mediaId: "m1", releaseId: "r1", indexerId: "idx1",
@@ -181,23 +190,23 @@ describe("P0.4 — IndexersService.grab() refuses a blocklisted release", () => 
   });
 });
 
-describe("P0.4 — RssSyncService skips a blocklisted candidate in favor of an alternative", () => {
+describe("P0.4/P0.3 — RssSyncService grabs the best *approved* candidate, not just the best quality", () => {
   it("grabs the non-blocklisted candidate when the best-quality one is blocklisted", async () => {
-    const db = await freshDb();
-    const blocklist = new BlocklistService(db);
-    // The higher-quality candidate is blocklisted; without the fix, bestRelease() would
-    // still pick it every time (compareQuality alone doesn't know about the blocklist).
-    await blocklist.add({ mediaType: "series", mediaId: "s1", title: "Show.S02E01.2160p.BluRay", indexerId: "idx1", reason: "test" });
+    // Build decisions the same way DecisionService would, but by hand — this isolates
+    // RssSyncService's own logic (pickBest usage) from DecisionService's context assembly,
+    // which is covered separately by the DecisionService integration test below.
+    const r1 = release({ id: "r1", indexerId: "idx1", title: "Show.S02E01.2160p.BluRay", quality: { source: "bluray", resolution: "2160p", edition: "" } });
+    const r2 = release({ id: "r2", indexerId: "idx1", title: "Show.S02E01.1080p.WEB-DL", quality: { source: "web", resolution: "1080p", edition: "" } });
+    const ctx = { target: { kind: "episode" as const, mediaType: "series" as const, mediaId: "s1", seasonNumber: 2, episodes: [], isSeasonPack: false }, profile: null, existingFiles: [], hasActiveQueueConflict: false, preferredProtocol: "any" as const, isBlocklisted: false };
+    const r1Decision = evaluate(r1, { ...ctx, isBlocklisted: true }); // the higher-quality one is blocklisted
+    const r2Decision = evaluate(r2, ctx);
 
     const events = new EventsService(new EventBus());
     const grabbed: string[] = [];
     const indexers = {
       search: async () => ({
         mediaType: "series", mediaId: "s1", query: "Show S02E01",
-        releases: [
-          release({ id: "r1", indexerId: "idx1", title: "Show.S02E01.2160p.BluRay", quality: { source: "bluray", resolution: "2160p", edition: "" } }),
-          release({ id: "r2", indexerId: "idx1", title: "Show.S02E01.1080p.WEB-DL", quality: { source: "web", resolution: "1080p", edition: "" } }),
-        ],
+        releases: [{ ...r1, decision: r1Decision }, { ...r2, decision: r2Decision }],
       }),
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
@@ -212,7 +221,7 @@ describe("P0.4 — RssSyncService skips a blocklisted candidate in favor of an a
     // RssSyncService only reads the db (active-queue check, recent-grab dedupe) — both
     // go through the same select().from().where().limit() chain, so one stub covers both.
     const dbStub = { select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) } as never;
-    const rss = new RssSyncService(dbStub, indexers, series, events, blocklist);
+    const rss = new RssSyncService(dbStub, indexers, series, events);
 
     const result = await rss.run({ maxSeries: 5, perSeries: 1 });
 

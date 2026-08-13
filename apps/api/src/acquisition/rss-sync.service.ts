@@ -5,14 +5,13 @@ import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import {
-  episodeQueryTag, parseEpisodeRelease, seriesTitleMatches, compareQuality,
+  episodeQueryTag, parseEpisodeRelease, seriesTitleMatches, pickBest,
 } from "@medianexus/domain";
 import type { Release } from "@medianexus/domain";
 import { IndexersService } from "../indexers/indexers.service";
 import { SeriesService } from "../series/series.service";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
-import { BlocklistService } from "../blocklist/blocklist.service";
 
 /**
  * RSS sync (M2): for monitored episodes that are missing, search configured indexers
@@ -28,7 +27,6 @@ export class RssSyncService {
     private readonly indexers: IndexersService,
     private readonly series: SeriesService,
     private readonly events: EventsService,
-    private readonly blocklist: BlocklistService,
   ) {}
 
   async run(opts: { maxSeries?: number; perSeries?: number } = {}): Promise<{ scannedSeries: number; grabbed: number; skipped: number }> {
@@ -73,31 +71,24 @@ export class RssSyncService {
     const res = await this.indexers.search({ mediaType: "series", mediaId: seriesId, query, limit: 50 });
     if (res.releases.length === 0) return false;
 
-    // filter releases whose title actually contains the target episode (SxxExx match)
+    // Filter to releases whose title actually contains the target episode (SxxExx
+    // match), then let the decision engine's verdicts — already attached to each
+    // release by search() — pick the best *approved* candidate. A higher-quality
+    // release that's blocklisted, disallowed by the profile, or not an upgrade over an
+    // existing file loses to a worse-but-approved one, instead of always winning on
+    // raw quality the way the old compareQuality-only bestRelease() did.
     const candidates = res.releases.filter((r) => this.matchesTarget(r, season, episode));
-    const allowed = await this.filterBlocklisted(seriesId, candidates);
-    const best = bestRelease(allowed);
+    const best = pickBest(candidates.map((r) => r.decision));
     if (!best) return false;
 
     try {
-      await this.indexers.grab({ mediaType: "series", mediaId: seriesId, releaseId: best.id, indexerId: best.indexerId, release: best });
+      await this.indexers.grab({ mediaType: "series", mediaId: seriesId, releaseId: best.release.id, indexerId: best.release.indexerId, release: best.release });
       return true;
     } catch (err) {
       this.logger.warn(`auto-grab failed for ${seriesTitle} ${tag}: ${(err as Error).message}`);
       this.events.publish(EventTypes.DownloadClientFailed, { seriesId, error: (err as Error).message });
       return false;
     }
-  }
-
-  /** Drop candidates a previous grab of this exact release already failed on — see
-   *  BlocklistService for the match key and why this only applies to release-level
-   *  failures, not client/indexer outages. */
-  private async filterBlocklisted(seriesId: string, releases: Release[]): Promise<Release[]> {
-    if (releases.length === 0) return releases;
-    const blocked = await Promise.all(releases.map((r) =>
-      this.blocklist.isBlocklisted({ mediaType: "series", mediaId: seriesId, title: r.title, indexerId: r.indexerId }),
-    ));
-    return releases.filter((_, i) => !blocked[i]);
   }
 
   private matchesTarget(r: Release, season: number, episode: number): boolean {
@@ -144,14 +135,4 @@ export class RssSyncService {
     }
     return false;
   }
-}
-
-/** Choose the best release: highest quality, then most seeders. */
-function bestRelease(releases: Release[]): Release | null {
-  if (releases.length === 0) return null;
-  return [...releases].sort((a, b) => {
-    const d = compareQuality(b.quality, a.quality);
-    if (d !== 0) return d;
-    return (b.seeders ?? 0) - (a.seeders ?? 0);
-  })[0];
 }
