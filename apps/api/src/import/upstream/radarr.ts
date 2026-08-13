@@ -5,7 +5,7 @@ import { schema, type Db } from "@medianexus/database";
 import type { Importer, SourceDb, ImportReport } from "../importer.types";
 import { emptyReport } from "../importer.types";
 import { col, str, num, bool, jsonc } from "../rows";
-import { importQualityProfiles, importIndexers, importHistory } from "./common";
+import { importQualityProfiles, importIndexers, importHistory, resolveQualityProfileId } from "./common";
 
 const iso = (n?: number) => new Date(n ?? Date.now()).toISOString();
 
@@ -36,7 +36,7 @@ export const radarrImporter: Importer = {
         status: (str(row, "Status") ?? "unknown").toLowerCase(),
         releaseDate: releaseRaw ? (typeof releaseRaw === "number" ? `${releaseRaw}-01-01` : String(releaseRaw)) : null,
         monitored: bool(row, "Monitored", true),
-        qualityProfileId: num(row, "QualityProfileId") ? `imp_q${num(row, "QualityProfileId")}` : null,
+        qualityProfileId: await resolveQualityProfileId(target, num(row, "QualityProfileId")),
         rootFolderPath: str(row, "Path") ?? "/data/media",
         minimumAvailability: str(row, "MinimumAvailability") ?? "announced",
         genres: jsonc<unknown[]>(row, "Genres", [] as never).map(String),

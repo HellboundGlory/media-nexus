@@ -40,6 +40,23 @@ export async function importQualityProfiles(
   return { count, skipped };
 }
 
+/**
+ * Resolve a source row's numeric QualityProfileId to the derived id actually written by
+ * `importQualityProfiles` above — or `null` if that profile was never imported (a source
+ * row referencing a profile id absent from its own `QualityProfiles` table, or run without
+ * one). Movie/series now declare a real FK to `quality_profile`, so a dangling reference
+ * would otherwise fail the whole row's insert; `getQualityProfile()`
+ * (`apps/api/src/media/library.helpers.ts`) already treats a non-resolving id as "no
+ * profile", so writing `null` here changes nothing about runtime behavior, only makes the
+ * stored value honest.
+ */
+export async function resolveQualityProfileId(target: Db, sourceProfileId: number | null | undefined): Promise<string | null> {
+  if (sourceProfileId == null) return null;
+  const derivedId = `imp_q${sourceProfileId}`;
+  const exists = await target.select({ id: schema.qualityProfile.id }).from(schema.qualityProfile).where(eq(schema.qualityProfile.id, derivedId)).limit(1);
+  return exists[0] ? derivedId : null;
+}
+
 /** Import indexer rows (Prowlarr/Sonarr/Radarr `Indexers`). */
 export async function importIndexers(
   source: SourceDb, target: Db, table = "Indexers", idPrefix = "idx",

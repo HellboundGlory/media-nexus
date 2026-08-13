@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable } from "@nestjs/common";
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
-import { ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
+import { deletePolymorphicRows, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
@@ -79,7 +79,13 @@ export class SeriesService {
 
   async remove(id: string) {
     await this.get(id);
-    await this.db.delete(schema.series).where(eq(schema.series.id, id));
+    // Only the polymorphic tables need a hand-written delete here — season/episode cascade
+    // automatically via their DB-level FK to series (roadmap P0.7) once the series row
+    // itself is deleted.
+    this.db.transaction((tx) => {
+      deletePolymorphicRows(tx, "series", id);
+      tx.delete(schema.series).where(eq(schema.series.id, id)).run();
+    });
     this.events.publish(EventTypes.SeriesRemoved, { seriesId: id }, { aggType: "series", aggId: id });
     return { removed: id };
   }

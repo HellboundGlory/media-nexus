@@ -77,8 +77,8 @@ describe("DecisionService — unresolved target", () => {
 describe("DecisionService — profile-allowed, from a real quality_profile row", () => {
   it("rejects a quality outside the assigned profile's items", async () => {
     const db = await freshDb();
-    await seedMovie(db, { qualityProfileId: "qp1" });
     await seedProfile(db, [qualityId({ source: "web", resolution: "1080p", edition: "" } as never)], qualityId({ source: "web", resolution: "1080p", edition: "" } as never));
+    await seedMovie(db, { qualityProfileId: "qp1" });
     const decisions = decisionService(db);
 
     const d = await decisions.evaluate("movie", "m1", release({ quality: { source: "sd", resolution: "480p", edition: "" } }));
@@ -88,8 +88,8 @@ describe("DecisionService — profile-allowed, from a real quality_profile row",
 
   it("approves a quality the profile allows", async () => {
     const db = await freshDb();
-    await seedMovie(db, { qualityProfileId: "qp1" });
     await seedProfile(db, [qualityId({ source: "web", resolution: "1080p", edition: "" } as never)], qualityId({ source: "web", resolution: "1080p", edition: "" } as never));
+    await seedMovie(db, { qualityProfileId: "qp1" });
     const decisions = decisionService(db);
 
     const d = await decisions.evaluate("movie", "m1", release({ quality: { source: "web", resolution: "1080p", edition: "" } }));
@@ -100,9 +100,9 @@ describe("DecisionService — profile-allowed, from a real quality_profile row",
 describe("DecisionService — upgrade/cutoff, from a real media_file row", () => {
   it("rejects once the existing file already meets the profile's cutoff", async () => {
     const db = await freshDb();
-    await seedMovie(db, { qualityProfileId: "qp1" });
     const cutoff = qualityId({ source: "web", resolution: "1080p", edition: "" } as never);
     await seedProfile(db, [qualityId({ source: "hdtv", resolution: "720p", edition: "" } as never), cutoff, qualityId({ source: "bluray", resolution: "1080p", edition: "" } as never)], cutoff);
+    await seedMovie(db, { qualityProfileId: "qp1" });
     await db.insert(schema.mediaFile).values({
       id: "mf1", mediaType: "movie", mediaId: "m1", episodeIds: [], relativePath: "x.mkv", size: 1000,
       quality: { source: "web", resolution: "1080p", edition: "" }, dateAdded: new Date().toISOString(),
@@ -150,8 +150,8 @@ describe("DecisionService — protocol preference, from real settings", () => {
 describe("IndexersService.search() attaches a decision to every result (gap report C3)", () => {
   it("interactive search results carry approval/rejection info", async () => {
     const db = await freshDb();
-    await seedMovie(db, { qualityProfileId: "qp1" });
     await seedProfile(db, [qualityId({ source: "web", resolution: "1080p", edition: "" } as never)], qualityId({ source: "web", resolution: "1080p", edition: "" } as never));
+    await seedMovie(db, { qualityProfileId: "qp1" });
     const events = new EventsService(new EventBus());
     const config = new ConfigService(db);
     const decisions = decisionService(db);

@@ -5,7 +5,7 @@ import { newEntityId, ApiError } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import { normalizePaging, type LibraryListQuery, type PagedResult } from "../media/library.helpers";
+import { normalizePaging, type LibraryListQuery, type PagedResult, type Tx } from "../media/library.helpers";
 
 export interface BlocklistCandidate {
   mediaType: "movie" | "series";
@@ -45,6 +45,21 @@ export class BlocklistService {
       reason: input.reason,
       createdAt: new Date().toISOString(),
     });
+  }
+
+  /** Sync counterpart of `add`, for use inside a `db.transaction()` callback (e.g.
+   *  AcquisitionService.recordImportFailure()'s exhausted-attempt branch). */
+  addSync(tx: Tx, input: BlocklistCandidate & { reason: string }): void {
+    tx.insert(schema.blocklistEntry).values({
+      id: newEntityId("bl"),
+      mediaType: input.mediaType,
+      mediaId: input.mediaId,
+      indexerId: input.indexerId ?? null,
+      title: input.title,
+      torrentInfohash: input.torrentInfohash ?? null,
+      reason: input.reason,
+      createdAt: new Date().toISOString(),
+    }).run();
   }
 
   /** Consulted by both IndexersService.grab() and RssSyncService before a release is

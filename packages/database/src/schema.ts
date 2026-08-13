@@ -90,7 +90,7 @@ export const movie = sqliteTable("movie", {
   status: text("status").notNull().default("unknown"),
   releaseDate: text("release_date"),
   monitored: bool("monitored", true),
-  qualityProfileId: text("quality_profile_id"),
+  qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
   rootFolderPath: text("root_folder_path").notNull().default(""),
   minimumAvailability: text("minimum_availability").notNull().default("announced"),
   genres: json<string[]>("genres"),
@@ -113,7 +113,7 @@ export const series = sqliteTable("series", {
   network: text("network"),
   firstAirYear: integer("first_air_year"),
   monitored: bool("monitored", true),
-  qualityProfileId: text("quality_profile_id"),
+  qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
   rootFolderPath: text("root_folder_path").notNull().default(""),
   genres: json<string[]>("genres"),
   images: json<Record<string, string>[]>("images"),
@@ -124,7 +124,7 @@ export const series = sqliteTable("series", {
 
 export const season = sqliteTable("season", {
   id: text("id").primaryKey(),
-  seriesId: text("series_id").notNull(),
+  seriesId: text("series_id").notNull().references(() => series.id, { onDelete: "cascade" }),
   seasonNumber: integer("season_number").notNull(),
   monitored: bool("monitored", true),
 }, (t) => [
@@ -134,8 +134,8 @@ export const season = sqliteTable("season", {
 
 export const episode = sqliteTable("episode", {
   id: text("id").primaryKey(),
-  seriesId: text("series_id").notNull(),
-  seasonId: text("season_id").notNull(),
+  seriesId: text("series_id").notNull().references(() => series.id, { onDelete: "cascade" }),
+  seasonId: text("season_id").notNull().references(() => season.id, { onDelete: "cascade" }),
   episodeNumber: integer("episode_number").notNull(),
   absoluteNumber: integer("absolute_number"),
   title: text("title").notNull().default(""),
@@ -213,7 +213,7 @@ export const downloadQueueEntry = sqliteTable("download_queue_entry", {
   id: text("id").primaryKey(),
   mediaType: text("media_type").notNull(),
   mediaId: text("media_id").notNull(),
-  downloadClientId: text("download_client_id"),
+  downloadClientId: text("download_client_id").references(() => downloadClient.id, { onDelete: "set null" }),
   downloadId: text("download_id"), // client-side id
   title: text("title").notNull(),
   status: text("status").notNull().default("queued"),

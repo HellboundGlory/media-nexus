@@ -288,28 +288,30 @@ export class IndexersService {
       data.completedPath = placeholder;
     }
 
-    await this.db.insert(schema.downloadQueueEntry).values({
-      id: queueId,
-      mediaType: input.mediaType,
-      mediaId: input.mediaId,
-      downloadClientId: client.row?.id ?? null,
-      downloadId,
-      title: release.title,
-      status: "downloading",
-      progress: 5,
-      size: release.size,
-      remainingTime: null,
-      data,
-      addedAt: now,
-      updatedAt: now,
-    });
-    await this.db.insert(schema.historyEntry).values({
-      id: newEntityId("hist"),
-      mediaType: input.mediaType,
-      mediaId: input.mediaId,
-      action: "grabbed",
-      data,
-      createdAt: now,
+    this.db.transaction((tx) => {
+      tx.insert(schema.downloadQueueEntry).values({
+        id: queueId,
+        mediaType: input.mediaType,
+        mediaId: input.mediaId,
+        downloadClientId: client.row?.id ?? null,
+        downloadId,
+        title: release!.title,
+        status: "downloading",
+        progress: 5,
+        size: release!.size,
+        remainingTime: null,
+        data,
+        addedAt: now,
+        updatedAt: now,
+      }).run();
+      tx.insert(schema.historyEntry).values({
+        id: newEntityId("hist"),
+        mediaType: input.mediaType,
+        mediaId: input.mediaId,
+        action: "grabbed",
+        data,
+        createdAt: now,
+      }).run();
     });
     const agg = { aggType: input.mediaType, aggId: input.mediaId };
     this.events.publish(EventTypes.ReleaseGrabbed, { releaseId: release.id, title: release.title, downloadId, mediaType: input.mediaType, mediaId: input.mediaId }, agg);

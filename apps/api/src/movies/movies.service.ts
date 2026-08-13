@@ -3,7 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { eq } from "drizzle-orm";
 import { newEntityId } from "@medianexus/shared";
 import { ApiError } from "@medianexus/shared";
-import { combine, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
+import { combine, deletePolymorphicRows, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
@@ -70,7 +70,10 @@ export class MoviesService {
 
   async remove(id: string) {
     await this.get(id);
-    await this.db.delete(schema.movie).where(eq(schema.movie.id, id));
+    this.db.transaction((tx) => {
+      deletePolymorphicRows(tx, "movie", id);
+      tx.delete(schema.movie).where(eq(schema.movie.id, id)).run();
+    });
     this.events.publish(EventTypes.MovieRemoved, { movieId: id }, { aggType: "movie", aggId: id });
     return { removed: id };
   }

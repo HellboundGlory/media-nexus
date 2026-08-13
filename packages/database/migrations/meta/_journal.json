@@ -57,6 +57,13 @@
       "when": 1786528800000,
       "tag": "0007_quality_registry",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786615200000,
+      "tag": "0008_foreign_keys",
+      "breakpoints": true
     }
   ]
 }

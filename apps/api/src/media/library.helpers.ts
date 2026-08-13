@@ -88,6 +88,49 @@ export async function ensureAvailability(db: Db, mediaType: MediaType, mediaId: 
   });
 }
 
+/** The synchronous transaction handle better-sqlite3 hands to a `db.transaction()`
+ *  callback — same query-builder surface as `Db`, but every write must be `.run()`, not
+ *  `await`ed (better-sqlite3 transaction callbacks cannot be async). */
+export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/**
+ * Delete every polymorphic `(mediaType, mediaId)` row referencing a title being removed —
+ * media_file, download_queue_entry, history_entry, media_availability, blocklist_entry.
+ * These tables can't carry a real SQL foreign key (they point at either `movie` or
+ * `series` depending on the discriminator column, see "Two media tables, polymorphic
+ * references" in the architecture notes), so this is the cascade's application-level half;
+ * the DB-level FK handles `season`/`episode` automatically once the `series` row itself is
+ * deleted (roadmap P0.7). Caller must run this inside the same transaction as the
+ * movie/series row's own delete and use the sync `.run()` form throughout — this function
+ * takes a `Tx`, not a `Db`, so that can't be forgotten.
+ */
+export function deletePolymorphicRows(tx: Tx, mediaType: MediaType, mediaId: string): void {
+  tx.delete(schema.mediaFile).where(and(eq(schema.mediaFile.mediaType, mediaType), eq(schema.mediaFile.mediaId, mediaId))).run();
+  tx.delete(schema.downloadQueueEntry).where(and(eq(schema.downloadQueueEntry.mediaType, mediaType), eq(schema.downloadQueueEntry.mediaId, mediaId))).run();
+  tx.delete(schema.historyEntry).where(and(eq(schema.historyEntry.mediaType, mediaType), eq(schema.historyEntry.mediaId, mediaId))).run();
+  tx.delete(schema.mediaAvailability).where(and(eq(schema.mediaAvailability.mediaType, mediaType), eq(schema.mediaAvailability.mediaId, mediaId))).run();
+  tx.delete(schema.blocklistEntry).where(and(eq(schema.blocklistEntry.mediaType, mediaType), eq(schema.blocklistEntry.mediaId, mediaId))).run();
+}
+
+/** Sync counterpart of `ensureAvailability`, for use inside a `db.transaction()` callback
+ *  (better-sqlite3 transaction callbacks cannot `await`). Same upsert semantics. */
+export function ensureAvailabilitySync(tx: Tx, mediaType: MediaType, mediaId: string): void {
+  const existing = tx.select({ id: schema.mediaAvailability.id })
+    .from(schema.mediaAvailability)
+    .where(and(
+      sql`${schema.mediaAvailability.mediaType} = ${mediaType}`,
+      sql`${schema.mediaAvailability.mediaId} = ${mediaId}`,
+    ))
+    .all();
+  if (existing.length) return;
+  tx.insert(schema.mediaAvailability).values({
+    id: newEntityId("av"),
+    mediaType,
+    mediaId,
+    status: "unknown",
+  }).run();
+}
+
 /** Look up a quality profile in the shape the domain layer (`qualityAllowed`/
  *  `meetsCutoff`/decision engine) consumes. Shared by `DecisionService` (P0.3) and the
  *  import engine (P0.5) — one implementation of "resolve a title's assigned profile". */

@@ -10,6 +10,35 @@ import { qualityId } from "@medianexus/domain";
 import { MIGRATIONS_DIR } from "./connection";
 
 /**
+ * Builds a scratch migrations folder containing only the migrations strictly BEFORE
+ * `beforeTag` (by journal index, not filename string-prefix — a later migration's
+ * filename can still sort before `beforeTag` alphabetically once there are 10+, and a
+ * naive `startsWith` filter only excludes the exact tag, silently leaking every
+ * migration that comes after it into what's meant to be an "old-shape" DB. This bit
+ * migration 0008's own test suite when it reused the 0007 test's `startsWith` pattern).
+ */
+function migrationsFolderBefore(beforeTag: string, tmpDir: string): void {
+  mkdirSync(join(tmpDir, "meta"), { recursive: true });
+  const journal = JSON.parse(readFileSync(join(MIGRATIONS_DIR, "meta", "_journal.json"), "utf-8")) as {
+    entries: { idx: number; tag: string }[];
+  };
+  const cutoffIdx = journal.entries.find((e) => e.tag === beforeTag)?.idx;
+  if (cutoffIdx === undefined) throw new Error(`No journal entry with tag ${beforeTag}`);
+  const keep = journal.entries.filter((e) => e.idx < cutoffIdx);
+  const keepTags = new Set(keep.map((e) => e.tag));
+  for (const f of readdirSync(MIGRATIONS_DIR)) {
+    if (f === "meta" || !keepTags.has(f.replace(/\.sql$/, ""))) continue;
+    copyFileSync(join(MIGRATIONS_DIR, f), join(tmpDir, f));
+  }
+  writeFileSync(join(tmpDir, "meta", "_journal.json"), JSON.stringify({ ...journal, entries: keep }));
+  const keepPrefixes = new Set(keep.map((e) => e.tag.slice(0, 4)));
+  for (const f of readdirSync(join(MIGRATIONS_DIR, "meta"))) {
+    if (f === "_journal.json" || !keepPrefixes.has(f.slice(0, 4))) continue;
+    copyFileSync(join(MIGRATIONS_DIR, "meta", f), join(tmpDir, "meta", f));
+  }
+}
+
+/**
  * Roadmap P0.2 acceptance criterion: "a database created before this change
  * migrates cleanly, with its profiles preserved and mapped to the new
  * representation". Builds a DB at the pre-0007 (grid) shape, seeds it exactly
@@ -26,21 +55,11 @@ describe("migration 0007 — quality registry", () => {
   });
 
   it("converts grid profiles to ordered items + cutoffQualityId, preserving all rows", () => {
-    // Build a migrations folder containing every migration EXCEPT 0007, so we can
-    // land the DB at the old (grid) shape before applying the change under test.
+    // Build a migrations folder containing every migration EXCEPT 0007 (and anything
+    // after it), so we can land the DB at the old (grid) shape before applying the
+    // change under test.
     tmpDir = mkdtempSync(join(tmpdir(), "mn-migration-test-"));
-    mkdirSync(join(tmpDir, "meta"), { recursive: true });
-    for (const f of readdirSync(MIGRATIONS_DIR)) {
-      if (f === "meta" || f.startsWith("0007")) continue;
-      copyFileSync(join(MIGRATIONS_DIR, f), join(tmpDir, f));
-    }
-    const journal = JSON.parse(readFileSync(join(MIGRATIONS_DIR, "meta", "_journal.json"), "utf-8"));
-    journal.entries = journal.entries.filter((e: { tag: string }) => !e.tag.startsWith("0007"));
-    writeFileSync(join(tmpDir, "meta", "_journal.json"), JSON.stringify(journal));
-    for (const f of readdirSync(join(MIGRATIONS_DIR, "meta"))) {
-      if (f === "_journal.json" || f === "0007_snapshot.json") continue;
-      copyFileSync(join(MIGRATIONS_DIR, "meta", f), join(tmpDir, "meta", f));
-    }
+    migrationsFolderBefore("0007_quality_registry", tmpDir);
 
     const sqlite = new Database(":memory:");
     const db = drizzle(sqlite);
@@ -80,6 +99,93 @@ describe("migration 0007 — quality registry", () => {
     // Single-quality profile (the upstream-importer shape) round-trips to one item.
     const imported = JSON.parse(byId.imp_q1.items) as number[];
     expect(imported).toEqual([qualityId({ source: "web", resolution: "1080p", edition: "" } as never)]);
+
+    sqlite.close();
+  });
+});
+
+/**
+ * Roadmap P0.7 (gap report I9 / J2) acceptance criterion: a database created
+ * before this migration migrates cleanly with existing rows preserved, and the
+ * newly-declared foreign keys actually enforce cascade/set-null behavior
+ * afterward — not just that the migration runs without throwing.
+ */
+describe("migration 0008 — foreign keys", () => {
+  let tmpDir: string | null = null;
+
+  afterEach(() => {
+    if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = null;
+  });
+
+  it("preserves existing rows and enforces cascade/set-null after migrating", () => {
+    // Build a migrations folder containing every migration EXCEPT 0008 (and anything
+    // after it), so we can land the DB at the pre-FK shape before applying the change
+    // under test.
+    tmpDir = mkdtempSync(join(tmpdir(), "mn-migration-0008-test-"));
+    migrationsFolderBefore("0008_foreign_keys", tmpDir);
+
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+    const db = drizzle(sqlite);
+    migrate(db, { migrationsFolder: tmpDir });
+
+    const now = new Date().toISOString();
+
+    // Seed a full pre-existing-data scenario: a quality profile, a download client, a
+    // series with a season and two episodes, a movie, and a queue entry — everything
+    // the six new FKs touch.
+    sqlite.prepare(
+      "INSERT INTO quality_profile (id,name,items,cutoff_quality_id,upgrade_allowed,language,is_default,created_at,updated_at) VALUES ('qp1','Any','[0]',0,1,'en',1,?,?)",
+    ).run(now, now);
+    sqlite.prepare(
+      "INSERT INTO download_client (id,name,implementation,kind,enabled,priority,settings,tags,created_at,updated_at) VALUES ('dc1','Client','sabnzbd','usenet',1,1,'{}','[]',?,?)",
+    ).run(now, now);
+    sqlite.prepare(
+      "INSERT INTO series (id,tvdb_id,title,monitored,quality_profile_id,added_at,updated_at) VALUES ('sr1',1,'Show',1,'qp1',?,?)",
+    ).run(now, now);
+    sqlite.prepare(
+      "INSERT INTO season (id,series_id,season_number,monitored) VALUES ('se1','sr1',1,1)",
+    ).run();
+    sqlite.prepare(
+      "INSERT INTO episode (id,series_id,season_id,episode_number,monitored,has_file) VALUES ('ep1','sr1','se1',1,1,0),('ep2','sr1','se1',2,1,0)",
+    ).run();
+    sqlite.prepare(
+      "INSERT INTO movie (id,title,monitored,quality_profile_id,added_at,updated_at) VALUES ('mv1','Movie',1,'qp1',?,?)",
+    ).run(now, now);
+    sqlite.prepare(
+      "INSERT INTO download_queue_entry (id,media_type,media_id,download_client_id,title,added_at,updated_at) VALUES ('dq1','movie','mv1','dc1','Movie Release',?,?)",
+    ).run(now, now);
+
+    // Now apply the real, full migration chain (including 0008) on top.
+    migrate(db, { migrationsFolder: MIGRATIONS_DIR });
+
+    // No rows lost across the rebuild.
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM series").get()).toEqual({ c: 1 });
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM season").get()).toEqual({ c: 1 });
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM episode").get()).toEqual({ c: 2 });
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM movie").get()).toEqual({ c: 1 });
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM download_queue_entry").get()).toEqual({ c: 1 });
+    const series = sqlite.prepare("SELECT quality_profile_id FROM series WHERE id='sr1'").get() as { quality_profile_id: string };
+    expect(series.quality_profile_id).toBe("qp1");
+
+    // Cascade: deleting the series deletes its season and episodes.
+    sqlite.prepare("DELETE FROM series WHERE id='sr1'").run();
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM season").get()).toEqual({ c: 0 });
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM episode").get()).toEqual({ c: 0 });
+
+    // Set null: deleting the quality profile nulls out the movie's reference instead
+    // of blocking or cascading.
+    sqlite.prepare("DELETE FROM quality_profile WHERE id='qp1'").run();
+    const movie = sqlite.prepare("SELECT quality_profile_id FROM movie WHERE id='mv1'").get() as { quality_profile_id: string | null };
+    expect(movie.quality_profile_id).toBeNull();
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM movie").get()).toEqual({ c: 1 }); // movie itself survives
+
+    // Set null: deleting the download client nulls out the queue entry's reference.
+    sqlite.prepare("DELETE FROM download_client WHERE id='dc1'").run();
+    const queueEntry = sqlite.prepare("SELECT download_client_id FROM download_queue_entry WHERE id='dq1'").get() as { download_client_id: string | null };
+    expect(queueEntry.download_client_id).toBeNull();
+    expect(sqlite.prepare("SELECT COUNT(*) c FROM download_queue_entry").get()).toEqual({ c: 1 }); // queue entry survives
 
     sqlite.close();
   });

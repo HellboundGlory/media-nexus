@@ -19,7 +19,7 @@ import {
   decideImportFile, type KnownEpisode, type ImportRejection, type Quality,
 } from "@medianexus/domain";
 import { MediaRepository } from "../media/media.repository";
-import { ensureAvailability, getQualityProfile } from "../media/library.helpers";
+import { ensureAvailabilitySync, getQualityProfile, type Tx } from "../media/library.helpers";
 import { movieFolderName, seriesFolderName } from "../media/naming.helpers";
 import { BlocklistService } from "../blocklist/blocklist.service";
 
@@ -150,39 +150,45 @@ export class AcquisitionService {
     const exhausted = attempts >= MAX_IMPORT_ATTEMPTS;
     const now = new Date().toISOString();
 
-    await this.db.update(schema.downloadQueueEntry)
-      .set({
-        status: exhausted ? "failed" : entry.status,
-        errorMessage: err.message,
-        data: { ...data, importAttempts: attempts, lastImportError: err.message },
-        updatedAt: now,
-      })
-      .where(eq(schema.downloadQueueEntry.id, entry.id));
+    this.db.transaction((tx) => {
+      tx.update(schema.downloadQueueEntry)
+        .set({
+          status: exhausted ? "failed" : entry.status,
+          errorMessage: err.message,
+          data: { ...data, importAttempts: attempts, lastImportError: err.message },
+          updatedAt: now,
+        })
+        .where(eq(schema.downloadQueueEntry.id, entry.id))
+        .run();
+
+      if (exhausted) {
+        tx.insert(schema.historyEntry).values({
+          id: newEntityId("hist"),
+          mediaType: entry.mediaType,
+          mediaId: entry.mediaId,
+          action: "import_failed",
+          data: { title: entry.title, downloadId: entry.downloadId, error: err.message, attempts },
+          createdAt: now,
+        }).run();
+        // Release-level failure (we downloaded it and it wasn't usable N times running) —
+        // blocklist it so RSS sync and manual grab both stop offering it again. Deliberately
+        // NOT done for client/indexer-outage failures (DownloadClientFailed/IndexerFailed) —
+        // those mean "try again later," not "never again."
+        this.blocklist.addSync(tx, {
+          mediaType: entry.mediaType as "movie" | "series",
+          mediaId: entry.mediaId,
+          title: entry.title,
+          indexerId: (data as { indexerId?: string }).indexerId ?? null,
+          reason: `import failed after ${attempts} attempts: ${err.message}`,
+        });
+      }
+    });
 
     this.logger.warn(
       `import failed for "${entry.title}" (attempt ${attempts}/${MAX_IMPORT_ATTEMPTS}${exhausted ? ", giving up" : ""}): ${err.message}`,
     );
 
     if (exhausted) {
-      await this.db.insert(schema.historyEntry).values({
-        id: newEntityId("hist"),
-        mediaType: entry.mediaType,
-        mediaId: entry.mediaId,
-        action: "import_failed",
-        data: { title: entry.title, downloadId: entry.downloadId, error: err.message, attempts },
-        createdAt: now,
-      });
-      // Release-level failure (we downloaded it and it wasn't usable N times running) —
-      // blocklist it so RSS sync and manual grab both stop offering it again. Deliberately
-      // NOT done for client/indexer-outage failures (DownloadClientFailed/IndexerFailed) —
-      // those mean "try again later," not "never again."
-      await this.blocklist.add({
-        mediaType: entry.mediaType as "movie" | "series",
-        mediaId: entry.mediaId,
-        title: entry.title,
-        indexerId: (data as { indexerId?: string }).indexerId ?? null,
-        reason: `import failed after ${attempts} attempts: ${err.message}`,
-      });
       this.events.publish(
         EventTypes.ImportFailed,
         { mediaType: entry.mediaType, mediaId: entry.mediaId, title: entry.title, downloadId: entry.downloadId, error: err.message },
@@ -241,15 +247,18 @@ export class AcquisitionService {
     const now = new Date().toISOString();
     const mediaFileId = newEntityId("mf");
     const quality = spQuality(entry);
+    const relativePath = relative(root, targetFile);
 
-    await this.db.insert(schema.mediaFile).values({
-      id: mediaFileId, mediaType: "movie", mediaId: movie[0].id, episodeIds: [],
-      relativePath: relative(root, targetFile), size, quality, dateAdded: now,
+    this.db.transaction((tx) => {
+      tx.insert(schema.mediaFile).values({
+        id: mediaFileId, mediaType: "movie", mediaId: movie[0].id, episodeIds: [],
+        relativePath, size, quality, dateAdded: now,
+      }).run();
+      tx.update(schema.movie).set({ hasFile: true, updatedAt: now }).where(eq(schema.movie.id, movie[0].id)).run();
+      this.markAvailabilitySync(tx, "movie", movie[0].id, now);
+      this.insertHistorySync(tx, "movie", movie[0].id, now, { title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked });
+      this.markEntryImportedSync(tx, entry, now);
     });
-    await this.db.update(schema.movie).set({ hasFile: true, updatedAt: now }).where(eq(schema.movie.id, movie[0].id));
-    await this.markAvailability("movie", movie[0].id, now);
-    await this.insertHistory("movie", movie[0].id, now, { title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked });
-    await this.markEntryImported(entry, now);
     this.emitImport("movie", movie[0].id, movie[0].title, item.downloadId, targetFile, mediaFileId);
     return { imported: [{ mediaFileId, path: targetFile, size, hardlinked, episodeIds: [] }], rejected: [] };
   }
@@ -307,7 +316,11 @@ export class AcquisitionService {
     // season pack's individual files each need their own filename parsed.
     const useReleaseLevelMatch = !match.isSeasonPack && match.episodes.length > 0 && candidates.length === 1;
 
-    const imported: ImportedFile[] = [];
+    // Phase 1 (async): all external I/O — hardlink/copy every approved file — happens
+    // before the transaction. No DB writes here, so a failure partway through never
+    // requires a rollback of anything.
+    interface AppliedFileIO { mediaFileId: string; path: string; relativePath: string; size: number; hardlinked: boolean; episodeIds: string[] }
+    const appliedIO: AppliedFileIO[] = [];
     const rejected: RejectedFile[] = [];
     let fileIndex = 0;
 
@@ -319,16 +332,16 @@ export class AcquisitionService {
         continue;
       }
       try {
-        const applied = await this.applySeriesFile(
-          series[0].id, file, decision.episodeIds, epNumberById, targetDir, root, match.season, safeSeries, releaseQuality, now, fileIndex++,
+        const io = await this.hardlinkSeriesFile(
+          file, decision.episodeIds, epNumberById, targetDir, root, match.season, safeSeries, fileIndex++,
         );
-        imported.push(applied);
+        appliedIO.push(io);
       } catch (err) {
         rejected.push({ path: file.path, reasons: [`apply_failed: ${(err as Error).message}`] });
       }
     }
 
-    if (imported.length === 0) {
+    if (appliedIO.length === 0) {
       throw new Error(
         `No importable file for "${entry.title}" — ${rejected.length} file(s) rejected: ${rejected.map((r) => `${r.path} (${r.reasons.join(", ")})`).join("; ")}`,
       );
@@ -339,21 +352,44 @@ export class AcquisitionService {
     // superseded this round is left alone rather than partially invalidated. No recycle
     // bin (gap report B7, file organiser, still open) — the superseded file is deleted
     // outright, not moved aside.
-    const newlyCovered = new Set(imported.flatMap((f) => f.episodeIds));
-    for (const f of existing) {
-      if (f.episodeIds.length > 0 && f.episodeIds.every((id) => newlyCovered.has(id))) {
-        await this.db.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id));
-        await this.storage.delete(join(root, f.relativePath)).catch(() => {});
+    const newlyCovered = new Set(appliedIO.flatMap((f) => f.episodeIds));
+    const toDeleteOld = existing.filter((f) => f.episodeIds.length > 0 && f.episodeIds.every((id) => newlyCovered.has(id)));
+
+    // Phase 2 (sync): every DB write for this import lands atomically — either the whole
+    // set of new media_file rows, episode.hasFile flips, superseded-file deletes,
+    // availability update, history entry and queue-entry status change all land, or none do.
+    const imported: ImportedFile[] = appliedIO.map((io) => ({ mediaFileId: io.mediaFileId, path: io.path, size: io.size, hardlinked: io.hardlinked, episodeIds: io.episodeIds }));
+    this.db.transaction((tx) => {
+      for (const io of appliedIO) {
+        tx.insert(schema.mediaFile).values({
+          id: io.mediaFileId, mediaType: "series", mediaId: series[0].id, episodeIds: io.episodeIds,
+          relativePath: io.relativePath, size: io.size, quality: releaseQuality, dateAdded: now,
+        }).run();
+        for (const epId of io.episodeIds) {
+          tx.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, epId)).run();
+        }
       }
+      for (const f of toDeleteOld) {
+        tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
+      }
+      this.markAvailabilitySync(tx, "series", series[0].id, now);
+      this.insertHistorySync(tx, "series", series[0].id, now, {
+        title: releaseTitle, downloadId: item.downloadId, season: match.season,
+        imported: imported.map((f) => ({ mediaFileId: f.mediaFileId, path: f.path, episodes: f.episodeIds.map((id) => epNumberById.get(id)) })),
+        rejected,
+      });
+      this.markEntryImportedSync(tx, entry, now);
+    });
+
+    // Phase 3 (async, best-effort): physical deletion of superseded files, only after the
+    // DB transaction that stopped referencing them has committed — if this step fails or
+    // the process crashes here, a stale file is left on disk but no row points at it,
+    // which is recoverable (a later scan/cleanup), unlike deleting the file before the DB
+    // change is durable, which would be silent data loss with no compensating record.
+    for (const f of toDeleteOld) {
+      await this.storage.delete(join(root, f.relativePath)).catch(() => {});
     }
 
-    await this.markAvailability("series", series[0].id, now);
-    await this.insertHistory("series", series[0].id, now, {
-      title: releaseTitle, downloadId: item.downloadId, season: match.season,
-      imported: imported.map((f) => ({ mediaFileId: f.mediaFileId, path: f.path, episodes: f.episodeIds.map((id) => epNumberById.get(id)) })),
-      rejected,
-    });
-    await this.markEntryImported(entry, now);
     const first = imported[0];
     this.emitImport("series", series[0].id, series[0].title, item.downloadId, first.path, first.mediaFileId, {
       season: match.season, filesImported: imported.length, filesRejected: rejected.length,
@@ -362,10 +398,9 @@ export class AcquisitionService {
     return { imported, rejected };
   }
 
-  /** Hardlink/copy one approved series file into place, write its media_file row, and
-   *  mark every episode it covers as having a file. */
-  private async applySeriesFile(
-    seriesId: string,
+  /** Hardlink/copy one approved series file into place. External I/O only — no DB write —
+   *  so it can run before the transaction that records it (see importSeries's phase split). */
+  private async hardlinkSeriesFile(
     file: { path: string; size: number },
     episodeIds: string[],
     epNumberById: Map<string, number>,
@@ -373,10 +408,8 @@ export class AcquisitionService {
     root: string,
     season: number,
     safeSeries: string,
-    quality: Quality,
-    now: string,
     fileIndex: number,
-  ): Promise<ImportedFile> {
+  ): Promise<{ mediaFileId: string; path: string; relativePath: string; size: number; hardlinked: boolean; episodeIds: string[] }> {
     const baseName = episodeIds.length > 0
       ? `${safeSeries} - ${episodeIds.map((id) => episodeQueryTag(season, epNumberById.get(id) ?? 0)).join("-")}`
       // Unmatched file inside a pack (couldn't tell which episode it is) — disambiguate
@@ -387,15 +420,7 @@ export class AcquisitionService {
     if (!existsSync(targetFile)) await this.storage.copy(file.path, targetFile);
     const size = statSync(targetFile).size;
 
-    const mediaFileId = newEntityId("mf");
-    await this.db.insert(schema.mediaFile).values({
-      id: mediaFileId, mediaType: "series", mediaId: seriesId, episodeIds,
-      relativePath: relative(root, targetFile), size, quality, dateAdded: now,
-    });
-    for (const epId of episodeIds) {
-      await this.db.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, epId));
-    }
-    return { mediaFileId, path: targetFile, size, hardlinked, episodeIds };
+    return { mediaFileId: newEntityId("mf"), path: targetFile, relativePath: relative(root, targetFile), size, hardlinked, episodeIds };
   }
 
   /** Release didn't parse to a season at all — file it under "Season Unknown" with no
@@ -418,57 +443,64 @@ export class AcquisitionService {
     const size = statSync(targetFile).size;
 
     const mediaFileId = newEntityId("mf");
-    await this.db.insert(schema.mediaFile).values({
-      id: mediaFileId, mediaType: "series", mediaId: series.id, episodeIds: [],
-      relativePath: relative(root, targetFile), size, quality, dateAdded: now,
+    const relativePath = relative(root, targetFile);
+    this.db.transaction((tx) => {
+      tx.insert(schema.mediaFile).values({
+        id: mediaFileId, mediaType: "series", mediaId: series.id, episodeIds: [],
+        relativePath, size, quality, dateAdded: now,
+      }).run();
+      this.markAvailabilitySync(tx, "series", series.id, now);
+      this.insertHistorySync(tx, "series", series.id, now, {
+        title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked, episodeMatched: false,
+      });
+      this.markEntryImportedSync(tx, entry, now);
     });
-    await this.markAvailability("series", series.id, now);
-    await this.insertHistory("series", series.id, now, {
-      title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked, episodeMatched: false,
-    });
-    await this.markEntryImported(entry, now);
     this.emitImport("series", series.id, series.title, item.downloadId, targetFile, mediaFileId);
     return { imported: [{ mediaFileId, path: targetFile, size, hardlinked, episodeIds: [] }], rejected: [] };
   }
 
   /**
-   * Update the availability row for a title.
+   * Update the availability row for a title. Sync — for use inside a `db.transaction()`
+   * callback, which every caller of this method now is (import writes are all
+   * transactional as of roadmap P0.7).
    *
    * This previously matched on mediaId alone with no upsert and swallowed every error, so
    * when the row was missing — which happened for any series added before the availability
    * insert was made reliable, and for anything created by the upstream importer — the
    * update matched nothing and availability stayed "unknown" forever, silently.
    */
-  private async markAvailability(mediaType: "movie" | "series", mediaId: string, now: string): Promise<void> {
-    const status = mediaType === "movie" ? "available" : await this.seriesAvailability(mediaId);
-    await ensureAvailability(this.db, mediaType, mediaId);
-    await this.db.update(schema.mediaAvailability)
+  private markAvailabilitySync(tx: Tx, mediaType: "movie" | "series", mediaId: string, now: string): void {
+    const status = mediaType === "movie" ? "available" : this.seriesAvailabilitySync(tx, mediaId);
+    ensureAvailabilitySync(tx, mediaType, mediaId);
+    tx.update(schema.mediaAvailability)
       .set({ status, lastAvailabilitySyncAt: now })
       .where(and(
         eq(schema.mediaAvailability.mediaType, mediaType),
         eq(schema.mediaAvailability.mediaId, mediaId),
-      ));
+      ))
+      .run();
   }
 
   /** A series is fully available only once no monitored episode is still missing. */
-  private async seriesAvailability(seriesId: string): Promise<"available" | "partially_available"> {
-    const missing = await this.db.select({ n: count() }).from(schema.episode)
+  private seriesAvailabilitySync(tx: Tx, seriesId: string): "available" | "partially_available" {
+    const missing = tx.select({ n: count() }).from(schema.episode)
       .where(and(
         eq(schema.episode.seriesId, seriesId),
         eq(schema.episode.monitored, true),
         eq(schema.episode.hasFile, false),
-      ));
+      ))
+      .all();
     return Number(missing[0]?.n ?? 0) === 0 ? "available" : "partially_available";
   }
 
-  private async insertHistory(mediaType: string, mediaId: string, now: string, data: Record<string, unknown>): Promise<void> {
-    await this.db.insert(schema.historyEntry).values({
+  private insertHistorySync(tx: Tx, mediaType: string, mediaId: string, now: string, data: Record<string, unknown>): void {
+    tx.insert(schema.historyEntry).values({
       id: newEntityId("hist"), mediaType, mediaId, action: "import_completed", data, createdAt: now,
-    });
+    }).run();
   }
 
   /**
-   * Close out a queue entry after a successful import.
+   * Close out a queue entry after a successful import. Sync — see markAvailabilitySync.
    *
    * The download is deliberately LEFT IN THE CLIENT. Torrents need to keep seeding to meet
    * tracker ratio requirements, and the imported library file is typically a hardlink to
@@ -476,13 +508,11 @@ export class AcquisitionService {
    * downloads belongs to a seed-goal policy (roadmap P2), not to import. The `imported`
    * status is terminal, so the monitor will not touch this entry again.
    */
-  private async markEntryImported(
-    entry: QueueEntryRow,
-    now: string,
-  ): Promise<void> {
-    await this.db.update(schema.downloadQueueEntry)
+  private markEntryImportedSync(tx: Tx, entry: QueueEntryRow, now: string): void {
+    tx.update(schema.downloadQueueEntry)
       .set({ status: "imported", progress: 100, errorMessage: null, updatedAt: now })
-      .where(eq(schema.downloadQueueEntry.id, entry.id));
+      .where(eq(schema.downloadQueueEntry.id, entry.id))
+      .run();
   }
 
   private emitImport(
