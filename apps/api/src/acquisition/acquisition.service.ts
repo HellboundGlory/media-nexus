@@ -12,25 +12,57 @@ import type { RuntimeSettings } from "@medianexus/shared";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 import { ProvidersService, type ConfiguredClient } from "../providers/demo.providers";
-import { LocalStorageProvider, findLargestVideo } from "@medianexus/integrations";
+import { LocalStorageProvider, findLargestVideo, findAllVideos } from "@medianexus/integrations";
 import type { ClientQueueItem, DownloadClientContract } from "@medianexus/integrations";
-import { parseEpisodeRelease, episodeQueryTag, targetEpisodeIds } from "@medianexus/domain";
+import {
+  parseEpisodeRelease, episodeQueryTag, episodeTarget, compareQuality,
+  decideImportFile, type KnownEpisode, type ImportRejection, type Quality,
+} from "@medianexus/domain";
 import { MediaRepository } from "../media/media.repository";
-import { ensureAvailability } from "../media/library.helpers";
+import { ensureAvailability, getQualityProfile } from "../media/library.helpers";
 import { BlocklistService } from "../blocklist/blocklist.service";
 
 /**
  * Acquisition: drives download clients, mirrors their queues into download_queue_entry,
  * monitors progress and performs the filesystem import when a download completes.
- * Real import path (M1): find the completed video file under the downloads root,
- * hardlink/copy it into the library root with the naming template, then mark the
- * movie available. Deeper heuristics (per-downloader layouts, series episodes) land in M2.
+ *
+ * Import (roadmap P0.5, gap report B2): enumerate every video file under a completed
+ * download's content path, decide each one independently (`decideImportFile()` in
+ * `packages/domain/src/import-decision.ts` — sample/incomplete-transfer detection, episode
+ * matching, upgrade-vs-existing-file), then apply approved files. A season pack with N
+ * episode files now imports all N, not the single largest one. Movies stay single-file —
+ * there is no season-pack analog for a movie.
  */
 /** Queue states the download monitor must never act on again. */
 export const TERMINAL_QUEUE_STATUSES = new Set(["imported", "removed", "failed"]);
 
 /** How many times an import may fail before the queue entry is parked as failed. */
 export const MAX_IMPORT_ATTEMPTS = 3;
+
+type QueueEntryRow = typeof schema.downloadQueueEntry.$inferSelect;
+
+/** Where the completed download's payload was found. */
+type ResolvedContent =
+  | { kind: "file"; path: string; size: number }
+  | { kind: "dir"; path: string };
+
+interface ImportedFile {
+  mediaFileId: string;
+  path: string;
+  size: number;
+  hardlinked: boolean;
+  episodeIds: string[];
+}
+
+interface RejectedFile {
+  path: string;
+  reasons: string[];
+}
+
+export interface ImportResult {
+  imported: ImportedFile[];
+  rejected: RejectedFile[];
+}
 
 @Injectable()
 export class AcquisitionService {
@@ -109,7 +141,7 @@ export class AcquisitionService {
    * being retried forever and becomes visible for manual intervention.
    */
   private async recordImportFailure(
-    entry: (typeof schema.downloadQueueEntry.$inferSelect),
+    entry: QueueEntryRow,
     err: Error,
   ): Promise<void> {
     const data = (entry.data ?? {}) as Record<string, unknown>;
@@ -166,33 +198,37 @@ export class AcquisitionService {
     return rows[0] ?? null;
   }
 
-  /** Import a completed download into the library (movies: single file; series: episode-mapped). */
+  /** Import a completed download into the library (movies: single file; series: every
+   *  video file the download contains, decided and applied independently). */
   async importCompletedEntry(
-    entry: (typeof schema.downloadQueueEntry.$inferSelect),
+    entry: QueueEntryRow,
     item: ClientQueueItem,
     _provider?: DownloadClientContract,
-  ): Promise<{ mediaFileId: string; path: string; size: number; hardlinked: boolean; episodes?: string[] }> {
+  ): Promise<ImportResult> {
     const cfg = await this.config.get();
     const downloadsRoot = cfg["paths.downloads"] || resolve(process.cwd(), "data", "downloads");
-    const source = await this.resolveSource(item, entry, downloadsRoot);
-    if (!source) {
+    const content = await this.resolveContent(item, entry, downloadsRoot);
+    if (!content) {
       throw new Error(`No video file found for "${entry.title}" under ${downloadsRoot}`);
     }
 
-    if (entry.mediaType === "movie") return this.importMovie(entry, source, cfg, item);
-    return this.importSeries(entry, source, cfg, item);
+    if (entry.mediaType === "movie") return this.importMovie(entry, content, cfg, item);
+    return this.importSeries(entry, content, cfg, item);
   }
 
   private async importMovie(
-    entry: (typeof schema.downloadQueueEntry.$inferSelect),
-    source: { path: string; size: number },
+    entry: QueueEntryRow,
+    content: ResolvedContent,
     cfg: RuntimeSettings,
     item: ClientQueueItem,
-  ): Promise<{ mediaFileId: string; path: string; size: number; hardlinked: boolean }> {
+  ): Promise<ImportResult> {
     const movie = await this.db.select().from(schema.movie).where(eq(schema.movie.id, entry.mediaId)).limit(1);
     if (!movie[0]) throw ApiError.notFound("movie", entry.mediaId);
 
-    const root = movie[0].rootFolderPath || cfg["paths.rootFolders"]?.[0]?.path || resolve(process.cwd(), "data", "media", "movies");
+    const source = content.kind === "file" ? content : await findLargestVideo(this.storage, content.path);
+    if (!source) throw new Error(`No video file found for "${entry.title}" under ${content.path}`);
+
+    const root = this.resolveRoot(cfg, movie[0].rootFolderPath, resolve(process.cwd(), "data", "media", "movies"));
     const parsed = parseTitleForFolder(movie[0].title, movie[0].releaseDate ?? undefined);
     const targetDir = join(root, `${parsed.title} (${parsed.year})`);
     await this.storage.ensureDir(targetDir);
@@ -214,74 +250,184 @@ export class AcquisitionService {
     await this.insertHistory("movie", movie[0].id, now, { title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked });
     await this.markEntryImported(entry, now);
     this.emitImport("movie", movie[0].id, movie[0].title, item.downloadId, targetFile, mediaFileId);
-    return { mediaFileId, path: targetFile, size, hardlinked };
+    return { imported: [{ mediaFileId, path: targetFile, size, hardlinked, episodeIds: [] }], rejected: [] };
   }
 
   private async importSeries(
-    entry: (typeof schema.downloadQueueEntry.$inferSelect),
-    source: { path: string; size: number },
+    entry: QueueEntryRow,
+    content: ResolvedContent,
     cfg: RuntimeSettings,
     item: ClientQueueItem,
-  ): Promise<{ mediaFileId: string; path: string; size: number; hardlinked: boolean; episodes: string[] }> {
+  ): Promise<ImportResult> {
     const series = await this.db.select().from(schema.series).where(eq(schema.series.id, entry.mediaId)).limit(1);
     if (!series[0]) throw ApiError.notFound("series", entry.mediaId);
 
     const releaseTitle = (entry.data as { releaseTitle?: string })?.releaseTitle ?? entry.title;
     const match = parseEpisodeRelease(releaseTitle);
-    const root = series[0].rootFolderPath || cfg["paths.rootFolders"]?.[0]?.path || resolve(process.cwd(), "data", "media", "tv");
+    const root = this.resolveRoot(cfg, series[0].rootFolderPath, resolve(process.cwd(), "data", "media", "tv"));
     const safeSeries = series[0].title.replace(/[^A-Za-z0-9 _()[\]-]/g, "").trim() || "Series";
+    const releaseQuality = spQuality(entry);
+    const now = new Date().toISOString();
 
-    let episodeIds: string[] = [];
-    let targetDir: string;
-    let baseName: string;
-
-    if (match.season !== undefined && match.episodes.length > 0) {
-      // Which episodes this release covers is resolved once, in MediaRepository, so the
-      // season predicate cannot be forgotten here or in any other consumer.
-      const target = await this.media.resolveTarget("series", series[0].id, releaseTitle);
-      episodeIds = target ? targetEpisodeIds(target) : [];
-      // season folder from matched season number
-      targetDir = join(root, safeSeries, `Season ${match.season}`);
-      const tag = episodeQueryTag(match.season, match.episodes[0]) + (match.episodes.length > 1 ? `-E${pad2(match.episodes[match.episodes.length - 1])}` : "");
-      baseName = `${safeSeries} - ${tag}`;
-    } else if (match.season !== undefined && match.isSeasonPack) {
-      // A season pack contains many files; this single-file importer cannot say which
-      // episode the one file it picked belongs to, so no episode is marked as having a
-      // file. It is still filed under the right season rather than "Season Unknown".
-      // Multi-file pack import lands with the import engine (roadmap P0.5).
-      targetDir = join(root, safeSeries, `Season ${match.season}`);
-      baseName = `${safeSeries} - S${pad2(match.season)}`;
-    } else {
-      targetDir = join(root, safeSeries, "Season Unknown");
-      baseName = safeSeries;
+    const candidates = content.kind === "file"
+      ? [{ path: content.path, size: content.size }]
+      : await findAllVideos(this.storage, content.path);
+    if (candidates.length === 0) {
+      throw new Error(`No video file found for "${entry.title}" under ${content.path}`);
     }
 
+    if (match.season === undefined) {
+      // Unparseable release: no season to file under or episodes to match. Import the
+      // single largest candidate as before, with no episode marked as having a file.
+      return this.importSeriesUnknownSeason(entry, series[0], candidates[0], root, safeSeries, releaseQuality, item, now);
+    }
+
+    const seasonEpisodes = await this.media.episodesInSeason(series[0].id, match.season);
+    const epNumberById = new Map(seasonEpisodes.map((e) => [e.id, e.episodeNumber]));
+    const target = episodeTarget(series[0].id, match.season, seasonEpisodes, match.isSeasonPack);
+    const existing = await this.media.existingFiles(target);
+    const bestExistingByEpisode = new Map<string, { quality: Quality }>();
+    for (const f of existing) {
+      for (const epId of f.episodeIds) {
+        const cur = bestExistingByEpisode.get(epId);
+        if (!cur || compareQuality(f.quality, cur.quality) > 0) bestExistingByEpisode.set(epId, { quality: f.quality });
+      }
+    }
+    const knownEpisodes = new Map<number, KnownEpisode>(
+      seasonEpisodes.map((e) => [e.episodeNumber, { id: e.id, existingQuality: bestExistingByEpisode.get(e.id)?.quality ?? null }]),
+    );
+    const profile = await getQualityProfile(this.db, series[0].qualityProfileId);
+
+    const targetDir = join(root, safeSeries, `Season ${match.season}`);
     await this.storage.ensureDir(targetDir);
-    const targetFile = join(targetDir, `${baseName}${extname(source.path)}`);
+
+    // Single-file, non-pack releases already know their episode(s) from the release title
+    // itself — reuse that rather than re-parsing a possibly-uninformative filename. A
+    // season pack's individual files each need their own filename parsed.
+    const useReleaseLevelMatch = !match.isSeasonPack && match.episodes.length > 0 && candidates.length === 1;
+
+    const imported: ImportedFile[] = [];
+    const rejected: RejectedFile[] = [];
+    let fileIndex = 0;
+
+    for (const file of candidates) {
+      const episodesInFile = useReleaseLevelMatch ? match.episodes : parseEpisodeRelease(baseNameOf(file.path)).episodes;
+      const decision = decideImportFile(file, episodesInFile, knownEpisodes, releaseQuality, profile);
+      if (!decision.approved) {
+        rejected.push({ path: file.path, reasons: decision.rejections.map(rejectionLabel) });
+        continue;
+      }
+      try {
+        const applied = await this.applySeriesFile(
+          series[0].id, file, decision.episodeIds, epNumberById, targetDir, root, match.season, safeSeries, releaseQuality, now, fileIndex++,
+        );
+        imported.push(applied);
+      } catch (err) {
+        rejected.push({ path: file.path, reasons: [`apply_failed: ${(err as Error).message}`] });
+      }
+    }
+
+    if (imported.length === 0) {
+      throw new Error(
+        `No importable file for "${entry.title}" — ${rejected.length} file(s) rejected: ${rejected.map((r) => `${r.path} (${r.reasons.join(", ")})`).join("; ")}`,
+      );
+    }
+
+    // Upgrade-replace: an old file is only removed once every episode it covered has a
+    // newly-imported file — an old multi-episode file where only some episodes were
+    // superseded this round is left alone rather than partially invalidated. No recycle
+    // bin (gap report B7, file organiser, still open) — the superseded file is deleted
+    // outright, not moved aside.
+    const newlyCovered = new Set(imported.flatMap((f) => f.episodeIds));
+    for (const f of existing) {
+      if (f.episodeIds.length > 0 && f.episodeIds.every((id) => newlyCovered.has(id))) {
+        await this.db.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id));
+        await this.storage.delete(join(root, f.relativePath)).catch(() => {});
+      }
+    }
+
+    await this.markAvailability("series", series[0].id, now);
+    await this.insertHistory("series", series[0].id, now, {
+      title: releaseTitle, downloadId: item.downloadId, season: match.season,
+      imported: imported.map((f) => ({ mediaFileId: f.mediaFileId, path: f.path, episodes: f.episodeIds.map((id) => epNumberById.get(id)) })),
+      rejected,
+    });
+    await this.markEntryImported(entry, now);
+    const first = imported[0];
+    this.emitImport("series", series[0].id, series[0].title, item.downloadId, first.path, first.mediaFileId, {
+      season: match.season, filesImported: imported.length, filesRejected: rejected.length,
+      episodes: imported.flatMap((f) => f.episodeIds),
+    });
+    return { imported, rejected };
+  }
+
+  /** Hardlink/copy one approved series file into place, write its media_file row, and
+   *  mark every episode it covers as having a file. */
+  private async applySeriesFile(
+    seriesId: string,
+    file: { path: string; size: number },
+    episodeIds: string[],
+    epNumberById: Map<string, number>,
+    targetDir: string,
+    root: string,
+    season: number,
+    safeSeries: string,
+    quality: Quality,
+    now: string,
+    fileIndex: number,
+  ): Promise<ImportedFile> {
+    const baseName = episodeIds.length > 0
+      ? `${safeSeries} - ${episodeIds.map((id) => episodeQueryTag(season, epNumberById.get(id) ?? 0)).join("-")}`
+      // Unmatched file inside a pack (couldn't tell which episode it is) — disambiguate
+      // with the original filename rather than colliding with siblings on a shared name.
+      : `${safeSeries} - S${pad2(season)} - ${fileIndex}-${baseNameOf(file.path).replace(extname(file.path), "")}`;
+    const targetFile = join(targetDir, `${baseName}${extname(file.path)}`);
+    const hardlinked = await this.storage.hardlink(file.path, targetFile);
+    if (!existsSync(targetFile)) await this.storage.copy(file.path, targetFile);
+    const size = statSync(targetFile).size;
+
+    const mediaFileId = newEntityId("mf");
+    await this.db.insert(schema.mediaFile).values({
+      id: mediaFileId, mediaType: "series", mediaId: seriesId, episodeIds,
+      relativePath: relative(root, targetFile), size, quality, dateAdded: now,
+    });
+    for (const epId of episodeIds) {
+      await this.db.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, epId));
+    }
+    return { mediaFileId, path: targetFile, size, hardlinked, episodeIds };
+  }
+
+  /** Release didn't parse to a season at all — file it under "Season Unknown" with no
+   *  episode matched, same fallback behaviour as before P0.5. */
+  private async importSeriesUnknownSeason(
+    entry: QueueEntryRow,
+    series: typeof schema.series.$inferSelect,
+    source: { path: string; size: number },
+    root: string,
+    safeSeries: string,
+    quality: Quality,
+    item: ClientQueueItem,
+    now: string,
+  ): Promise<ImportResult> {
+    const targetDir = join(root, safeSeries, "Season Unknown");
+    await this.storage.ensureDir(targetDir);
+    const targetFile = join(targetDir, `${safeSeries}${extname(source.path)}`);
     const hardlinked = await this.storage.hardlink(source.path, targetFile);
     if (!existsSync(targetFile)) await this.storage.copy(source.path, targetFile);
     const size = statSync(targetFile).size;
 
-    const now = new Date().toISOString();
     const mediaFileId = newEntityId("mf");
     await this.db.insert(schema.mediaFile).values({
-      id: mediaFileId, mediaType: "series", mediaId: series[0].id, episodeIds,
-      relativePath: relative(root, targetFile), size, quality: spQuality(entry), dateAdded: now,
+      id: mediaFileId, mediaType: "series", mediaId: series.id, episodeIds: [],
+      relativePath: relative(root, targetFile), size, quality, dateAdded: now,
     });
-
-    const updatedEps: string[] = [];
-    for (const epId of episodeIds) {
-      await this.db.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, epId));
-      updatedEps.push(epId);
-    }
-    await this.markAvailability("series", series[0].id, now);
-    await this.insertHistory("series", series[0].id, now, {
-      title: releaseTitle, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked,
-      episodeMatched: episodeIds.length > 0, episodes: match.episodes, season: match.season,
+    await this.markAvailability("series", series.id, now);
+    await this.insertHistory("series", series.id, now, {
+      title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked, episodeMatched: false,
     });
     await this.markEntryImported(entry, now);
-    this.emitImport("series", series[0].id, series[0].title, item.downloadId, targetFile, mediaFileId, { episodes: match.episodes, season: match.season });
-    return { mediaFileId, path: targetFile, size, hardlinked, episodes: updatedEps };
+    this.emitImport("series", series.id, series.title, item.downloadId, targetFile, mediaFileId);
+    return { imported: [{ mediaFileId, path: targetFile, size, hardlinked, episodeIds: [] }], rejected: [] };
   }
 
   /**
@@ -330,7 +476,7 @@ export class AcquisitionService {
    * status is terminal, so the monitor will not touch this entry again.
    */
   private async markEntryImported(
-    entry: (typeof schema.downloadQueueEntry.$inferSelect),
+    entry: QueueEntryRow,
     now: string,
   ): Promise<void> {
     await this.db.update(schema.downloadQueueEntry)
@@ -350,42 +496,38 @@ export class AcquisitionService {
     this.logger.log(`imported "${title}" -> ${path}`);
   }
 
-  /** Locate the completed video file for an item across known layouts. */
-  private async resolveSource(item: ClientQueueItem, entry: (typeof schema.downloadQueueEntry.$inferSelect), downloadsRoot: string): Promise<{ path: string; size: number } | null> {
-    const candidates: string[] = [];
-
+  /** Locate the completed download's content — a direct file, or a directory to enumerate
+   *  (movies want the largest video inside it; series want every video inside it). */
+  private async resolveContent(item: ClientQueueItem, entry: QueueEntryRow, downloadsRoot: string): Promise<ResolvedContent | null> {
     // explicit content path from the client (qbittorrent: content_path / save_path)
     if (item.contentPath) {
-      if (isVideo(item.contentPath)) return { path: item.contentPath, size: statSyncSafe(item.contentPath) };
-      const f = await findLargestVideo(this.storage, item.contentPath).catch(() => null);
-      if (f) return f;
+      if (isVideo(item.contentPath)) return { kind: "file", path: item.contentPath, size: statSyncSafe(item.contentPath) };
+      if (existsSync(item.contentPath)) return { kind: "dir", path: item.contentPath };
     }
     // explicit completed path recorded at grab time (memory/demo)
     const data = (entry.data ?? {}) as { completedPath?: string };
     if (data.completedPath) {
-      if (isVideo(data.completedPath)) return { path: data.completedPath, size: statSyncSafe(data.completedPath) };
-      const f = await findLargestVideo(this.storage, data.completedPath).catch(() => null);
-      if (f) return f;
+      if (isVideo(data.completedPath)) return { kind: "file", path: data.completedPath, size: statSyncSafe(data.completedPath) };
+      if (existsSync(data.completedPath)) return { kind: "dir", path: data.completedPath };
     }
     // conventional usenet layouts under the downloads root
     const title = sanitizeEntry(entry.title);
     const cat = (entry.data as { category?: string })?.category ?? "movies";
-    candidates.push(join(downloadsRoot, title));
-    candidates.push(join(downloadsRoot, "complete", title));
-    candidates.push(join(downloadsRoot, cat, title));
-    candidates.push(join(downloadsRoot, "complete"));
+    const candidates = [
+      join(downloadsRoot, title),
+      join(downloadsRoot, "complete", title),
+      join(downloadsRoot, cat, title),
+      join(downloadsRoot, "complete"),
+    ];
     for (const dir of candidates) {
-      if (existsSync(dir) && statSync(dir).isDirectory()) {
-        const found = await findLargestVideo(this.storage, dir).catch(() => null);
-        if (found) return found;
-      }
+      if (existsSync(dir) && statSync(dir).isDirectory()) return { kind: "dir", path: dir };
     }
     return null;
   }
 
-  private resolveRoot(cfg: RuntimeSettings, movieRoot: string, _downloadsRoot: string): string {
+  private resolveRoot(cfg: RuntimeSettings, mediaRoot: string, fallback: string): string {
     const configured = cfg["paths.rootFolders"]?.[0]?.path;
-    return movieRoot || configured || resolve(process.cwd(), "data", "media", "movies");
+    return mediaRoot || configured || fallback;
   }
 }
 
@@ -406,8 +548,17 @@ function statSyncSafe(path: string): number {
   try { return statSync(path).size; } catch { return 0; }
 }
 
-function spQuality(entry: { data: Record<string, unknown> }): { source: string; resolution: string; edition: string } {
-  const q = entry.data?.quality as { source?: string; resolution?: string; edition?: string } | undefined;
+function baseNameOf(path: string): string {
+  const parts = path.split(/[\\/]/);
+  return parts[parts.length - 1] || path;
+}
+
+function rejectionLabel(r: ImportRejection): string {
+  return r.reason;
+}
+
+function spQuality(entry: { data: Record<string, unknown> }): Quality {
+  const q = entry.data?.quality as Partial<Quality> | undefined;
   return q ? { source: q.source ?? "unknown", resolution: q.resolution ?? "unknown", edition: q.edition ?? "" }
            : { source: "unknown", resolution: "unknown", edition: "" };
 }

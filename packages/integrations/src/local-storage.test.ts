@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LocalStorageProvider, findLargestVideo, VIDEO_EXTENSIONS } from "./local-storage";
+import { LocalStorageProvider, findLargestVideo, findAllVideos, VIDEO_EXTENSIONS } from "./local-storage";
 
 let dir: string;
 const storage = new LocalStorageProvider();
@@ -39,6 +39,16 @@ describe("LocalStorageProvider", () => {
     writeFileSync(join(dir, "samples", "readme.txt"), Buffer.alloc(64));
     const found = await findLargestVideo(storage, dir);
     expect(found?.path).toBe(big);
+  });
+
+  it("findAllVideos returns every video file, largest first, non-video files excluded", async () => {
+    const packDir = join(dir, "pack");
+    await storage.ensureDir(join(packDir, "Season 1"));
+    writeFileSync(join(packDir, "Season 1", "e1.mkv"), Buffer.alloc(2048));
+    writeFileSync(join(packDir, "Season 1", "e2.mkv"), Buffer.alloc(4096));
+    writeFileSync(join(packDir, "Season 1", "nfo.txt"), Buffer.alloc(10));
+    const all = await findAllVideos(storage, packDir);
+    expect(all.map((f) => f.path)).toEqual([join(packDir, "Season 1", "e2.mkv"), join(packDir, "Season 1", "e1.mkv")]);
   });
 
   it("ships a sane video-extension set", () => {

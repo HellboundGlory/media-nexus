@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-import { and, desc, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import type { SQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core";
 import type { Db } from "@medianexus/database";
 import { schema } from "@medianexus/database";
 import { newEntityId } from "@medianexus/shared";
-import type { MediaType } from "@medianexus/domain";
+import type { MediaType, QualityProfileLike } from "@medianexus/domain";
 
 /**
  * Small shared pieces of the movie/series services. These two paths had independently
@@ -86,4 +86,15 @@ export async function ensureAvailability(db: Db, mediaType: MediaType, mediaId: 
     mediaId,
     status: "unknown",
   });
+}
+
+/** Look up a quality profile in the shape the domain layer (`qualityAllowed`/
+ *  `meetsCutoff`/decision engine) consumes. Shared by `DecisionService` (P0.3) and the
+ *  import engine (P0.5) — one implementation of "resolve a title's assigned profile". */
+export async function getQualityProfile(db: Db, qualityProfileId: string | null): Promise<QualityProfileLike | null> {
+  if (!qualityProfileId) return null;
+  const rows = await db
+    .select({ items: schema.qualityProfile.items, cutoffQualityId: schema.qualityProfile.cutoffQualityId })
+    .from(schema.qualityProfile).where(eq(schema.qualityProfile.id, qualityProfileId)).limit(1);
+  return rows[0] ?? null;
 }

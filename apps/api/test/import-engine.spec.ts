@@ -1,0 +1,257 @@
+// SPDX-License-Identifier: MIT
+/**
+ * Roadmap P0.5 (gap report B2): import used to pick the single largest video file under a
+ * completed download and move it — a season pack with N episode files imported 1 and lost
+ * the other N-1. This covers the multi-file replacement: every video file is enumerated and
+ * decided independently (sample/incomplete-transfer detection, episode matching,
+ * upgrade-vs-existing-file), and approved files replace (not duplicate) a superseded one.
+ */
+import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { eq, and } from "drizzle-orm";
+import { EventBus } from "@medianexus/events";
+import { createDb, schema } from "@medianexus/database";
+import { qualityId } from "@medianexus/domain";
+import type { ClientQueueItem, DownloadClientContract, HealthResult, AddDownloadInput } from "@medianexus/integrations";
+import { AcquisitionService } from "../src/acquisition/acquisition.service";
+import { MediaRepository } from "../src/media/media.repository";
+import { ConfigService } from "../src/system/config.service";
+import { EventsService } from "../src/events/events.service";
+import { BlocklistService } from "../src/blocklist/blocklist.service";
+import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
+
+const dir = mkdtempSync(join(tmpdir(), "mn-import-"));
+const handles: { close: () => void }[] = [];
+afterAll(() => { for (const h of handles) h.close(); });
+
+class StubClient implements DownloadClientContract {
+  readonly key = "stub";
+  readonly kind = "torrent" as const;
+  items: ClientQueueItem[] = [];
+  async addRelease(_input: AddDownloadInput): Promise<{ downloadId: string }> { return { downloadId: "d1" }; }
+  async getQueue(): Promise<ClientQueueItem[]> { return this.items; }
+  async remove(): Promise<void> {}
+  async healthcheck(): Promise<HealthResult> { return { ok: true }; }
+}
+
+interface Harness {
+  db: ReturnType<typeof createDb>["db"];
+  service: AcquisitionService;
+  client: StubClient;
+  configured: ConfiguredClient;
+  downloadsRoot: string;
+  mediaRoot: string;
+}
+
+let counter = 0;
+async function harness(): Promise<Harness> {
+  const id = `imp-${counter++}`;
+  const handle = createDb(join(dir, `${id}.db`));
+  handle.runMigrations();
+  handles.push(handle);
+
+  const downloadsRoot = join(dir, id, "downloads");
+  const mediaRoot = join(dir, id, "media");
+  mkdirSync(downloadsRoot, { recursive: true });
+  mkdirSync(mediaRoot, { recursive: true });
+
+  const config = new ConfigService(handle.db);
+  await config.upsert({ "paths.downloads": downloadsRoot, "paths.rootFolders": [{ path: mediaRoot }] });
+
+  const events = new EventsService(new EventBus());
+  const client = new StubClient();
+  const providers = { configuredDownloadClients: async () => [{ row: null, provider: client }] } as unknown as ProvidersService;
+  const blocklist = new BlocklistService(handle.db);
+  const service = new AcquisitionService(handle.db, config, events, providers, new MediaRepository(handle.db), blocklist);
+  return { db: handle.db, service, client, configured: { row: null, provider: client }, downloadsRoot, mediaRoot };
+}
+
+/** Stage a multi-file pack directory the way a torrent client would deliver one. */
+function stagePack(downloadsRoot: string, folder: string, files: { name: string; size?: number }[]): string {
+  const dirPath = join(downloadsRoot, folder);
+  mkdirSync(dirPath, { recursive: true });
+  for (const f of files) {
+    const full = join(dirPath, f.name);
+    mkdirSync(join(full, ".."), { recursive: true });
+    writeFileSync(full, Buffer.alloc(f.size ?? 2048));
+  }
+  return dirPath;
+}
+
+async function seedSeries(db: Harness["db"], mediaRoot: string, qualityProfileId: string | null = null) {
+  const now = new Date().toISOString();
+  await db.insert(schema.series).values({
+    id: "s1", tvdbId: 1, tmdbId: null, imdbId: null, title: "Pack Show", overview: "",
+    status: "continuing", seriesType: "standard", network: null, firstAirYear: 2020,
+    monitored: true, qualityProfileId, rootFolderPath: mediaRoot,
+    genres: [], images: [], tags: [], addedAt: now, updatedAt: now,
+  });
+  await db.insert(schema.season).values([{ id: "sea2", seriesId: "s1", seasonNumber: 2, monitored: true }]);
+  await db.insert(schema.episode).values([
+    { id: "s2e1", seriesId: "s1", seasonId: "sea2", episodeNumber: 1, absoluteNumber: null, title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null },
+    { id: "s2e2", seriesId: "s1", seasonId: "sea2", episodeNumber: 2, absoluteNumber: null, title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null },
+    { id: "s2e3", seriesId: "s1", seasonId: "sea2", episodeNumber: 3, absoluteNumber: null, title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null },
+  ]);
+}
+
+async function seedProfile(db: Harness["db"], id: string, items: number[], cutoffQualityId: number) {
+  const now = new Date().toISOString();
+  await db.insert(schema.qualityProfile).values({ id, name: id, items, cutoffQualityId, upgradeAllowed: true, language: "en", isDefault: false, createdAt: now, updatedAt: now });
+}
+
+async function packQueueEntry(db: Harness["db"], title: string, quality: { source: string; resolution: string; edition: string }) {
+  const now = new Date().toISOString();
+  const row = {
+    id: "q1", mediaType: "series", mediaId: "s1", downloadClientId: null, downloadId: "d1",
+    title, status: "downloading", progress: 50, size: 6144, remainingTime: null, errorMessage: null,
+    data: { releaseTitle: title, quality } as Record<string, unknown>,
+    addedAt: now, updatedAt: now,
+  };
+  await db.insert(schema.downloadQueueEntry).values(row);
+  return row;
+}
+
+const completedPack = (contentPath: string): ClientQueueItem => ({
+  downloadId: "d1", title: "Pack.Show.S02.1080p.WEB-DL", status: "completed", progress: 100, size: 6144, contentPath,
+});
+
+describe("P0.5 — season pack imports every episode file", () => {
+  let h: Harness;
+  beforeEach(async () => { h = await harness(); await seedSeries(h.db, h.mediaRoot); });
+
+  it("imports all N episode files, not just the largest", async () => {
+    const packDir = stagePack(h.downloadsRoot, "Pack.Show.S02.1080p.WEB-DL", [
+      { name: "Pack.Show.S02E01.1080p.WEB-DL.mkv", size: 1000 },
+      { name: "Pack.Show.S02E02.1080p.WEB-DL.mkv", size: 5000 }, // largest — the old single-file bug would only import this one
+      { name: "Pack.Show.S02E03.1080p.WEB-DL.mkv", size: 2000 },
+    ]);
+    await packQueueEntry(h.db, "Pack.Show.S02.1080p.WEB-DL", { source: "web", resolution: "1080p", edition: "" });
+    h.client.items = [completedPack(packDir)];
+
+    const result = await h.service.syncForClient(h.configured);
+    expect(result.imported).toBe(1); // one queue entry, regardless of how many files it contained
+
+    const files = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaType, "series"));
+    expect(files).toHaveLength(3);
+
+    const episodes = await h.db.select().from(schema.episode).where(eq(schema.episode.seriesId, "s1"));
+    expect(episodes.every((e) => e.hasFile)).toBe(true);
+
+    const entry = (await h.db.select().from(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, "q1")))[0];
+    expect(entry.status).toBe("imported");
+  });
+
+  it("rejects a sample file inside the pack — it is not imported, and stays visible in history", async () => {
+    const packDir = stagePack(h.downloadsRoot, "Pack.Show.S02.1080p.WEB-DL", [
+      { name: "Pack.Show.S02E01.1080p.WEB-DL.mkv", size: 2000 },
+      { name: "Pack.Show.S02E01.Sample.mkv", size: 100 },
+      { name: "Pack.Show.S02E02.1080p.WEB-DL.mkv", size: 2000 },
+    ]);
+    await packQueueEntry(h.db, "Pack.Show.S02.1080p.WEB-DL", { source: "web", resolution: "1080p", edition: "" });
+    h.client.items = [completedPack(packDir)];
+
+    await h.service.syncForClient(h.configured);
+
+    const files = await h.db.select().from(schema.mediaFile);
+    expect(files).toHaveLength(2); // sample excluded
+    expect(files.some((f) => f.relativePath.toLowerCase().includes("sample"))).toBe(false);
+
+    const history = await h.db.select().from(schema.historyEntry).where(eq(schema.historyEntry.action, "import_completed"));
+    const rejected = (history[0].data as { rejected?: { path: string; reasons: string[] }[] }).rejected ?? [];
+    expect(rejected.some((r) => r.path.includes("Sample") && r.reasons.includes("sample"))).toBe(true);
+  });
+
+  it("rejects an empty/incomplete file inside the pack", async () => {
+    const packDir = stagePack(h.downloadsRoot, "Pack.Show.S02.1080p.WEB-DL", [
+      { name: "Pack.Show.S02E01.1080p.WEB-DL.mkv", size: 2000 },
+      { name: "Pack.Show.S02E02.1080p.WEB-DL.mkv", size: 0 }, // still being written
+    ]);
+    await packQueueEntry(h.db, "Pack.Show.S02.1080p.WEB-DL", { source: "web", resolution: "1080p", edition: "" });
+    h.client.items = [completedPack(packDir)];
+
+    await h.service.syncForClient(h.configured);
+
+    const ep1 = (await h.db.select().from(schema.episode).where(eq(schema.episode.id, "s2e1")))[0];
+    const ep2 = (await h.db.select().from(schema.episode).where(eq(schema.episode.id, "s2e2")))[0];
+    expect(ep1.hasFile).toBe(true);
+    expect(ep2.hasFile).toBe(false); // the empty file was rejected, not imported as a 0-byte "episode"
+  });
+
+  it("rejects a file whose episode number doesn't belong to the target season", async () => {
+    const packDir = stagePack(h.downloadsRoot, "Pack.Show.S02.1080p.WEB-DL", [
+      { name: "Pack.Show.S02E01.1080p.WEB-DL.mkv", size: 2000 },
+      { name: "Pack.Show.S02E99.1080p.WEB-DL.mkv", size: 2000 }, // no episode 99 in this season
+    ]);
+    await packQueueEntry(h.db, "Pack.Show.S02.1080p.WEB-DL", { source: "web", resolution: "1080p", edition: "" });
+    h.client.items = [completedPack(packDir)];
+
+    await h.service.syncForClient(h.configured);
+    const files = await h.db.select().from(schema.mediaFile);
+    expect(files).toHaveLength(1);
+  });
+});
+
+describe("P0.5 — upgrade-replace", () => {
+  let h: Harness;
+
+  it("replaces the existing file when the release is a genuine upgrade", async () => {
+    h = await harness();
+    await seedProfile(h.db, "qp1", [
+      qualityId({ source: "hdtv", resolution: "720p", edition: "" } as never),
+      qualityId({ source: "web", resolution: "1080p", edition: "" } as never),
+    ], qualityId({ source: "web", resolution: "1080p", edition: "" } as never));
+    await seedSeries(h.db, h.mediaRoot, "qp1");
+
+    // Pre-existing lower-quality file for episode 1.
+    const now = new Date().toISOString();
+    await h.db.insert(schema.mediaFile).values({
+      id: "mf_old", mediaType: "series", mediaId: "s1", episodeIds: ["s2e1"],
+      relativePath: "Pack Show/Season 2/old.mkv", size: 500,
+      quality: { source: "hdtv", resolution: "720p", edition: "" }, dateAdded: now,
+    });
+    mkdirSync(join(h.mediaRoot, "Pack Show", "Season 2"), { recursive: true });
+    writeFileSync(join(h.mediaRoot, "Pack Show", "Season 2", "old.mkv"), Buffer.alloc(500));
+    await h.db.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, "s2e1"));
+
+    const packDir = stagePack(h.downloadsRoot, "Pack.Show.S02E01.1080p.WEB-DL", [{ name: "Pack.Show.S02E01.1080p.WEB-DL.mkv", size: 2000 }]);
+    await packQueueEntry(h.db, "Pack.Show.S02E01.1080p.WEB-DL", { source: "web", resolution: "1080p", edition: "" });
+    h.client.items = [{ downloadId: "d1", title: "Pack.Show.S02E01.1080p.WEB-DL", status: "completed", progress: 100, size: 2000, contentPath: packDir }];
+
+    await h.service.syncForClient(h.configured);
+
+    const files = await h.db.select().from(schema.mediaFile).where(and(eq(schema.mediaFile.mediaType, "series"), eq(schema.mediaFile.mediaId, "s1")));
+    expect(files).toHaveLength(1); // old row replaced, not duplicated
+    expect(files[0].quality).toEqual({ source: "web", resolution: "1080p", edition: "" });
+  });
+
+  it("rejects (does not import) once the existing file already meets the profile's cutoff", async () => {
+    h = await harness();
+    await seedProfile(h.db, "qp1", [
+      qualityId({ source: "hdtv", resolution: "720p", edition: "" } as never),
+      qualityId({ source: "web", resolution: "1080p", edition: "" } as never),
+    ], qualityId({ source: "hdtv", resolution: "720p", edition: "" } as never)); // cutoff already at the lowest allowed
+    await seedSeries(h.db, h.mediaRoot, "qp1");
+
+    const now = new Date().toISOString();
+    await h.db.insert(schema.mediaFile).values({
+      id: "mf_old", mediaType: "series", mediaId: "s1", episodeIds: ["s2e1"],
+      relativePath: "Pack Show/Season 2/old.mkv", size: 500,
+      quality: { source: "hdtv", resolution: "720p", edition: "" }, dateAdded: now,
+    });
+    await h.db.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, "s2e1"));
+
+    const packDir = stagePack(h.downloadsRoot, "Pack.Show.S02E01.1080p.WEB-DL", [{ name: "Pack.Show.S02E01.1080p.WEB-DL.mkv", size: 2000 }]);
+    await packQueueEntry(h.db, "Pack.Show.S02E01.1080p.WEB-DL", { source: "web", resolution: "1080p", edition: "" });
+    h.client.items = [{ downloadId: "d1", title: "Pack.Show.S02E01.1080p.WEB-DL", status: "completed", progress: 100, size: 2000, contentPath: packDir }];
+
+    // No importable file -> throws -> recordImportFailure, exactly like "no video found".
+    await h.service.syncForClient(h.configured);
+
+    const entry = (await h.db.select().from(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, "q1")))[0];
+    expect(entry.errorMessage).toMatch(/cutoff_already_met/);
+    const files = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaId, "s1"));
+    expect(files).toHaveLength(1); // still just the old one — nothing replaced it
+  });
+});

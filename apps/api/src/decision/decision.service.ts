@@ -6,11 +6,12 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import {
   evaluate, type Decision, type DecisionContext,
-  type Release, type MediaType, type QualityProfileLike,
+  type Release, type MediaType,
 } from "@medianexus/domain";
 import { MediaRepository } from "../media/media.repository";
 import { BlocklistService } from "../blocklist/blocklist.service";
 import { ConfigService } from "../system/config.service";
+import { getQualityProfile } from "../media/library.helpers";
 
 const ACTIVE_QUEUE_STATUSES = ["queued", "downloading", "paused", "importing"];
 
@@ -46,7 +47,7 @@ export class DecisionService {
       this.blocklist.isBlocklisted({ mediaType, mediaId, title: release.title, indexerId: release.indexerId }),
       this.hasActiveQueueConflict(mediaType, mediaId),
       this.config.get(),
-      this.getProfile(item.qualityProfileId),
+      getQualityProfile(this.db, item.qualityProfileId),
     ]);
 
     const context: DecisionContext = {
@@ -58,14 +59,6 @@ export class DecisionService {
 
   async evaluateMany(mediaType: MediaType, mediaId: string, releases: Release[]): Promise<Decision[]> {
     return Promise.all(releases.map((r) => this.evaluate(mediaType, mediaId, r)));
-  }
-
-  private async getProfile(qualityProfileId: string | null): Promise<QualityProfileLike | null> {
-    if (!qualityProfileId) return null;
-    const rows = await this.db
-      .select({ items: schema.qualityProfile.items, cutoffQualityId: schema.qualityProfile.cutoffQualityId })
-      .from(schema.qualityProfile).where(eq(schema.qualityProfile.id, qualityProfileId)).limit(1);
-    return rows[0] ?? null;
   }
 
   private async hasActiveQueueConflict(mediaType: MediaType, mediaId: string): Promise<boolean> {

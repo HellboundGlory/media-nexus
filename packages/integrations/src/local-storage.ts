@@ -64,8 +64,10 @@ export class LocalStorageProvider implements StorageContract {
 /** Video media extensions considered importable. */
 export const VIDEO_EXTENSIONS = new Set([".mkv", ".mp4", ".avi", ".mov", ".m4v", ".ts", ".wmv", ".webm", ".flv", ".mpg", ".mpeg"]);
 
-/** Depth-first search for the largest video file under `root`. */
-export async function findLargestVideo(storage: StorageContract, root: string): Promise<{ path: string; size: number } | null> {
+/** Depth-first search for every video file under `root`, largest first — the input to
+ *  multi-file (season-pack) import (roadmap P0.5). `findLargestVideo` is the single-file
+ *  special case, kept for movie import which only ever wants one file. */
+export async function findAllVideos(storage: StorageContract, root: string): Promise<{ path: string; size: number }[]> {
   async function walk(dir: string): Promise<{ path: string; size: number }[]> {
     const items = await storage.list(dir).catch(() => [] as StorageItem[]);
     const files: { path: string; size: number }[] = [];
@@ -79,9 +81,15 @@ export async function findLargestVideo(storage: StorageContract, root: string): 
     return files;
   }
   const all = await walk(root);
-  if (all.length === 0) return null;
   all.sort((a, b) => b.size - a.size);
-  return all[0];
+  return all;
+}
+
+/** Largest video file under `root`, or null if none — the movie-import special case of
+ *  `findAllVideos`. */
+export async function findLargestVideo(storage: StorageContract, root: string): Promise<{ path: string; size: number } | null> {
+  const all = await findAllVideos(storage, root);
+  return all[0] ?? null;
 }
 
 function extOf(p: string): string {
