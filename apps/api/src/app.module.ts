@@ -12,6 +12,7 @@ import { SettingsModule } from "./system/settings.module";
 import { JobsModule } from "./jobs/jobs.module";
 import { DemoProvidersModule } from "./providers/demo.providers";
 import { MoviesModule } from "./movies/movies.module";
+import { QualityProfilesModule } from "./quality-profiles/quality-profiles.module";
 import { SeriesModule } from "./series/series.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { MediaServersModule } from "./media-servers/media-servers.module";
@@ -39,6 +40,7 @@ import { SecurityHeadersMiddleware } from "./common/security-headers.middleware"
     JobsModule,
     DemoProvidersModule,
     MoviesModule,
+    QualityProfilesModule,
     SeriesModule,
     NotificationsModule,
     MediaServersModule,

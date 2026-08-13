@@ -2,10 +2,17 @@
 /** Shared mappers for quality profiles, indexers and history (used across importers). */
 import { and, eq } from "drizzle-orm";
 import { schema, type Db } from "@medianexus/database";
+import { qualityId } from "@medianexus/domain";
 import type { SourceDb, ImportRow } from "../importer.types";
 import { str, num, bool, jsonc } from "../rows";
 
 const iso = () => new Date().toISOString();
+
+// Upstream's per-profile allowed-quality list isn't mapped item-by-item (that would need
+// walking QualityProfile.Items' JSON, which varies by Sonarr/Radarr schema version); every
+// imported profile gets a single placeholder quality instead, same simplification as before
+// this migration. Users can broaden it via the native quality-profiles CRUD after import.
+const PLACEHOLDER_QUALITY_ID = qualityId({ source: "web", resolution: "1080p", edition: "" });
 
 /** Import quality profiles (derived ids -> idempotent). */
 export async function importQualityProfiles(
@@ -21,8 +28,8 @@ export async function importQualityProfiles(
     await target.insert(schema.qualityProfile).values({
       id: derivedId,
       name: str(r, "Name") ?? `Profile ${id}`,
-      allowed: [{ source: "web", resolution: "1080p" }],
-      cutoff: { source: "web", resolution: "1080p" },
+      items: [PLACEHOLDER_QUALITY_ID],
+      cutoffQualityId: PLACEHOLDER_QUALITY_ID,
       upgradeAllowed: bool(r, "UpgradeAllowed", true),
       isDefault: count === 0,
       language: "en",

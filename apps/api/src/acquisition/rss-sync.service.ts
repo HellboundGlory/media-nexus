@@ -5,7 +5,7 @@ import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import {
-  episodeQueryTag, parseEpisodeRelease, seriesTitleMatches, qualityRank,
+  episodeQueryTag, parseEpisodeRelease, seriesTitleMatches, compareQuality,
 } from "@medianexus/domain";
 import type { Release } from "@medianexus/domain";
 import { IndexersService } from "../indexers/indexers.service";
@@ -136,7 +136,7 @@ export class RssSyncService {
 function bestRelease(releases: Release[]): Release | null {
   if (releases.length === 0) return null;
   return [...releases].sort((a, b) => {
-    const d = qualityRank(b.quality) - qualityRank(a.quality);
+    const d = compareQuality(b.quality, a.quality);
     if (d !== 0) return d;
     return (b.seeders ?? 0) - (a.seeders ?? 0);
   })[0];

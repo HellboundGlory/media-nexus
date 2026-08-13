@@ -17,6 +17,7 @@ import {
 import type { SonarrNativeSource } from "@medianexus/compatibility";
 import type { RadarrNativeSource } from "@medianexus/compatibility";
 import type { ProwlarrNativeSource } from "@medianexus/compatibility";
+import { qualityMeta } from "@medianexus/domain";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
@@ -25,6 +26,21 @@ import { SeriesService } from "../series/series.service";
 import { MoviesService } from "../movies/movies.service";
 import { JobsService } from "../jobs/jobs.service";
 import { IndexersService } from "../indexers/indexers.service";
+
+/** Map our ordered-registry profile shape onto the Sonarr/Radarr wire shape:
+ *  `items` become {quality:{id,name},allowed:true} entries and `cutoff` becomes
+ *  the real cutoff quality id (previously a hardcoded 0 — gap report D6). */
+function toCompatQualityProfile(p: typeof schema.qualityProfile.$inferSelect): CompatQualityProfile {
+  return {
+    id: p.id,
+    name: p.name,
+    upgradeAllowed: p.upgradeAllowed,
+    cutoff: p.cutoffQualityId,
+    items: p.items.map((id) => ({ quality: { id, name: qualityMeta(id)?.title ?? "Unknown" }, allowed: true })),
+    minFormatScore: 0,
+    cutoffFormatScore: 0,
+  };
+}
 
 /**
  * Compatibility layer (M6): builds the Sonarr v3 / Radarr v3 / Prowlarr v1 surfaces
@@ -104,7 +120,7 @@ export class CompatService {
       removeSeries: async (id) => { await this.series.remove(id); },
       qualityProfiles: async () => {
         const rows = await this.db.select().from(schema.qualityProfile);
-        return rows.map((p) => ({ id: p.id, name: p.name, upgradeAllowed: p.upgradeAllowed, cutoff: 0, items: p.allowed as never, minFormatScore: 0, cutoffFormatScore: 0 } satisfies CompatQualityProfile));
+        return rows.map(toCompatQualityProfile);
       },
       episodes: async (sid, season) => {
         const rows = await this.series.episodes(sid, season);
@@ -147,7 +163,7 @@ export class CompatService {
         return { id: created.id, title: created.title, tmdbId: created.tmdbId, status: created.status, year: created.releaseDate ? Number(created.releaseDate.slice(0, 4)) : null, path: created.rootFolderPath, monitored: created.monitored, qualityProfileId: created.qualityProfileId, hasFile: false } satisfies CompatMovie;
       },
       removeMovie: async (id) => { await this.movies.remove(id); },
-      qualityProfiles: async () => (await this.db.select().from(schema.qualityProfile)).map((p): CompatQualityProfile => ({ id: p.id, name: p.name, upgradeAllowed: p.upgradeAllowed, cutoff: 0, items: p.allowed as never, minFormatScore: 0, cutoffFormatScore: 0 })),
+      qualityProfiles: async () => (await this.db.select().from(schema.qualityProfile)).map(toCompatQualityProfile),
       runCommand: async (name, _body) => {
         if (name === "MoviesSearch" || name.startsWith("MovieSearch")) await this.jobs.dispatch({ jobKey: "media.rssSync", trigger: "manual" });
         else if (name === "RefreshMovie") await this.jobs.dispatch({ jobKey: "discovery.indexerRefresh", trigger: "manual" });

@@ -1,17 +1,34 @@
 // SPDX-License-Identifier: MIT
 import { eq } from "drizzle-orm";
+import { QUALITY_REGISTRY, qualityId } from "@medianexus/domain";
 import type { Db } from "./connection";
 import { schema } from "./schema";
 
-/** Idempotent static seed: shared quality profiles, canonical indexer definitions,
- *  and the default job definitions. Bootstrap admin + API key are created by the API
- *  on first boot (they require hashing + secret handling) — see apps/api/src/bootstrap. */
+const q = (source: string, resolution: string) => qualityId({ source, resolution, edition: "" } as never);
+
+/** Idempotent static seed: shared quality profiles, quality size definitions,
+ *  canonical indexer definitions, and the default job definitions. Bootstrap
+ *  admin + API key are created by the API on first boot (they require hashing +
+ *  secret handling) — see apps/api/src/bootstrap. */
 export async function seedStatic(db: Db): Promise<void> {
   // --- Quality profiles (shared across movies & series) ---
+  // `items` is ordered worst -> best (upstream convention); see packages/domain/src/quality.ts.
   const profiles = [
-    { name: "Any", allowed: [{ source: "sd", resolution: "480p" }, { source: "sd", resolution: "576p" }, { source: "hdtv", resolution: "720p" }, { source: "web", resolution: "720p" }, { source: "web", resolution: "1080p" }, { source: "bluray", resolution: "1080p" }, { source: "bluray", resolution: "2160p" }], cutoff: { source: "web", resolution: "1080p" }, upgradeAllowed: true },
-    { name: "HD-1080p", allowed: [{ source: "hdtv", resolution: "720p" }, { source: "web", resolution: "720p" }, { source: "web", resolution: "1080p" }, { source: "bluray", resolution: "1080p" }], cutoff: { source: "web", resolution: "1080p" }, upgradeAllowed: true },
-    { name: "UHD-2160p", allowed: [{ source: "web", resolution: "2160p" }, { source: "bluray", resolution: "2160p" }], cutoff: { source: "bluray", resolution: "2160p" }, upgradeAllowed: true },
+    {
+      name: "Any",
+      items: [q("sd", "480p"), q("sd", "576p"), q("hdtv", "720p"), q("web", "720p"), q("web", "1080p"), q("bluray", "1080p"), q("bluray", "2160p")],
+      cutoffQualityId: q("web", "1080p"),
+    },
+    {
+      name: "HD-1080p",
+      items: [q("hdtv", "720p"), q("web", "720p"), q("web", "1080p"), q("bluray", "1080p")],
+      cutoffQualityId: q("web", "1080p"),
+    },
+    {
+      name: "UHD-2160p",
+      items: [q("web", "2160p"), q("bluray", "2160p")],
+      cutoffQualityId: q("bluray", "2160p"),
+    },
   ];
   for (const [i, p] of profiles.entries()) {
     const existing = await db.select().from(schema.qualityProfile).where(eq(schema.qualityProfile.name, p.name)).limit(1);
@@ -19,12 +36,38 @@ export async function seedStatic(db: Db): Promise<void> {
     await db.insert(schema.qualityProfile).values({
       id: `qp_${p.name.toLowerCase().replace(/[^a-z0-9]+/g, "")}`,
       name: p.name,
-      allowed: p.allowed,
-      cutoff: p.cutoff,
-      upgradeAllowed: p.upgradeAllowed,
+      items: p.items,
+      cutoffQualityId: p.cutoffQualityId,
+      upgradeAllowed: true,
       isDefault: i === 0,
       language: "en",
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  // --- Quality size definitions (min/max/preferred MB per runtime-minute) ---
+  // Seeded by resolution tier; source doesn't change the expected bitrate envelope.
+  // Not consumed by anything yet — the decision engine's size specification
+  // (roadmap P0.3) is the intended reader.
+  const sizeByResolution: Record<string, { minSize: number | null; maxSize: number | null; preferredSize: number | null }> = {
+    unknown: { minSize: null, maxSize: null, preferredSize: null },
+    "480p": { minSize: 2, maxSize: 100, preferredSize: 35 },
+    "576p": { minSize: 2, maxSize: 110, preferredSize: 40 },
+    "720p": { minSize: 4, maxSize: 200, preferredSize: 65 },
+    "1080p": { minSize: 8, maxSize: 320, preferredSize: 110 },
+    "2160p": { minSize: 20, maxSize: 900, preferredSize: 300 },
+  };
+  for (const def of QUALITY_REGISTRY) {
+    const existing = await db.select().from(schema.qualityDefinition).where(eq(schema.qualityDefinition.id, def.id)).limit(1);
+    if (existing.length) continue;
+    const size = sizeByResolution[def.resolution];
+    await db.insert(schema.qualityDefinition).values({
+      id: def.id,
+      title: def.title,
+      minSize: size.minSize,
+      maxSize: size.maxSize,
+      preferredSize: size.preferredSize,
       updatedAt: new Date().toISOString(),
     });
   }

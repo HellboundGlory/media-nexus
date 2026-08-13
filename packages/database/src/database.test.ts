@@ -20,6 +20,12 @@ describe("database", () => {
     await seedStatic(handle.db);
     const profiles = handle.db.select().from(schema.qualityProfile).all();
     expect(profiles.length).toBeGreaterThanOrEqual(3);
+    for (const p of profiles) {
+      expect(p.items.length).toBeGreaterThan(0);
+      expect(p.items).toContain(p.cutoffQualityId);
+    }
+    const qualityDefs = handle.db.select().from(schema.qualityDefinition).all();
+    expect(qualityDefs.length).toBe(36);
     const defs = handle.db.select().from(schema.indexerDefinition).all();
     expect(defs.some((d) => d.key === "memory")).toBe(true);
     const jobs = handle.db.select().from(schema.jobDefinition).all();

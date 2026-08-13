@@ -49,16 +49,33 @@ export const setting = sqliteTable("setting", {
   updatedAt: iso("updated_at"),
 });
 
-// Shared quality profiles (movies + series)
+// Shared quality profiles (movies + series). `items` is an ordered list of
+// quality registry ids (worst to best, upstream convention); `cutoffQualityId`
+// is one of them. See packages/domain/src/quality.ts for the registry and the
+// comparator that consumes this shape (roadmap P0.2).
 export const qualityProfile = sqliteTable("quality_profile", {
   id: text("id").primaryKey(),
   name: text("name").notNull().unique(),
-  allowed: text("allowed", { mode: "json" }).$type<{ source: string; resolution: string }[]>().notNull(),
-  cutoff: text("cutoff", { mode: "json" }).$type<{ source: string; resolution: string }>().notNull(),
+  items: json<number[]>("items"),
+  cutoffQualityId: integer("cutoff_quality_id").notNull().default(0),
   upgradeAllowed: bool("upgrade_allowed", true),
   language: text("language").notNull().default("en"),
   isDefault: bool("is_default", false),
   createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+});
+
+// Per-quality size limits (min/max/preferred, MB per runtime-minute — upstream's
+// convention). `id` is the quality registry id from packages/domain/src/quality.ts,
+// not a newEntityId-prefixed row — it is a stable reference id, not an entity.
+// Seeded with sensible defaults; consumed by the decision engine's size
+// specification (roadmap P0.3) — not read anywhere yet as of this table landing.
+export const qualityDefinition = sqliteTable("quality_definition", {
+  id: integer("id").primaryKey(),
+  title: text("title").notNull(),
+  minSize: integer("min_size"), // MB per runtime-minute; null = no minimum
+  maxSize: integer("max_size"), // MB per runtime-minute; null = unlimited
+  preferredSize: integer("preferred_size"), // MB per runtime-minute; null = no preference
   updatedAt: iso("updated_at"),
 });
 
@@ -110,7 +127,6 @@ export const season = sqliteTable("season", {
   seriesId: text("series_id").notNull(),
   seasonNumber: integer("season_number").notNull(),
   monitored: bool("monitored", true),
-  qualityProfileId: text("quality_profile_id"),
 }, (t) => [
   uniqueIndex("season_series_num_idx").on(t.seriesId, t.seasonNumber),
   index("season_series_idx").on(t.seriesId),
@@ -308,6 +324,7 @@ export const schema = {
   adminCredential,
   setting,
   qualityProfile,
+  qualityDefinition,
   movie,
   series,
   season,
