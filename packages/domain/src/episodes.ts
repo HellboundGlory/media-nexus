@@ -116,8 +116,9 @@ function stripThe(s: string): string {
   return s.replace(/^the\s+/, "");
 }
 
-/** Whether a parsed release series-name plausibly matches a library series title. */
-export function seriesTitleMatches(releaseName: string | undefined, libraryTitle: string): boolean {
+/** Whether a parsed release title plausibly matches a library title — media-neutral
+ *  despite the historical name of its arguments; used for both series and movie matching. */
+export function titleMatches(releaseName: string | undefined, libraryTitle: string): boolean {
   if (!releaseName) return false;
   const r = normalizeReleaseSeriesName(releaseName);
   const t = normalizeReleaseSeriesName(libraryTitle);

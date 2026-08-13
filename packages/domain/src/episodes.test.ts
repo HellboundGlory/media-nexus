@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { describe, it, expect } from "vitest";
-import { parseEpisodeRelease, seriesTitleMatches, normalizeReleaseSeriesName } from "./episodes";
+import { parseEpisodeRelease, titleMatches, normalizeReleaseSeriesName } from "./episodes";
 
 describe("episode release parser", () => {
   it("parses SxxExx releases and sniffs quality", () => {
@@ -63,14 +63,22 @@ describe("episode release parser", () => {
   });
 });
 
-describe("series name matching", () => {
+describe("title matching (series and movies)", () => {
   it("matches dotted/simple forms with tolerance for articles", () => {
-    expect(seriesTitleMatches("Breaking.Bad", "Breaking Bad")).toBe(true);
-    expect(seriesTitleMatches("breaking-bad", "BreakingBad")).toBe(true);
-    expect(seriesTitleMatches("the-last-of-us", "The Last of Us")).toBe(true);
+    expect(titleMatches("Breaking.Bad", "Breaking Bad")).toBe(true);
+    expect(titleMatches("breaking-bad", "BreakingBad")).toBe(true);
+    expect(titleMatches("the-last-of-us", "The Last of Us")).toBe(true);
   });
 
   it("rejects unrelated names", () => {
-    expect(seriesTitleMatches("Dune", "Breaking Bad")).toBe(false);
+    expect(titleMatches("Dune", "Breaking Bad")).toBe(false);
+  });
+
+  it("matches a movie release title with a trailing year against the bare library title", () => {
+    // parseEpisodeRelease()'s "probably a movie" fallback extracts a seriesTitle that still
+    // includes the year (nothing in TITLE_STOP_PATTERNS strips a bare 4-digit year) —
+    // titleMatches's substring/startsWith tolerance must still line it up.
+    expect(titleMatches("dune 2021", "Dune")).toBe(true);
+    expect(titleMatches("the matrix 1999", "The Matrix")).toBe(true);
   });
 });

@@ -148,9 +148,14 @@ export class MetadataService {
       const existing = await this.db.select({ id: schema.movie.id }).from(schema.movie).where(eq(schema.movie.tmdbId, tmdbId)).limit(1);
       if (existing[0]) return { id: existing[0].id, created: false };
       const details = await p.getDetails("movie", String(tmdbId));
+      // Movie automation (roadmap C1) searches anything past its minimum-availability gate.
+      // TMDB already tells us whether the film has actually come out — use it, rather than
+      // defaulting every Discover-added movie to "announced" (always searchable), which
+      // would grab cams for unreleased films the moment automation runs.
+      const minimumAvailability = details.releaseDate && new Date(details.releaseDate) > new Date() ? "released" : "announced";
       const created = await this.movies.create({
         title: details.title, tmdbId, overview: details.overview ?? "", releaseDate: details.releaseDate,
-        monitored: true, rootFolderPath: "", tags: [],
+        monitored: true, rootFolderPath: "", tags: [], minimumAvailability,
       });
       await this.refreshMovie(created.id).catch((err) => this.logger.warn(`post-add movie enrich failed: ${(err as Error).message}`));
       return { id: created.id, created: true };

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+export type MinimumAvailability = "announced" | "in_cinemas" | "released" | "deleted";
+
 export interface Movie {
   id: string;
   tmdbId: number | null;
@@ -10,6 +12,7 @@ export interface Movie {
   monitored: boolean;
   qualityProfileId: string | null;
   rootFolderPath: string;
+  minimumAvailability: MinimumAvailability;
   genres: string[];
   tags: string[];
   hasFile: boolean;
@@ -54,6 +57,22 @@ export interface WantedEpisode extends Episode {
   seasonNumber: number;
   seriesTitle: string;
 }
+export interface WantedEpisodeRow extends WantedEpisode {
+  mediaType: "series";
+}
+
+export interface WantedMovieRow {
+  mediaType: "movie";
+  id: string;
+  title: string;
+  releaseDate: string | null;
+  minimumAvailability: MinimumAvailability;
+  monitored: boolean;
+  hasFile: boolean;
+}
+
+/** GET /wanted/missing returns a merge of both (roadmap C1). */
+export type WantedItem = WantedMovieRow | WantedEpisodeRow;
 
 export interface CalendarEntry {
   id: string;

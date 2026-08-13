@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { z } from "zod";
+import { minimumAvailabilitySchema } from "./media";
 
 export const createMovieSchema = z.object({
   tmdbId: z.number().int().positive().optional(),
@@ -10,6 +11,10 @@ export const createMovieSchema = z.object({
   monitored: z.boolean().default(true),
   qualityProfileId: z.string().optional(),
   rootFolderPath: z.string().default(""),
+  // Radarr's search-gate: "announced" (the historical hardcoded value here) always passes
+  // hasMinimumAvailability(), so the default preserves every existing caller's behavior.
+  // Movie automation (roadmap C1) is what gives this field real consequences.
+  minimumAvailability: minimumAvailabilitySchema.default("announced"),
   tags: z.array(z.string()).default([]),
 });
 export type CreateMovie = z.infer<typeof createMovieSchema>;

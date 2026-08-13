@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
-import type { HistoryRow, QueueRow, WantedEpisode } from "../api/types";
+import type { HistoryRow, QueueRow, WantedItem } from "../api/types";
 import { MonitorDown } from "lucide-react";
 import { Badge, EmptyState, ErrorState, formatDate, formatBytes, statusTone } from "../lib/ui";
 
@@ -13,7 +13,7 @@ export default function Activity() {
   const qc = useQueryClient();
   const queue = useQuery({ queryKey: ["queue"], queryFn: () => api.get<{ items: QueueRow[] }>("/queue") });
   const history = useQuery({ queryKey: ["history"], queryFn: () => api.get<{ items: HistoryRow[] }>("/history?limit=100") });
-  const wanted = useQuery({ queryKey: ["wanted"], queryFn: () => api.get<WantedEpisode[]>("/wanted/missing") });
+  const wanted = useQuery({ queryKey: ["wanted"], queryFn: () => api.get<WantedItem[]>("/wanted/missing") });
 
   const runRss = useMutation({
     mutationFn: () => api.post("/system/commands/media.rssSync"),
@@ -96,18 +96,18 @@ export default function Activity() {
       ))}
 
       {tab === "wanted" && (wanted.isError ? <ErrorState error={wanted.error} onRetry={() => wanted.refetch()} /> : (
-        wanted.data?.length === 0 ? <EmptyState title="Nothing wanted" hint="Monitored episodes without files show here — run Auto-grab missing to fetch them." /> : (
+        wanted.data?.length === 0 ? <EmptyState title="Nothing wanted" hint="Monitored movies and episodes without files show here — run Auto-grab missing to fetch them." /> : (
           <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
             <table className="w-full text-left text-sm">
               <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
-                <tr><th className="px-4 py-2.5">Series</th><th className="px-4 py-2.5">Ep</th><th className="px-4 py-2.5">Aired</th><th className="px-4 py-2.5">Status</th></tr>
+                <tr><th className="px-4 py-2.5">Title</th><th className="px-4 py-2.5">Ep</th><th className="px-4 py-2.5">Date</th><th className="px-4 py-2.5">Status</th></tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                 {wanted.data?.map((w) => (
-                  <tr key={w.id}>
-                    <td className="px-4 py-2.5 font-medium">{w.seriesTitle}</td>
-                    <td className="px-4 py-2.5">S{String(w.seasonNumber).padStart(2, "0")}E{String(w.episodeNumber).padStart(2, "0")}</td>
-                    <td className="px-4 py-2.5 text-zinc-500">{w.airDateUtc ? formatDate(w.airDateUtc).slice(0, 10) : "—"}</td>
+                  <tr key={`${w.mediaType}-${w.id}`}>
+                    <td className="px-4 py-2.5 font-medium">{w.mediaType === "series" ? w.seriesTitle : w.title}</td>
+                    <td className="px-4 py-2.5">{w.mediaType === "series" ? `S${String(w.seasonNumber).padStart(2, "0")}E${String(w.episodeNumber).padStart(2, "0")}` : "—"}</td>
+                    <td className="px-4 py-2.5 text-zinc-500">{(() => { const d = w.mediaType === "series" ? w.airDateUtc : w.releaseDate; return d ? formatDate(d).slice(0, 10) : "—"; })()}</td>
                     <td className="px-4 py-2.5"><Badge tone="warn">wanted</Badge></td>
                   </tr>
                 ))}

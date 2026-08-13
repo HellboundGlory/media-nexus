@@ -1,17 +1,28 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable } from "@nestjs/common";
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { newEntityId } from "@medianexus/shared";
 import { ApiError } from "@medianexus/shared";
 import { combine, deletePolymorphicRows, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import type { CreateMovie } from "@medianexus/domain";
+import type { CreateMovie, MinimumAvailability } from "@medianexus/domain";
+import { hasMinimumAvailability } from "@medianexus/domain";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 
 export interface ListQuery { search?: string; monitored?: string; sort?: string; page?: number; pageSize?: number }
+
+export interface WantedMovie {
+  id: string;
+  mediaType: "movie";
+  title: string;
+  releaseDate: string | null;
+  minimumAvailability: MinimumAvailability;
+  monitored: boolean;
+  hasFile: boolean;
+}
 
 @Injectable()
 export class MoviesService {
@@ -54,7 +65,7 @@ export class MoviesService {
       monitored: input.monitored ?? true,
       qualityProfileId: input.qualityProfileId ?? null,
       rootFolderPath: input.rootFolderPath ?? "",
-      minimumAvailability: "announced",
+      minimumAvailability: input.minimumAvailability,
       genres: [],
       images: [],
       tags: input.tags ?? [],
@@ -80,5 +91,23 @@ export class MoviesService {
 
   async upsertAvailability(mediaType: "movie" | "series", mediaId: string): Promise<void> {
     await ensureAvailability(this.db, mediaType, mediaId);
+  }
+
+  /** Want/Missing: monitored movies without a file, past their minimum-availability gate
+   *  (roadmap C1). The gate depends on Date.now(), so it can't be pushed into SQL —
+   *  overfetch past `limit` and filter in JS, mirroring the shape of
+   *  SeriesService.wantedMissing(). */
+  async wantedMissing(limit = 50): Promise<WantedMovie[]> {
+    const rows = await this.db.select().from(schema.movie)
+      .where(and(eq(schema.movie.monitored, true), eq(schema.movie.hasFile, false)))
+      .orderBy(asc(schema.movie.releaseDate))
+      .limit(Math.max(limit * 4, 200));
+    return rows
+      .filter((m) => hasMinimumAvailability({ minimumAvailability: m.minimumAvailability as MinimumAvailability, releaseDate: m.releaseDate }))
+      .slice(0, limit)
+      .map((m) => ({
+        id: m.id, mediaType: "movie" as const, title: m.title, releaseDate: m.releaseDate,
+        minimumAvailability: m.minimumAvailability as MinimumAvailability, monitored: m.monitored, hasFile: m.hasFile,
+      }));
   }
 }

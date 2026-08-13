@@ -588,6 +588,132 @@ describe("M2: series auto-grab via RSS sync + episode import (mock HTTP + real f
   });
 });
 
+describe("M-movie: movie auto-grab via RSS sync + import (mock HTTP + real filesystem, roadmap C1)", () => {
+  let newznabUrl: string;
+  let sabUrl: string;
+  let mediaRoot: string;
+  let mIdxId: string;
+  let mDcId: string;
+  const servers: import("node:http").Server[] = [];
+
+  beforeAll(async () => {
+    const { mkdtempSync, writeFileSync, mkdirSync } = await import("node:fs");
+    const { createServer } = await import("node:http");
+    const { join: j } = await import("node:path");
+    const { tmpdir: osTmp } = await import("node:os");
+    const base = mkdtempSync(j(osTmp(), "mn-movie-"));
+    const downloadsRoot = j(base, "downloads");
+    mediaRoot = j(base, "library");
+    mkdirSync(downloadsRoot, { recursive: true });
+    mkdirSync(mediaRoot, { recursive: true });
+
+    // No SxxExx in this title — parseEpisodeRelease() falls through to its
+    // "probably a movie" branch, which is exactly the path RssSyncService's movie
+    // matching (matchesMovie -> titleMatches + year tolerance) is built to consume.
+    const releaseTitle = "The.Test.Movie.2024.1080p.WEB-DL.x264-GROUP";
+    const nz = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        channel: { title: "mock", item: [{
+          title: releaseTitle, guid: "nz-movie-1", link: "https://mock/getnzb/movie1.nzb",
+          "newznab:attr": [{ name: "size", value: "3200000000" }, { name: "seeders", value: "14" }],
+        }] },
+      }));
+    });
+    const sab = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      const u = new URL(_req.url ?? "/", "http://x");
+      const mode = u.searchParams.get("mode");
+      if (mode === "addurl") res.end(JSON.stringify({ status: true, nzo_ids: ["NZO-MOVIE"] }));
+      else if (mode === "queue") res.end(JSON.stringify({ queue: { slots: [] } }));
+      else if (mode === "history") res.end(JSON.stringify({ history: { slots: [{ nzo_id: "NZO-MOVIE", filename: releaseTitle, status: "Completed" }] } }));
+      else res.end(JSON.stringify({ status: false }));
+    });
+    await new Promise<void>((r) => nz.listen(0, "127.0.0.1", () => r()));
+    await new Promise<void>((r) => sab.listen(0, "127.0.0.1", () => r()));
+    servers.push(nz, sab);
+    newznabUrl = `http://127.0.0.1:${(nz.address() as any).port}`;
+    sabUrl = `http://127.0.0.1:${(sab.address() as any).port}`;
+
+    // a "downloaded" file for the importer to pick up
+    const dir = j(downloadsRoot, "complete", releaseTitle);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(j(dir, `${releaseTitle}.mkv`), Buffer.alloc(2048));
+
+    const r = await auth(request(http).put("/api/v1/system/config").send({
+      "paths.downloads": downloadsRoot,
+      "paths.rootFolders": [{ path: mediaRoot }],
+    }));
+    expect(r.status).toBe(200);
+  });
+
+  afterAll(async () => {
+    for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
+    if (mIdxId) await auth(request(http).delete(`/api/v1/indexers/${mIdxId}`)).catch(() => {});
+    if (mDcId) await auth(request(http).delete(`/api/v1/download-clients/${mDcId}`)).catch(() => {});
+  });
+
+  it("auto-grabs a missing movie via rssSync, imports it, and updates want/missing", async () => {
+    const idx = await auth(request(http).post("/api/v1/indexers").send({
+      definitionKey: "generic-newznab", name: "Mock NZB Movie", protocol: "usenet",
+      settings: { baseUrl: newznabUrl, apiKey: "k", categories: [2000] },
+    }));
+    expect(idx.status).toBe(201);
+    mIdxId = idx.body.id;
+    const dc = await auth(request(http).post("/api/v1/download-clients").send({
+      name: "Mock SAB Movie", implementation: "sabnzbd", kind: "usenet", priority: 1,
+      settings: { host: sabUrl, apiKey: "k", category: "movies" },
+    }));
+    expect(dc.status).toBe(201);
+    mDcId = dc.body.id;
+
+    // past release date + explicit "released" gate — must be immediately searchable
+    const movie = await auth(request(http).post("/api/v1/movies").send({
+      title: "The Test Movie", tmdbId: 999002, releaseDate: "2024-01-01", minimumAvailability: "released",
+    }));
+    expect(movie.status).toBe(201);
+    const mid = movie.body.id;
+
+    // wanted/missing lists it, tagged as a movie
+    const wantedBefore = await auth(request(http).get("/api/v1/wanted/missing"));
+    const wantedRow = wantedBefore.body.find((w: any) => w.id === mid);
+    expect(wantedRow).toBeDefined();
+    expect(wantedRow.mediaType).toBe("movie");
+
+    // run RSS sync -> should auto-grab (mock returns only the one release)
+    const rss = await auth(request(http).post("/api/v1/system/commands/media.rssSync"));
+    expect(rss.status).toBe(201);
+
+    // run the download monitor to import the completed download
+    await auth(request(http).post("/api/v1/system/commands/acquisition.downloadMonitor"));
+
+    let hasFile = false;
+    for (let i = 0; i < 30 && !hasFile; i++) {
+      const m = await auth(request(http).get(`/api/v1/movies/${mid}`));
+      hasFile = m.body.hasFile === true;
+      if (!hasFile) { await auth(request(http).post("/api/v1/system/commands/acquisition.downloadMonitor")); await new Promise((rq) => setTimeout(rq, 150)); }
+    }
+    expect(hasFile).toBe(true);
+
+    // no longer wanted
+    const wantedAfter = await auth(request(http).get("/api/v1/wanted/missing"));
+    expect(wantedAfter.body.some((w: any) => w.id === mid)).toBe(false);
+
+    // history has grabbed + import_completed
+    const hist = await auth(request(http).get("/api/v1/history"));
+    const actions = hist.body.items.map((h: any) => h.action);
+    expect(actions).toContain("grabbed");
+    expect(actions).toContain("import_completed");
+
+    // physical file landed in <mediaRoot>/The Test Movie (2024)/
+    const { readdirSync, existsSync } = await import("node:fs");
+    const { join: j } = await import("node:path");
+    const movieDir = j(mediaRoot, "The Test Movie (2024)");
+    expect(existsSync(movieDir)).toBe(true);
+    expect(readdirSync(movieDir).length).toBe(1);
+
+  });
+});
 
 describe("M3: indexer health, Cardigann custom definitions, and statistics", () => {
   let nzUrl: string;

@@ -23,6 +23,7 @@ import { BlocklistService } from "../src/blocklist/blocklist.service";
 import type { DecisionService } from "../src/decision/decision.service";
 import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
 import type { SeriesService } from "../src/series/series.service";
+import type { MoviesService } from "../src/movies/movies.service";
 
 const dir = mkdtempSync(join(tmpdir(), "mn-blocklist-"));
 const handles: { close: () => void }[] = [];
@@ -221,7 +222,8 @@ describe("P0.4/P0.3 — RssSyncService grabs the best *approved* candidate, not 
     // RssSyncService only reads the db (active-queue check, recent-grab dedupe) — both
     // go through the same select().from().where().limit() chain, so one stub covers both.
     const dbStub = { select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) } as never;
-    const rss = new RssSyncService(dbStub, indexers, series, events);
+    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const rss = new RssSyncService(dbStub, indexers, series, movies, events);
 
     const result = await rss.run({ maxSeries: 5, perSeries: 1 });
 

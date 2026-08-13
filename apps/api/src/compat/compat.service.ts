@@ -159,6 +159,11 @@ export class CompatService {
           monitored: input.monitored === undefined ? true : Boolean(input.monitored),
           overview: "",
           tags: [],
+          // Radarr's AddMovieOptions has a minimumAvailability field with different enum
+          // casing than ours ("inCinemas" vs "in_cinemas", etc.) — mapping it is real work
+          // this compat write surface doesn't otherwise attempt (see the hardcoded overview/
+          // tags above), so default like every other omitted field here does.
+          minimumAvailability: "announced",
         });
         return { id: created.id, title: created.title, tmdbId: created.tmdbId, status: created.status, year: created.releaseDate ? Number(created.releaseDate.slice(0, 4)) : null, path: created.rootFolderPath, monitored: created.monitored, qualityProfileId: created.qualityProfileId, hasFile: false } satisfies CompatMovie;
       },
