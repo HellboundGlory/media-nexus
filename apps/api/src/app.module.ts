@@ -24,6 +24,7 @@ import { ActivityModule } from "./activity/activity.module";
 import { IndexersModule } from "./indexers/indexers.module";
 import { DownloadClientsModule } from "./download-clients/download-clients.module";
 import { MetadataModule } from "./metadata/metadata.module";
+import { LibraryScanModule } from "./library-scan/library-scan.module";
 import { CompatModule } from "./compat/compat.module";
 import { WebUiModule } from "./web-ui/web-ui.module";
 import { RequestIdMiddleware } from "./common/request-id.middleware";
@@ -52,6 +53,7 @@ import { SecurityHeadersMiddleware } from "./common/security-headers.middleware"
     IndexersModule,
     DownloadClientsModule,
     MetadataModule,
+    LibraryScanModule,
     RealtimeModule,
     ObservabilityModule,
     CompatModule,

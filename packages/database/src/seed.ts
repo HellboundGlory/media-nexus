@@ -107,6 +107,7 @@ export async function seedStatic(db: Db): Promise<void> {
     { key: "media.rssSync", name: "RSS sync", description: "Auto-search and grab missing monitored episodes", schedule: "*/10 * * * *", timeoutMs: 180_000, maxRetries: 2, priority: 60 },
     { key: "media.availabilityRefresh", name: "Availability refresh", description: "Sync availability from configured media servers", schedule: "0 */4 * * *", timeoutMs: 120_000, maxRetries: 2, priority: 100 },
     { key: "media.metadataRefresh", name: "Metadata refresh", description: "Populate series seasons/episodes from TMDB for items missing them (metadata import)", schedule: "0 3 * * *", timeoutMs: 300_000, maxRetries: 2, priority: 150 },
+    { key: "library.scan", name: "Library scan", description: "Reconcile files on disk against the library — picks up files added outside the app and clears ones that vanished", schedule: "0 */6 * * *", timeoutMs: 300_000, maxRetries: 1, priority: 180 },
   ];
   for (const j of jobs) {
     const existing = await db.select().from(schema.jobDefinition).where(eq(schema.jobDefinition.key, j.key)).limit(1);

@@ -20,6 +20,7 @@ import {
 } from "@medianexus/domain";
 import { MediaRepository } from "../media/media.repository";
 import { ensureAvailability, getQualityProfile } from "../media/library.helpers";
+import { movieFolderName, seriesFolderName } from "../media/naming.helpers";
 import { BlocklistService } from "../blocklist/blocklist.service";
 
 /**
@@ -229,10 +230,10 @@ export class AcquisitionService {
     if (!source) throw new Error(`No video file found for "${entry.title}" under ${content.path}`);
 
     const root = this.resolveRoot(cfg, movie[0].rootFolderPath, resolve(process.cwd(), "data", "media", "movies"));
-    const parsed = parseTitleForFolder(movie[0].title, movie[0].releaseDate ?? undefined);
-    const targetDir = join(root, `${parsed.title} (${parsed.year})`);
+    const folderName = movieFolderName(movie[0].title, movie[0].releaseDate);
+    const targetDir = join(root, folderName);
     await this.storage.ensureDir(targetDir);
-    const targetFile = join(targetDir, `${parsed.title} (${parsed.year})${extname(source.path)}`);
+    const targetFile = join(targetDir, `${folderName}${extname(source.path)}`);
     const hardlinked = await this.storage.hardlink(source.path, targetFile);
     if (!existsSync(targetFile)) await this.storage.copy(source.path, targetFile);
     const size = statSync(targetFile).size;
@@ -265,7 +266,7 @@ export class AcquisitionService {
     const releaseTitle = (entry.data as { releaseTitle?: string })?.releaseTitle ?? entry.title;
     const match = parseEpisodeRelease(releaseTitle);
     const root = this.resolveRoot(cfg, series[0].rootFolderPath, resolve(process.cwd(), "data", "media", "tv"));
-    const safeSeries = series[0].title.replace(/[^A-Za-z0-9 _()[\]-]/g, "").trim() || "Series";
+    const safeSeries = seriesFolderName(series[0].title);
     const releaseQuality = spQuality(entry);
     const now = new Date().toISOString();
 
@@ -529,11 +530,6 @@ export class AcquisitionService {
     const configured = cfg["paths.rootFolders"]?.[0]?.path;
     return mediaRoot || configured || fallback;
   }
-}
-
-function parseTitleForFolder(title: string, releaseDate?: string): { title: string; year: string } {
-  const safe = title.replace(/[^A-Za-z0-9 _()[\]-]/g, "").trim();
-  return { title: safe, year: releaseDate ? releaseDate.slice(0, 4) : "Unknown" };
 }
 
 function sanitizeEntry(title: string): string {

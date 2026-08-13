@@ -8,9 +8,10 @@ import { AcquisitionModule } from "../acquisition/acquisition.module";
 import { IndexersModule } from "../indexers/indexers.module";
 import { MediaServersModule } from "../media-servers/media-servers.module";
 import { MetadataModule } from "../metadata/metadata.module";
+import { LibraryScanModule } from "../library-scan/library-scan.module";
 
 @Module({
-  imports: [AcquisitionModule, IndexersModule, MediaServersModule, MetadataModule],
+  imports: [AcquisitionModule, IndexersModule, MediaServersModule, MetadataModule, LibraryScanModule],
   providers: [DrizzleJobStore, JobsService, JobHandlers],
   controllers: [JobsController],
   exports: [JobsService],
