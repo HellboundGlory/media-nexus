@@ -28,6 +28,8 @@ function baseContext(over: Partial<DecisionContext> = {}): DecisionContext {
     isBlocklisted: false,
     hasActiveQueueConflict: false,
     preferredProtocol: "any",
+    freeSpaceBytes: null,
+    minimumFreeSpaceMb: 100,
     ...over,
   };
 }
@@ -134,6 +136,32 @@ describe("evaluate — protocol preference", () => {
 
   it("does not restrict protocol when preference is 'any'", () => {
     const d = evaluate(release({ protocol: "usenet" }), baseContext({ preferredProtocol: "any" }));
+    expect(d.approved).toBe(true);
+  });
+});
+
+describe("evaluate — free space", () => {
+  it("rejects when the release would leave less than the configured margin free", () => {
+    const oneMb = 1024 * 1024;
+    const d = evaluate(
+      release({ size: 50 * oneMb }),
+      baseContext({ freeSpaceBytes: 100 * oneMb, minimumFreeSpaceMb: 100 }),
+    );
+    expect(d.approved).toBe(false);
+    expect(d.rejections.map((r) => r.reason)).toEqual(["insufficient_free_space"]);
+  });
+
+  it("approves when free space minus the release still clears the margin", () => {
+    const oneMb = 1024 * 1024;
+    const d = evaluate(
+      release({ size: 50 * oneMb }),
+      baseContext({ freeSpaceBytes: 200 * oneMb, minimumFreeSpaceMb: 100 }),
+    );
+    expect(d.approved).toBe(true);
+  });
+
+  it("never blocks when free space could not be determined", () => {
+    const d = evaluate(release({ size: 10 ** 12 }), baseContext({ freeSpaceBytes: null, minimumFreeSpaceMb: 100 }));
     expect(d.approved).toBe(true);
   });
 });

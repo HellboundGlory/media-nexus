@@ -79,6 +79,19 @@ export const qualityDefinition = sqliteTable("quality_definition", {
   updatedAt: iso("updated_at"),
 });
 
+// Root folders (roadmap P1, gap report B8): promotes the single-array paths.rootFolders
+// setting to a real, per-title-assignable entity. Accessibility and free space are runtime
+// probes (LocalStorageProvider.diskFree), not persisted — only identity and the default
+// flag live here. Exactly one row may be isDefault; RootFoldersService enforces that
+// invariant (a plain column can't express "at most one true" on its own).
+export const rootFolder = sqliteTable("root_folder", {
+  id: text("id").primaryKey(),
+  path: text("path").notNull(),
+  name: text("name").notNull().default(""),
+  isDefault: bool("is_default", false),
+  createdAt: iso("created_at"),
+}, (t) => [uniqueIndex("root_folder_path_idx").on(t.path)]);
+
 // ---------- 3. Media ----------
 export const movie = sqliteTable("movie", {
   id: text("id").primaryKey(),
@@ -225,6 +238,21 @@ export const downloadClient = sqliteTable("download_client", {
 });
 
 // ---------- 5. Acquisition ----------
+// Remote path mapping (roadmap P1, gap report B8): translates a download client's
+// self-reported content path (e.g. /downloads/x inside its own container) into the path
+// MediaNexus sees on its own filesystem. Applied in
+// AcquisitionService.resolveContent() before a completed download's content is located.
+export const remotePathMapping = sqliteTable("remote_path_mapping", {
+  id: text("id").primaryKey(),
+  downloadClientId: text("download_client_id").notNull().references(() => downloadClient.id, { onDelete: "cascade" }),
+  remotePath: text("remote_path").notNull(),
+  localPath: text("local_path").notNull(),
+  createdAt: iso("created_at"),
+}, (t) => [
+  uniqueIndex("remote_path_mapping_client_remote_idx").on(t.downloadClientId, t.remotePath),
+  index("remote_path_mapping_client_idx").on(t.downloadClientId),
+]);
+
 export const downloadQueueEntry = sqliteTable("download_queue_entry", {
   id: text("id").primaryKey(),
   mediaType: text("media_type").notNull(),
@@ -341,6 +369,7 @@ export const schema = {
   setting,
   qualityProfile,
   qualityDefinition,
+  rootFolder,
   movie,
   series,
   season,
@@ -350,6 +379,7 @@ export const schema = {
   indexer,
   seenRelease,
   downloadClient,
+  remotePathMapping,
   downloadQueueEntry,
   historyEntry,
   blocklistEntry,

@@ -22,6 +22,8 @@ import { MediaRepository } from "../media/media.repository";
 import { ensureAvailabilitySync, getQualityProfile, type Tx } from "../media/library.helpers";
 import { movieFolderName, seriesFolderName } from "../media/naming.helpers";
 import { BlocklistService } from "../blocklist/blocklist.service";
+import { RootFoldersService } from "../root-folders/root-folders.service";
+import { RemotePathMappingsService } from "../remote-path-mappings/remote-path-mappings.service";
 
 /**
  * Acquisition: drives download clients, mirrors their queues into download_queue_entry,
@@ -83,6 +85,8 @@ export class AcquisitionService {
     private readonly providers: ProvidersService,
     private readonly media: MediaRepository,
     private readonly blocklist: BlocklistService,
+    private readonly rootFolders: RootFoldersService,
+    private readonly remotePathMappings: RemotePathMappingsService,
   ) {}
 
   /** Poll every configured download client and import anything completed. */
@@ -453,7 +457,8 @@ export class AcquisitionService {
     const source = content.kind === "file" ? content : await findLargestVideo(this.storage, content.path);
     if (!source) throw new Error(`No video file found for "${entry.title}" under ${content.path}`);
 
-    const root = this.resolveRoot(cfg, movie[0].rootFolderPath, resolve(process.cwd(), "data", "media", "movies"));
+    const root = await this.resolveRoot(movie[0].rootFolderPath, resolve(process.cwd(), "data", "media", "movies"));
+    await this.assertSufficientFreeSpace(root, source.size, cfg);
     const folderName = movieFolderName(movie[0].title, movie[0].releaseDate);
     const targetDir = join(root, folderName);
     await this.storage.ensureDir(targetDir);
@@ -492,7 +497,7 @@ export class AcquisitionService {
 
     const releaseTitle = (entry.data as { releaseTitle?: string })?.releaseTitle ?? entry.title;
     const match = parseEpisodeRelease(releaseTitle);
-    const root = this.resolveRoot(cfg, series[0].rootFolderPath, resolve(process.cwd(), "data", "media", "tv"));
+    const root = await this.resolveRoot(series[0].rootFolderPath, resolve(process.cwd(), "data", "media", "tv"));
     const safeSeries = seriesFolderName(series[0].title);
     const releaseQuality = spQuality(entry);
     const now = new Date().toISOString();
@@ -503,6 +508,7 @@ export class AcquisitionService {
     if (candidates.length === 0) {
       throw new Error(`No video file found for "${entry.title}" under ${content.path}`);
     }
+    await this.assertSufficientFreeSpace(root, candidates.reduce((sum, f) => sum + f.size, 0), cfg);
 
     if (match.season === undefined) {
       // Unparseable release: no season to file under or episodes to match. Import the
@@ -748,10 +754,13 @@ export class AcquisitionService {
   /** Locate the completed download's content — a direct file, or a directory to enumerate
    *  (movies want the largest video inside it; series want every video inside it). */
   private async resolveContent(item: ClientQueueItem, entry: QueueEntryRow, downloadsRoot: string): Promise<ResolvedContent | null> {
-    // explicit content path from the client (qbittorrent: content_path / save_path)
+    // explicit content path from the client (qbittorrent: content_path / save_path) —
+    // translated through any configured remote path mapping first (roadmap P1, gap report
+    // B8): the client reports its own filesystem view, which may not exist from here.
     if (item.contentPath) {
-      if (isVideo(item.contentPath)) return { kind: "file", path: item.contentPath, size: statSyncSafe(item.contentPath) };
-      if (existsSync(item.contentPath)) return { kind: "dir", path: item.contentPath };
+      const path = await this.translateRemotePath(item.contentPath, entry.downloadClientId);
+      if (isVideo(path)) return { kind: "file", path, size: statSyncSafe(path) };
+      if (existsSync(path)) return { kind: "dir", path };
     }
     // explicit completed path recorded at grab time (memory/demo)
     const data = (entry.data ?? {}) as { completedPath?: string };
@@ -774,9 +783,39 @@ export class AcquisitionService {
     return null;
   }
 
-  private resolveRoot(cfg: RuntimeSettings, mediaRoot: string, fallback: string): string {
-    const configured = cfg["paths.rootFolders"]?.[0]?.path;
-    return mediaRoot || configured || fallback;
+  /** Rewrites a client-reported path's `remotePath` prefix to the matching `localPath`, if
+   *  any configured mapping applies — the longest matching prefix wins when more than one
+   *  does. Returns the path unchanged when no mapping is configured for this client, or
+   *  when none of its mappings' prefixes match. */
+  private async translateRemotePath(path: string, downloadClientId: string | null): Promise<string> {
+    if (!downloadClientId) return path;
+    const mappings = await this.remotePathMappings.forClient(downloadClientId);
+    const match = mappings.find((m) => path.startsWith(m.remotePath));
+    return match ? join(match.localPath, relative(match.remotePath, path)) : path;
+  }
+
+  private async resolveRoot(mediaRoot: string, fallback: string): Promise<string> {
+    if (mediaRoot) return mediaRoot;
+    const configured = await this.rootFolders.getDefault();
+    return configured?.path || fallback;
+  }
+
+  /** Mirrors the decision engine's free-space specification (roadmap P1, gap report B8)
+   *  at the point it matters most: about to write the actual bytes. The grab-time check
+   *  can go stale (another download landed in between, or the estimate was off), so this
+   *  is a real guard, not just a decision-time convenience — it throws, routing through
+   *  the same import-failure/retry path as any other import error. Skipped when free
+   *  space can't be determined (root not yet accessible), matching the domain spec's
+   *  permissive default for unknown state. */
+  private async assertSufficientFreeSpace(root: string, neededBytes: number, cfg: RuntimeSettings): Promise<void> {
+    const { free } = await this.storage.diskFree(root);
+    if (free < 0) return;
+    const marginBytes = cfg["media.minimumFreeSpaceMb"] * 1024 * 1024;
+    if (free - neededBytes < marginBytes) {
+      throw new Error(
+        `insufficient free space on "${root}": importing would leave less than the configured ${cfg["media.minimumFreeSpaceMb"]}MB free`,
+      );
+    }
   }
 }
 

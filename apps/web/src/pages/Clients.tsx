@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: MIT
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Stethoscope, Trash2, Server } from "lucide-react";
+import { Plus, Stethoscope, Trash2, Server, FolderTree, Star, Route } from "lucide-react";
 import { api } from "../api/client";
-import type { DownloadClient } from "../api/types";
+import type { DownloadClient, RootFolder, RemotePathMapping } from "../api/types";
 import { Badge, EmptyState, ErrorState } from "../lib/ui";
+
+function formatBytes(n: number | null): string {
+  if (n === null || n < 0) return "unknown";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
 
 const IMPL_FIELDS: Record<string, { host: string; apiKey: string; extra?: { key: string; label: string; def: string }[] }> = {
   sabnzbd: { host: "SABnzbd host (http://host:8080)", apiKey: "SABnzbd API key", extra: [{ key: "category", label: "Category", def: "movies" }] },
@@ -24,7 +33,11 @@ export default function Clients() {
   const [apiKey, setApiKey] = useState("");
   const [extras, setExtras] = useState<Record<string, string>>({});
   const [downloads, setDownloads] = useState("");
-  const [rootFolder, setRootFolder] = useState("");
+  const [rootFolderPath, setRootFolderPath] = useState("");
+  const [rootFolderName, setRootFolderName] = useState("");
+  const [mappingClientId, setMappingClientId] = useState("");
+  const [remotePath, setRemotePath] = useState("");
+  const [localPath, setLocalPath] = useState("");
   const [servers, setServers] = useState<any[]>([]);
   const [serverDraft, setServerDraft] = useState({ name: "", implementation: "jellyfin", host: "", apiKey: "" });
 
@@ -32,6 +45,8 @@ export default function Clients() {
   const cfg = useQuery({ queryKey: ["config"], queryFn: () => api.get<Record<string, any>>("/system/config") });
   const serversQuery = useQuery({ queryKey: ["media-servers"], queryFn: () => api.get<any[]>("/media-servers") });
   useEffect(() => { if (serversQuery.data) setServers(serversQuery.data); }, [serversQuery.data]);
+  const rootFolders = useQuery({ queryKey: ["root-folders"], queryFn: () => api.get<RootFolder[]>("/root-folders") });
+  const mappings = useQuery({ queryKey: ["remote-path-mappings"], queryFn: () => api.get<RemotePathMapping[]>("/remote-path-mappings") });
 
   const saveServers = useMutation({
     mutationFn: (list: any[]) => api.put<any[]>("/media-servers", { servers: list }),
@@ -42,6 +57,24 @@ export default function Clients() {
   const savePaths = useMutation({
     mutationFn: (body: Record<string, any>) => api.put("/system/config", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["config"] }),
+  });
+
+  const addRootFolder = useMutation({
+    mutationFn: () => api.post<RootFolder>("/root-folders", { path: rootFolderPath, name: rootFolderName, isDefault: rootFolders.data?.length === 0 }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["root-folders"] }); setRootFolderPath(""); setRootFolderName(""); },
+  });
+  const removeRootFolder = useMutation({
+    mutationFn: (id: string) => api.del(`/root-folders/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["root-folders"] }),
+  });
+
+  const addMapping = useMutation({
+    mutationFn: () => api.post<RemotePathMapping>("/remote-path-mappings", { downloadClientId: mappingClientId, remotePath, localPath }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["remote-path-mappings"] }); setRemotePath(""); setLocalPath(""); },
+  });
+  const removeMapping = useMutation({
+    mutationFn: (id: string) => api.del(`/remote-path-mappings/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["remote-path-mappings"] }),
   });
 
   const addClient = useMutation({
@@ -137,28 +170,103 @@ export default function Clients() {
         </section>
 
         <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-          <h3 className="mb-3 font-medium">Import paths</h3>
-          <p className="mb-3 text-xs text-zinc-500">The importer finds completed downloads under the downloads root and hardlinks/copies the file into the library root.</p>
+          <h3 className="mb-3 font-medium">Downloads staging</h3>
+          <p className="mb-3 text-xs text-zinc-500">The importer finds completed downloads here before hardlinking/copying the file into a root folder.</p>
           <div className="space-y-3">
             <label className="block">
               <span className="mb-1 block text-xs text-zinc-500">Downloads root (staging)</span>
               <input defaultValue={downloads || (cfg.data?.["paths.downloads"] as string) || ""} onChange={(e) => setDownloads(e.target.value)} placeholder="/data/downloads" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
             </label>
-            <label className="block">
-              <span className="mb-1 block text-xs text-zinc-500">Library root folder</span>
-              <input defaultValue={rootFolder || ((cfg.data?.["paths.rootFolders"] as any[] | undefined)?.[0]?.path) || ""} onChange={(e) => setRootFolder(e.target.value)} placeholder="/data/media" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
-            </label>
             <button
               disabled={savePaths.isPending}
-              onClick={() => savePaths.mutate({ "paths.downloads": downloads, "paths.rootFolders": rootFolder ? [{ path: rootFolder }] : undefined })}
+              onClick={() => savePaths.mutate({ "paths.downloads": downloads })}
               className="rounded-lg bg-zinc-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-200 dark:text-zinc-900"
             >
-              {savePaths.isPending ? "Saving…" : "Save paths"}
+              {savePaths.isPending ? "Saving…" : "Save"}
             </button>
-            {savePaths.isSuccess && <p className="text-xs text-emerald-600">Paths saved.</p>}
+            {savePaths.isSuccess && <p className="text-xs text-emerald-600">Saved.</p>}
           </div>
         </section>
       </div>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 font-medium"><FolderTree className="h-4 w-4" /> Root folders</h3>
+        </div>
+        <p className="mb-3 text-xs text-zinc-500">
+          Where movies and series are stored. The starred folder is the default assigned to a new title when none is chosen explicitly.
+        </p>
+        {rootFolders.isError ? <ErrorState error={rootFolders.error} onRetry={() => rootFolders.refetch()} /> : null}
+        {rootFolders.data?.length === 0 ? (
+          <EmptyState title="No root folders" hint="Add one below — movies/series added without an explicit path fall back to the default." />
+        ) : (
+          <ul className="mb-3 space-y-2 text-sm">
+            {rootFolders.data?.map((rf) => (
+              <li key={rf.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-1.5 font-mono text-xs">
+                    {rf.isDefault && <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400" />}
+                    <span className="truncate">{rf.path}</span>
+                  </p>
+                  <p className="text-xs text-zinc-500">{rf.name || rf.path} · {formatBytes(rf.freeBytes)} free of {formatBytes(rf.totalBytes)}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Badge tone={rf.accessible ? "ok" : "danger"}>{rf.accessible ? "accessible" : "unreachable"}</Badge>
+                  <button onClick={() => removeRootFolder.mutate(rf.id)} className="rounded p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950" title="Remove"><Trash2 className="h-4 w-4" /></button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-zinc-500">Path</span>
+            <input value={rootFolderPath} onChange={(e) => setRootFolderPath(e.target.value)} placeholder="/data/media" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+          <label className="min-w-28"><span className="mb-1 block text-xs text-zinc-500">Name (optional)</span>
+            <input value={rootFolderName} onChange={(e) => setRootFolderName(e.target.value)} placeholder="Movies" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+          <button disabled={!rootFolderPath || addRootFolder.isPending} onClick={() => addRootFolder.mutate()}
+            className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
+            {addRootFolder.isPending ? "Adding…" : "Add root folder"}
+          </button>
+        </div>
+        {addRootFolder.isError && <p className="mt-2 text-xs text-red-600">{addRootFolder.error instanceof Error ? addRootFolder.error.message : "Failed"}</p>}
+        {removeRootFolder.isError && <p className="mt-2 text-xs text-red-600">{removeRootFolder.error instanceof Error ? removeRootFolder.error.message : "Failed"}</p>}
+      </section>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 font-medium"><Route className="h-4 w-4" /> Remote path mappings</h3>
+        </div>
+        <p className="mb-3 text-xs text-zinc-500">
+          Translates a download client's self-reported content path (its own filesystem view, e.g. inside a container) into the path this app sees.
+        </p>
+        <ul className="mb-3 space-y-2 text-sm">
+          {mappings.data?.map((m) => (
+            <li key={m.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+              <p className="min-w-0 truncate font-mono text-xs">
+                {clients.data?.find((c) => c.id === m.downloadClientId)?.name ?? m.downloadClientId}: {m.remotePath} <span className="text-zinc-400">→</span> {m.localPath}
+              </p>
+              <button onClick={() => removeMapping.mutate(m.id)} className="shrink-0 rounded p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950" title="Remove"><Trash2 className="h-4 w-4" /></button>
+            </li>
+          ))}
+          {mappings.data?.length === 0 && <li className="text-sm text-zinc-500">No remote path mappings configured.</li>}
+        </ul>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="min-w-32"><span className="mb-1 block text-xs text-zinc-500">Download client</span>
+            <select value={mappingClientId} onChange={(e) => setMappingClientId(e.target.value)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
+              <option value="">Select…</option>
+              {clients.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select></label>
+          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-zinc-500">Remote path (as the client reports it)</span>
+            <input value={remotePath} onChange={(e) => setRemotePath(e.target.value)} placeholder="/downloads" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-zinc-500">Local path (as this app sees it)</span>
+            <input value={localPath} onChange={(e) => setLocalPath(e.target.value)} placeholder="/mnt/downloads" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+          <button disabled={!mappingClientId || !remotePath || !localPath || addMapping.isPending} onClick={() => addMapping.mutate()}
+            className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
+            {addMapping.isPending ? "Adding…" : "Add mapping"}
+          </button>
+        </div>
+        {addMapping.isError && <p className="mt-2 text-xs text-red-600">{addMapping.error instanceof Error ? addMapping.error.message : "Failed"}</p>}
+      </section>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="mb-3 flex items-center justify-between">

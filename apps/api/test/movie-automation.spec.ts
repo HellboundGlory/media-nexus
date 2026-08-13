@@ -58,6 +58,7 @@ const approvedCtx = {
   target: { kind: "movie" as const, mediaType: "movie" as const, mediaId: "m1" },
   profile: null, existingFiles: [], hasActiveQueueConflict: false,
   preferredProtocol: "any" as const, isBlocklisted: false,
+  freeSpaceBytes: null, minimumFreeSpaceMb: 100,
 };
 
 describe("MoviesService.wantedMissing()", () => {

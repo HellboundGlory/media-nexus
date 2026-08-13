@@ -63,4 +63,22 @@ export const createIndexerSchema = z.object({
 });
 export type CreateIndexer = z.infer<typeof createIndexerSchema>;
 
+/** Root folder input — `path` must be an accessible absolute directory, enforced at the
+ *  service level (this schema only checks shape). */
+export const createRootFolderSchema = z.object({
+  path: z.string().min(1),
+  name: z.string().default(""),
+  isDefault: z.boolean().default(false),
+});
+export type CreateRootFolder = z.infer<typeof createRootFolderSchema>;
+
+/** Remote path mapping input — translates a download client's self-reported content path
+ *  into the path MediaNexus sees on its own filesystem (roadmap P1, gap report B8). */
+export const createRemotePathMappingSchema = z.object({
+  downloadClientId: z.string().min(1),
+  remotePath: z.string().min(1),
+  localPath: z.string().min(1),
+});
+export type CreateRemotePathMapping = z.infer<typeof createRemotePathMappingSchema>;
+
 export const upsertSettingSchema = z.record(z.string(), z.unknown());

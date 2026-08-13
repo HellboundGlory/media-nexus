@@ -20,6 +20,8 @@ import { MediaRepository } from "../src/media/media.repository";
 import { ConfigService } from "../src/system/config.service";
 import { EventsService } from "../src/events/events.service";
 import { BlocklistService } from "../src/blocklist/blocklist.service";
+import { RootFoldersService } from "../src/root-folders/root-folders.service";
+import { RemotePathMappingsService } from "../src/remote-path-mappings/remote-path-mappings.service";
 import type { DecisionService } from "../src/decision/decision.service";
 import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
 import type { SeriesService } from "../src/series/series.service";
@@ -102,7 +104,9 @@ describe("P0.4 — an exhausted import failure blocklists the release", () => {
     const db = await freshDb();
     const downloadsRoot = mkdtempSync(join(dir, "downloads-"));
     const config = new ConfigService(db);
-    await config.upsert({ "paths.downloads": downloadsRoot, "paths.rootFolders": [{ path: mkdtempSync(join(dir, "media-")) }] });
+    await config.upsert({ "paths.downloads": downloadsRoot });
+    const rootFolders = new RootFoldersService(db);
+    await rootFolders.create({ path: mkdtempSync(join(dir, "media-")), name: "", isDefault: true });
 
     await db.insert(schema.movie).values({
       id: "m1", tmdbId: 1, title: "Some Movie", overview: "", status: "released", releaseDate: "2020-01-01",
@@ -122,7 +126,10 @@ describe("P0.4 — an exhausted import failure blocklists the release", () => {
     client.items = [{ downloadId: "d1", title: "Bad.Movie.Release.1080p.WEB-DL", status: "completed", progress: 100, size: 1000 }];
     const providers = { configuredDownloadClients: async () => [{ row: null, provider: client }] } as unknown as ProvidersService;
     const blocklist = new BlocklistService(db);
-    const service = new AcquisitionService(db, config, events, providers, new MediaRepository(db), blocklist);
+    const service = new AcquisitionService(
+      db, config, events, providers, new MediaRepository(db), blocklist,
+      rootFolders, new RemotePathMappingsService(db),
+    );
     const configured: ConfiguredClient = { row: null, provider: client };
 
     // Regression check: this must NOT already be true before the fix — every attempt is
@@ -198,7 +205,7 @@ describe("P0.4/P0.3 — RssSyncService grabs the best *approved* candidate, not 
     // which is covered separately by the DecisionService integration test below.
     const r1 = release({ id: "r1", indexerId: "idx1", title: "Show.S02E01.2160p.BluRay", quality: { source: "bluray", resolution: "2160p", edition: "" } });
     const r2 = release({ id: "r2", indexerId: "idx1", title: "Show.S02E01.1080p.WEB-DL", quality: { source: "web", resolution: "1080p", edition: "" } });
-    const ctx = { target: { kind: "episode" as const, mediaType: "series" as const, mediaId: "s1", seasonNumber: 2, episodes: [], isSeasonPack: false }, profile: null, existingFiles: [], hasActiveQueueConflict: false, preferredProtocol: "any" as const, isBlocklisted: false };
+    const ctx = { target: { kind: "episode" as const, mediaType: "series" as const, mediaId: "s1", seasonNumber: 2, episodes: [], isSeasonPack: false }, profile: null, existingFiles: [], hasActiveQueueConflict: false, preferredProtocol: "any" as const, isBlocklisted: false, freeSpaceBytes: null, minimumFreeSpaceMb: 100 };
     const r1Decision = evaluate(r1, { ...ctx, isBlocklisted: true }); // the higher-quality one is blocklisted
     const r2Decision = evaluate(r2, ctx);
 

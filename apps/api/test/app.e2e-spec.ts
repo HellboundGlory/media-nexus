@@ -364,9 +364,10 @@ describe("M1: real indexer + download client end-to-end (mock HTTP + real filesy
     // point global paths at the sandboxes
     const r = await auth(request(http).put("/api/v1/system/config").send({
       "paths.downloads": downloadsRoot,
-      "paths.rootFolders": [{ path: mediaRoot }],
     }));
     expect(r.status).toBe(200);
+    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefault: true }));
+    expect(rf.status).toBe(201);
   });
 
   afterAll(async () => {
@@ -497,9 +498,10 @@ describe("M2: series auto-grab via RSS sync + episode import (mock HTTP + real f
 
     const r = await auth(request(http).put("/api/v1/system/config").send({
       "paths.downloads": downloadsRoot,
-      "paths.rootFolders": [{ path: mediaRoot }],
     }));
     expect(r.status).toBe(200);
+    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefault: true }));
+    expect(rf.status).toBe(201);
   });
 
   afterAll(async () => {
@@ -642,9 +644,10 @@ describe("M-movie: movie auto-grab via RSS sync + import (mock HTTP + real files
 
     const r = await auth(request(http).put("/api/v1/system/config").send({
       "paths.downloads": downloadsRoot,
-      "paths.rootFolders": [{ path: mediaRoot }],
     }));
     expect(r.status).toBe(200);
+    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefault: true }));
+    expect(rf.status).toBe(201);
   });
 
   afterAll(async () => {
@@ -768,9 +771,10 @@ describe("D2: media.rssSync is a passive poll (no query), media.missingSearch is
 
     const r = await auth(request(http).put("/api/v1/system/config").send({
       "paths.downloads": downloadsRoot,
-      "paths.rootFolders": [{ path: mediaRoot }],
     }));
     expect(r.status).toBe(200);
+    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefault: true }));
+    expect(rf.status).toBe(201);
   });
 
   afterAll(async () => {

@@ -60,11 +60,13 @@ const movieCtx = {
   target: { kind: "movie" as const, mediaType: "movie" as const, mediaId: "m1" },
   profile: null, existingFiles: [], hasActiveQueueConflict: false,
   preferredProtocol: "any" as const, isBlocklisted: false,
+  freeSpaceBytes: null, minimumFreeSpaceMb: 100,
 };
 const episodeCtx = {
   target: { kind: "episode" as const, mediaType: "series" as const, mediaId: "s1", seasonNumber: 2, episodes: [], isSeasonPack: false },
   profile: null, existingFiles: [], hasActiveQueueConflict: false,
   preferredProtocol: "any" as const, isBlocklisted: false,
+  freeSpaceBytes: null, minimumFreeSpaceMb: 100,
 };
 
 // runFeedPoll() calls decisions.evaluate() per matched release — stub it with the pure

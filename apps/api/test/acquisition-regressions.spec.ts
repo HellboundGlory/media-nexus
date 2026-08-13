@@ -24,6 +24,8 @@ import { MediaRepository } from "../src/media/media.repository";
 import { ConfigService } from "../src/system/config.service";
 import { EventsService } from "../src/events/events.service";
 import { BlocklistService } from "../src/blocklist/blocklist.service";
+import { RootFoldersService } from "../src/root-folders/root-folders.service";
+import { RemotePathMappingsService } from "../src/remote-path-mappings/remote-path-mappings.service";
 import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
 
 const dir = mkdtempSync(join(tmpdir(), "mn-acq-"));
@@ -71,7 +73,7 @@ async function harness(): Promise<Harness> {
   mkdirSync(mediaRoot, { recursive: true });
 
   const config = new ConfigService(handle.db);
-  await config.upsert({ "paths.downloads": downloadsRoot, "paths.rootFolders": [{ path: mediaRoot }] });
+  await config.upsert({ "paths.downloads": downloadsRoot });
 
   const events = new EventsService(new EventBus());
   const client = new StubClient();
@@ -80,7 +82,10 @@ async function harness(): Promise<Harness> {
   } as unknown as ProvidersService;
 
   const blocklist = new BlocklistService(handle.db);
-  const service = new AcquisitionService(handle.db, config, events, providers, new MediaRepository(handle.db), blocklist);
+  const service = new AcquisitionService(
+    handle.db, config, events, providers, new MediaRepository(handle.db), blocklist,
+    new RootFoldersService(handle.db), new RemotePathMappingsService(handle.db),
+  );
   return {
     db: handle.db, service, blocklist, events, client, configured: { row: null, provider: client },
     providers, downloadsRoot, mediaRoot,

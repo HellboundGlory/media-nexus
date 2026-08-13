@@ -19,8 +19,6 @@ import { qualityAllowed, meetsCutoff, compareQuality, profilePosition, type Qual
  *
  * Deliberately NOT built here (see the P0.2/P0.4 handoffs this depends on, and the
  * gap report's own scoping):
- *  - Free space — gap report B8 (root folders / free space) is still open, so there
- *    is nothing to check a release's size against.
  *  - Per-quality size limits — `quality_definition` (P0.2) stores min/max per
  *    runtime-minute, but no runtime is modelled on movie/episode rows yet.
  *  - Custom-format scoring (roadmap P2) — the comparator has a documented slot.
@@ -39,7 +37,8 @@ export type RejectionReason =
   | "not_an_upgrade"
   | "blocklisted"
   | "queue_conflict"
-  | "wrong_protocol";
+  | "wrong_protocol"
+  | "insufficient_free_space";
 
 export interface Rejection {
   reason: RejectionReason;
@@ -55,6 +54,13 @@ export interface DecisionContext {
   isBlocklisted: boolean;
   hasActiveQueueConflict: boolean;
   preferredProtocol: "usenet" | "torrent" | "any";
+  /** Free bytes on the target root folder's filesystem, or null when it couldn't be
+   *  determined (root folder not yet configured/accessible) — null never blocks a grab,
+   *  matching the permissive default every other unknown-state case in this file uses. */
+  freeSpaceBytes: number | null;
+  /** `media.minimumFreeSpaceMb` setting — the safety margin required to remain *after*
+   *  the release downloads (roadmap P1, gap report B8). */
+  minimumFreeSpaceMb: number;
 }
 
 export interface Decision {
@@ -105,6 +111,20 @@ const protocolSpecification: Specification = (release, ctx) => {
   return { reason: "wrong_protocol", message: `preferred protocol is ${ctx.preferredProtocol}` };
 };
 
+/** Rejects when downloading this release would leave the target root folder's filesystem
+ *  below the configured safety margin. `freeSpaceBytes === null` (root folder missing or
+ *  unreadable) never blocks — that state is surfaced elsewhere (health checks, gap report
+ *  B9, not yet built) rather than silently stalling every grab. */
+const freeSpaceSpecification: Specification = (release, ctx) => {
+  if (ctx.freeSpaceBytes === null) return null;
+  const marginBytes = ctx.minimumFreeSpaceMb * 1024 * 1024;
+  if (ctx.freeSpaceBytes - release.size >= marginBytes) return null;
+  return {
+    reason: "insufficient_free_space",
+    message: `downloading this release would leave less than the configured ${ctx.minimumFreeSpaceMb}MB free on the target root folder`,
+  };
+};
+
 /** Order only affects which rejection appears first when several specs reject the
  *  same release — every spec still runs, so `rejections` can carry more than one. */
 export const SPECIFICATIONS: readonly Specification[] = [
@@ -113,6 +133,7 @@ export const SPECIFICATIONS: readonly Specification[] = [
   profileAllowedSpecification,
   upgradeSpecification,
   protocolSpecification,
+  freeSpaceSpecification,
 ];
 
 export function evaluate(release: Release, context: DecisionContext): Decision {

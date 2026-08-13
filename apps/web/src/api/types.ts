@@ -164,6 +164,25 @@ export interface DownloadClient {
   createdAt: string;
 }
 
+export interface RootFolder {
+  id: string;
+  path: string;
+  name: string;
+  isDefault: boolean;
+  createdAt: string;
+  accessible: boolean;
+  freeBytes: number | null;
+  totalBytes: number | null;
+}
+
+export interface RemotePathMapping {
+  id: string;
+  downloadClientId: string;
+  remotePath: string;
+  localPath: string;
+  createdAt: string;
+}
+
 export interface IndexerRow {
   id: string;
   definitionKey: string;

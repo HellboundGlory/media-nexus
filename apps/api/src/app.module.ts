@@ -26,6 +26,8 @@ import { DownloadClientsModule } from "./download-clients/download-clients.modul
 import { MetadataModule } from "./metadata/metadata.module";
 import { LibraryScanModule } from "./library-scan/library-scan.module";
 import { CompatModule } from "./compat/compat.module";
+import { RootFoldersModule } from "./root-folders/root-folders.module";
+import { RemotePathMappingsModule } from "./remote-path-mappings/remote-path-mappings.module";
 import { WebUiModule } from "./web-ui/web-ui.module";
 import { RequestIdMiddleware } from "./common/request-id.middleware";
 import { MetricsMiddleware } from "./observability/metrics.middleware";
@@ -57,6 +59,8 @@ import { SecurityHeadersMiddleware } from "./common/security-headers.middleware"
     RealtimeModule,
     ObservabilityModule,
     CompatModule,
+    RootFoldersModule,
+    RemotePathMappingsModule,
     // Must stay last: its catch-all route serves the SPA shell only when nothing
     // above it (native/compat routes) matched.
     WebUiModule,
