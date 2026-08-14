@@ -34,7 +34,9 @@ export interface IndexerContract {
   healthcheck(): Promise<HealthResult>;
   /** Optional capability detection (`t=caps`): a normalized map of what this indexer
    *  instance supports (search modes, supported params, categories). Core persists it to
-   *  `indexer_definition.capabilities` where available. Undefined = not supported. */
+   *  the per-indexer `indexer.capabilities` column (not the shared `indexer_definition`
+   *  row — instances sharing a definition can advertise different caps). Undefined = not
+   *  supported. */
   capabilities?(): Promise<Record<string, unknown>>;
 }
 

@@ -127,7 +127,8 @@ export function toAgeHours(pubDate: string | undefined): number {
 }
 
 /** Pure parser of a `t=caps&o=json` response into a normalized capabilities map ready to
- *  persist to `indexer_definition.capabilities`. */
+ *  persist to `indexer.capabilities` (per-indexer, not the shared `indexer_definition` row —
+ *  instances sharing a definition can advertise different caps). */
 export function parseNewznabCaps(json: NewznabJson): Record<string, unknown> {
   const caps = json?.channel?.caps;
   const searching = caps?.searching ?? {};
@@ -216,7 +217,7 @@ export class NewznabProvider implements IndexerContract {
 
   /** Capability detection (`t=caps&o=json`, roadmap D1): parse what search modes / params /
    *  categories this indexer instance advertises, normalized for persistence (core stores
-   *  it on `indexer_definition.capabilities`). */
+   *  it on the per-indexer `indexer.capabilities` column). */
   async capabilities(): Promise<Record<string, unknown>> {
     const q = new URLSearchParams({ t: "caps", o: "json" });
     const res = await this.request(`/api?${q.toString()}`);
