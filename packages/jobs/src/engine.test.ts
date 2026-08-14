@@ -3,16 +3,23 @@ import { describe, it, expect } from "vitest";
 import { JobEngine } from "./engine";
 import { InMemoryJobStore } from "./inmemory";
 
-function makeEngine(opts: { maxRetries?: number; handler?: any; timeoutMs?: number } = {}) {
+function makeEngine(opts: { maxRetries?: number; handler?: any; timeoutMs?: number; maxWorkers?: number; concurrencyLimit?: number } = {}) {
   const store = new InMemoryJobStore();
   store.addDefinition({
     key: "demo.job", name: "Demo", schedule: "* * * * *", enabled: true,
     timeoutMs: opts.timeoutMs ?? 1000, maxRetries: opts.maxRetries ?? 0, retryBackoffMs: 30,
-    priority: 1, concurrencyLimit: 1,
+    priority: 1, concurrencyLimit: opts.concurrencyLimit ?? 1,
   });
-  const engine = new JobEngine({ store, maxWorkers: 1 });
+  const engine = new JobEngine({ store, maxWorkers: opts.maxWorkers ?? 1 });
   if (opts.handler) engine.register("demo.job", opts.handler);
   return { store, engine };
+}
+
+/** A promise plus externally-callable resolve, for gating handlers under test control. */
+function deferred<T = void>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
 }
 
 describe("JobEngine", () => {
@@ -99,5 +106,89 @@ describe("JobEngine", () => {
     await engine.drain();
     await engine.waitIdle();
     expect([...store.runs.values()].filter((r) => r.status === "retrying").length).toBe(0);
+  });
+
+  // Regression (roadmap P1, gap report B11): job_definition.concurrencyLimit was declared
+  // but never read by drain() — only the global maxWorkers budget was enforced, so a
+  // scheduled fire racing a manual trigger could run two rows for the same jobKey at once.
+  it("enforces concurrencyLimit per jobKey even when the global worker budget allows more", async () => {
+    const gate = deferred();
+    const { store, engine } = makeEngine({
+      maxWorkers: 2, concurrencyLimit: 1,
+      handler: async () => { await gate.promise; return { ok: true }; },
+    });
+    const run1 = await engine.dispatch({ jobKey: "demo.job" });
+    const run2 = await engine.dispatch({ jobKey: "demo.job" });
+    await engine.drain();
+    const statuses = () => [store.runs.get(run1.id)!.status, store.runs.get(run2.id)!.status];
+    expect(statuses().filter((s) => s === "running").length).toBe(1);
+    expect(statuses().filter((s) => s === "queued").length).toBe(1);
+
+    gate.resolve();
+    await engine.waitIdle();
+    await engine.drain();
+    await engine.waitIdle();
+    expect(store.runs.get(run1.id)!.status).toBe("succeeded");
+    expect(store.runs.get(run2.id)!.status).toBe("succeeded");
+  });
+
+  it("allows up to concurrencyLimit runs of the same jobKey in flight together", async () => {
+    const gate = deferred();
+    const { store, engine } = makeEngine({
+      maxWorkers: 2, concurrencyLimit: 2,
+      handler: async () => { await gate.promise; return { ok: true }; },
+    });
+    const run1 = await engine.dispatch({ jobKey: "demo.job" });
+    const run2 = await engine.dispatch({ jobKey: "demo.job" });
+    await engine.drain();
+    expect(store.runs.get(run1.id)!.status).toBe("running");
+    expect(store.runs.get(run2.id)!.status).toBe("running");
+    gate.resolve();
+    await engine.waitIdle();
+  });
+
+  it("cancels a still-queued run before it's ever claimed", async () => {
+    const { store, engine } = makeEngine({ handler: async () => ({ ok: true }) });
+    const run = await engine.dispatch({ jobKey: "demo.job", dueInMs: 60_000 });
+    const result = await engine.cancel(run.id);
+    expect(result).toEqual({ cancelled: true });
+    expect(store.runs.get(run.id)!.status).toBe("cancelled");
+  });
+
+  it("cancels an in-flight run distinctly from a timeout", async () => {
+    const gate = deferred();
+    const { store, engine } = makeEngine({
+      timeoutMs: 5000,
+      handler: async () => { await gate.promise; return { ok: true }; },
+    });
+    const run = await engine.dispatch({ jobKey: "demo.job" });
+    await engine.drain();
+    const result = await engine.cancel(run.id);
+    expect(result).toEqual({ cancelled: true });
+    await engine.waitIdle();
+    const record = store.runs.get(run.id)!;
+    expect(record.status).toBe("cancelled");
+    expect(record.error ?? "").not.toMatch(/timeout/i);
+    gate.resolve();
+  });
+
+  it("cancel() on an unknown run id returns cancelled: false without throwing", async () => {
+    const { engine } = makeEngine();
+    await expect(engine.cancel("nope")).resolves.toEqual({ cancelled: false });
+  });
+
+  it("does not retry a cancelled run even with retries configured", async () => {
+    const gate = deferred();
+    const { store, engine } = makeEngine({
+      maxRetries: 3,
+      handler: async () => { await gate.promise; return { ok: true }; },
+    });
+    const run = await engine.dispatch({ jobKey: "demo.job" });
+    await engine.drain();
+    await engine.cancel(run.id);
+    await engine.waitIdle();
+    expect(store.runs.get(run.id)!.status).toBe("cancelled");
+    expect([...store.runs.values()].filter((r) => r.status === "retrying").length).toBe(0);
+    gate.resolve();
   });
 });

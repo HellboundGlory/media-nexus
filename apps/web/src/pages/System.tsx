@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Play, Webhook, Database, Copy, Check, RotateCw, Eye, EyeOff, Lock, HeartPulse } from "lucide-react";
 import { api } from "../api/client";
-import type { JobRun, HealthStatus } from "../api/types";
+import type { JobRun, JobDefinition, HealthStatus } from "../api/types";
 import { Badge, statusTone, ErrorState, formatDate } from "../lib/ui";
 
 function healthTone(level: string): "ok" | "warn" | "danger" {
@@ -44,6 +44,7 @@ export default function System() {
   });
 
   const runs = useQuery({ queryKey: ["job-runs"], queryFn: () => api.get<JobRun[]>("/system/jobs/runs") });
+  const jobDefs = useQuery({ queryKey: ["job-defs"], queryFn: () => api.get<JobDefinition[]>("/system/jobs") });
   const cfg = useQuery({ queryKey: ["config"], queryFn: () => api.get<Record<string, unknown>>("/system/config") });
   const audit = useQuery({ queryKey: ["audit"], queryFn: () => api.get<any[]>("/system/audit") });
   const health = useQuery({ queryKey: ["health"], queryFn: () => api.get<HealthStatus>("/system/health") });
@@ -52,9 +53,16 @@ export default function System() {
     mutationFn: (jobKey: string) => api.post(`/system/commands/${jobKey}`),
     onSuccess: () => setTimeout(() => {
       qc.invalidateQueries({ queryKey: ["job-runs"] });
+      qc.invalidateQueries({ queryKey: ["job-defs"] });
       qc.invalidateQueries({ queryKey: ["health"] });
     }, 800),
   });
+
+  const cancelRun = useMutation({
+    mutationFn: (id: string) => api.del(`/system/commands/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["job-runs"] }),
+  });
+  const CANCELLABLE_STATUSES = new Set(["queued", "running", "retrying"]);
 
   const saveTheme = useMutation({
     mutationFn: (theme: string) => api.put("/system/config", { "ui.theme": theme }),
@@ -63,7 +71,8 @@ export default function System() {
 
   const endpoints = [
     ["GET", "/api/v1/system/status"], ["GET", "/api/v1/system/config"], ["PUT", "/api/v1/system/config"],
-    ["POST", "/api/v1/system/commands/:jobKey"], ["GET", "/api/v1/system/jobs"], ["GET", "/api/v1/system/jobs/runs"],
+    ["POST", "/api/v1/system/commands/:jobKey"], ["GET", "/api/v1/system/commands/:id"], ["DELETE", "/api/v1/system/commands/:id"],
+    ["GET", "/api/v1/system/jobs"], ["GET", "/api/v1/system/jobs/runs"],
     ["GET", "/api/v1/system/health"], ["GET", "/api/v1/system/backups"],
     ["GET", "/api/v1/movies"], ["POST", "/api/v1/movies"], ["GET", "/api/v1/series"], ["POST", "/api/v1/series"],
     ["GET", "/api/v1/series/:id/seasons"], ["POST", "/api/v1/search"], ["POST", "/api/v1/grabs"],
@@ -92,10 +101,23 @@ export default function System() {
               <Play className="h-3.5 w-3.5" /> Run health check
             </button>
           </div>
+          {jobDefs.data && jobDefs.data.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {jobDefs.data.map((d) => {
+                const overdue = d.nextRunAt ? new Date(d.nextRunAt).getTime() <= Date.now() : false;
+                return (
+                  <span key={d.key} className="flex items-center gap-1.5 rounded-full border border-zinc-200 px-2.5 py-1 text-xs dark:border-zinc-800" title={d.schedule}>
+                    <span className="font-mono text-zinc-500">{d.key}</span>
+                    {d.nextRunAt ? <Badge tone={overdue ? "warn" : "neutral"}>{overdue ? "overdue" : formatDate(d.nextRunAt)}</Badge> : <Badge tone="neutral">disabled</Badge>}
+                  </span>
+                );
+              })}
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="text-xs uppercase text-zinc-500 dark:text-zinc-400">
-                <tr><th className="pb-2">Job</th><th className="pb-2">Status</th><th className="pb-2">Trigger</th><th className="pb-2">Attempt</th><th className="pb-2">Finished</th></tr>
+                <tr><th className="pb-2">Job</th><th className="pb-2">Status</th><th className="pb-2">Trigger</th><th className="pb-2">Attempt</th><th className="pb-2">Finished</th><th className="pb-2"></th></tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                 {runs.data?.slice(0, 15).map((r) => (
@@ -105,6 +127,14 @@ export default function System() {
                     <td className="py-2 text-zinc-500">{r.trigger}</td>
                     <td className="py-2 text-zinc-500">{r.attempt}</td>
                     <td className="py-2 text-zinc-500">{formatDate(r.finishedAt)}</td>
+                    <td className="py-2 text-right">
+                      {CANCELLABLE_STATUSES.has(r.status) && (
+                        <button onClick={() => cancelRun.mutate(r.id)} disabled={cancelRun.isPending}
+                          className="rounded-md px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950/40">
+                          Cancel
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

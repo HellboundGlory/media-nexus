@@ -33,7 +33,7 @@ export class JobHandlers implements OnModuleInit {
   onModuleInit(): void {
     this.jobs.register("system.healthCheck", () => this.healthCheck.run());
     this.jobs.register("system.housekeeping", () => this.housekeeping.run());
-    this.jobs.register("system.backup", (ctx) => this.backup.run(ctx.runId));
+    this.jobs.register("system.backup", () => this.backup.run());
     this.jobs.register("discovery.indexerRefresh", () => this.indexerRefresh());
     this.jobs.register("acquisition.downloadMonitor", (ctx) => this.downloadMonitor(ctx));
     this.jobs.register("media.rssSync", () => this.rssSync.runFeedPoll());

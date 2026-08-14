@@ -15,7 +15,6 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
   private readonly engine: JobEngine;
   private readonly store: DrizzleJobStore;
   private timer?: NodeJS.Timeout;
-  private readonly lastFired = new Map<string, string>();
 
   constructor(store: DrizzleJobStore) {
     this.store = store;
@@ -42,7 +41,19 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     if (this.timer) clearInterval(this.timer);
   }
 
-  private async tick(): Promise<void> {
+  /**
+   * Compute the next cron occurrence for a definition, based on its persisted
+   * `lastExecutedAt` (falling back to `now - 60s` only when the job has never fired). Kept
+   * as a pure function of persisted state, never held in process memory, so a restart after
+   * any amount of downtime correctly detects overdue work instead of silently skipping the
+   * missed window (roadmap P1, gap report B11).
+   */
+  private computeNextRun(def: { schedule: string; lastExecutedAt?: string }, now: Date): Date {
+    const base = def.lastExecutedAt ? new Date(def.lastExecutedAt) : new Date(now.getTime() - 60_000);
+    return CronExpressionParser.parse(def.schedule, { currentDate: base }).next().toDate();
+  }
+
+  async tick(): Promise<void> {
     try {
       await this.engine.refreshDefinitions();
       const defs = await this.store.listDefinitions();
@@ -50,12 +61,9 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       for (const def of defs) {
         if (!def.enabled || !def.schedule) continue;
         try {
-          const base = this.lastFired.get(def.key)
-            ? new Date(this.lastFired.get(def.key)!)
-            : new Date(now.getTime() - 60_000);
-          const next = CronExpressionParser.parse(def.schedule, { currentDate: base }).next().getTime();
-          if (next <= now.getTime()) {
-            this.lastFired.set(def.key, now.toISOString());
+          const next = this.computeNextRun(def, now);
+          if (next.getTime() <= now.getTime()) {
+            await this.store.recordFired(def.key, now.toISOString());
             await this.engine.dispatch({ jobKey: def.key, trigger: "scheduled" }).catch((e) => this.logger.warn(`schedule ${def.key} failed`, e));
           }
         } catch (e) {
@@ -87,7 +95,25 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     return this.store.recentRuns(limit);
   }
 
+  async findRun(runId: string): Promise<JobRunRecord | null> {
+    return this.store.findById(runId);
+  }
+
+  async cancel(runId: string): Promise<{ cancelled: boolean }> {
+    return this.engine.cancel(runId);
+  }
+
   async definitions() {
-    return this.store.listDefinitions();
+    const defs = await this.store.listDefinitions();
+    const now = new Date();
+    return defs.map((def) => {
+      let nextRunAt: string | undefined;
+      if (def.enabled && def.schedule) {
+        try {
+          nextRunAt = this.computeNextRun(def, now).toISOString();
+        } catch { /* malformed cron expression — tick() already logs this case */ }
+      }
+      return { ...def, nextRunAt };
+    });
   }
 }

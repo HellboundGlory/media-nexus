@@ -25,11 +25,14 @@ async function freshDb() {
   return handle;
 }
 
+// Concurrency (two system.backup runs racing) is enforced generically by JobEngine.drain()
+// (roadmap P1, gap report B11) — see packages/jobs/src/engine.test.ts's concurrencyLimit
+// tests, not BackupService's own responsibility anymore.
 describe("BackupService", () => {
   it("no-ops cleanly when system.backupPath is not configured", async () => {
     const handle = await freshDb();
-    const svc = new BackupService(handle.db, handle, new ConfigService(handle.db));
-    const result = await svc.run("run1");
+    const svc = new BackupService(handle, new ConfigService(handle.db));
+    const result = await svc.run();
     expect(result).toEqual({ skipped: true, reason: "system.backupPath is not configured" });
   });
 
@@ -44,8 +47,8 @@ describe("BackupService", () => {
       images: [], tags: [], hasFile: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     } as never);
 
-    const svc = new BackupService(handle.db, handle, cfg);
-    const result = await svc.run("run1");
+    const svc = new BackupService(handle, cfg);
+    const result = await svc.run();
     expect("created" in result).toBe(true);
     if (!("created" in result)) throw new Error("expected a created backup");
     expect(result.sizeBytes).toBeGreaterThan(0);
@@ -64,11 +67,11 @@ describe("BackupService", () => {
     const cfg = new ConfigService(handle.db);
     const backupPath = mkdtempSync(join(dir, "dest-"));
     await cfg.upsert({ "system.backupPath": backupPath, "system.backupRetentionCount": 2 });
-    const svc = new BackupService(handle.db, handle, cfg);
+    const svc = new BackupService(handle, cfg);
 
     const created: string[] = [];
     for (let i = 0; i < 3; i++) {
-      const result = await svc.run(`run${i}`);
+      const result = await svc.run();
       if (!("created" in result)) throw new Error("expected a created backup");
       created.push(result.created);
       await new Promise((r) => setTimeout(r, 5)); // ensure distinct mtimes
@@ -76,19 +79,5 @@ describe("BackupService", () => {
 
     const listed = await svc.list();
     expect(listed).toHaveLength(2);
-  });
-
-  it("skips when another system.backup run is already in progress", async () => {
-    const handle = await freshDb();
-    const cfg = new ConfigService(handle.db);
-    const backupPath = mkdtempSync(join(dir, "dest-"));
-    await cfg.upsert({ "system.backupPath": backupPath });
-    await handle.db.insert(schema.jobRun).values({
-      id: "other-run", jobKey: "system.backup", status: "running", createdAt: new Date().toISOString(),
-    } as never);
-
-    const svc = new BackupService(handle.db, handle, cfg);
-    const result = await svc.run("this-run");
-    expect(result).toEqual({ skipped: true, reason: "a backup is already in progress" });
   });
 });

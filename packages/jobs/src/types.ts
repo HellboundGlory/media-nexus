@@ -30,6 +30,8 @@ export interface JobDefinitionSnapshot {
   retryBackoffMs: number;
   priority: number;
   concurrencyLimit: number;
+  /** Persisted so schedule due-ness survives a restart (roadmap P1, gap report B11). */
+  lastExecutedAt?: string;
 }
 
 /** Persistence seam — implemented over Drizzle in apps/api; InMemory in tests. */
@@ -39,6 +41,7 @@ export interface JobStore {
   enqueue(record: JobRunRecord): Promise<JobRunRecord>;
   findDue(nowIso: string, limit: number): Promise<JobRunRecord[]>;
   claim(runId: string, workerTag: string): Promise<boolean>;
+  findById(runId: string): Promise<JobRunRecord | null>;
   markStarted(runId: string, startedIso: string): Promise<void>;
   updateProgress(runId: string, progress: number, message?: string): Promise<void>;
   succeed(runId: string, result: unknown, finishedIso: string): Promise<void>;
@@ -47,6 +50,10 @@ export interface JobStore {
   /** terminal: the run exceeded its definition's timeoutMs and was abandoned */
   timeout(runId: string, error: string, finishedIso: string): Promise<void>;
   cancel(runId: string): Promise<void>;
+  /** Atomic guarded terminal transition — succeeds only if status is still queued/retrying. */
+  cancelIfPending(runId: string): Promise<boolean>;
+  /** Persist that a scheduled job fired, so restart-durability doesn't depend on in-process state. */
+  recordFired(jobKey: string, firedAtIso: string): Promise<void>;
 }
 
 /** Thrown by the engine when a handler outlives its definition's timeoutMs. */
@@ -54,5 +61,13 @@ export class JobTimeoutError extends Error {
   constructor(public readonly jobKey: string, public readonly timeoutMs: number) {
     super(`Job "${jobKey}" exceeded its ${timeoutMs}ms timeout and was abandoned`);
     this.name = "JobTimeoutError";
+  }
+}
+
+/** Thrown by the engine when a handler's run is cancelled via JobEngine.cancel(). */
+export class JobCancelledError extends Error {
+  constructor(public readonly jobKey: string) {
+    super(`Job "${jobKey}" was cancelled`);
+    this.name = "JobCancelledError";
   }
 }

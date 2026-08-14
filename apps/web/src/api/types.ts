@@ -206,6 +206,14 @@ export interface JobRun {
   createdAt?: string;
 }
 
+export interface JobDefinition {
+  key: string;
+  name: string;
+  schedule: string;
+  enabled: boolean;
+  nextRunAt?: string;
+}
+
 export interface HealthCheckResult {
   key: string;
   ok: boolean;

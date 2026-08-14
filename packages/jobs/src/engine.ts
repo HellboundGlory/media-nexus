@@ -4,7 +4,7 @@ import { getCorrelationId } from "@medianexus/shared";
 import type {
   JobStore, JobRunRecord, JobTrigger, JobDefinitionSnapshot,
 } from "./types";
-import { JobTimeoutError } from "./types";
+import { JobTimeoutError, JobCancelledError } from "./types";
 
 export interface JobContext {
   runId: string;
@@ -39,6 +39,8 @@ export interface JobEngineOptions {
 export class JobEngine {
   private readonly handlers = new Map<string, JobHandler>();
   private readonly inFlight = new Set<string>();
+  private readonly inFlightByKey = new Map<string, Set<string>>();
+  private readonly controllers = new Map<string, { ac: AbortController; cancelled: boolean }>();
   private readonly defs = new Map<string, JobDefinitionSnapshot>();
   readonly maxWorkers: number;
   readonly workerTag: string;
@@ -92,10 +94,27 @@ export class JobEngine {
     while (this.inFlight.size < this.maxWorkers) {
       const due = await this.opts.store.findDue(new Date().toISOString(), dueLimit);
       if (due.length === 0) break;
-      const claimed = await this.opts.store.claim(due[0].id, this.workerTag);
-      if (!claimed) continue; // another worker claimed it; loop sees empty next
-      this.inFlight.add(due[0].id);
-      void this.execute(due[0]).finally(() => this.inFlight.delete(due[0].id));
+      // Pick the first candidate whose jobKey is still under its definition's
+      // concurrencyLimit — a scheduled fire racing a manual trigger must not run two
+      // in-flight rows for the same job. If the whole due batch is currently blocked,
+      // break rather than loop: nothing here is claimable right now, and continuing would
+      // busy-spin re-querying the same batch until the blocking run finishes.
+      const candidate = due.find((r) => {
+        const limit = this.defs.get(r.jobKey)?.concurrencyLimit ?? 1;
+        const current = this.inFlightByKey.get(r.jobKey)?.size ?? 0;
+        return current < limit;
+      });
+      if (!candidate) break;
+      const claimed = await this.opts.store.claim(candidate.id, this.workerTag);
+      if (!claimed) continue; // another worker claimed it; loop re-queries and sees it gone
+      this.inFlight.add(candidate.id);
+      let keySet = this.inFlightByKey.get(candidate.jobKey);
+      if (!keySet) { keySet = new Set(); this.inFlightByKey.set(candidate.jobKey, keySet); }
+      keySet.add(candidate.id);
+      void this.execute(candidate).finally(() => {
+        this.inFlight.delete(candidate.id);
+        keySet!.delete(candidate.id);
+      });
       executed++;
     }
     return executed;
@@ -105,7 +124,37 @@ export class JobEngine {
     while (this.inFlight.size > 0) await new Promise((r) => setTimeout(r, 25));
   }
 
+  /**
+   * Cancel a run. If it's in flight, aborts its handler's signal (cooperative — a handler
+   * that never reads ctx.signal keeps running in the background but its worker slot is freed
+   * and the DB row is marked cancelled, same trade-off as the existing timeout behavior). If
+   * it's still queued/retrying, marks it cancelled directly so it's never claimed.
+   */
+  async cancel(runId: string): Promise<{ cancelled: boolean }> {
+    const ctrl = this.controllers.get(runId);
+    if (ctrl) {
+      ctrl.cancelled = true;
+      ctrl.ac.abort();
+      return { cancelled: true };
+    }
+    return { cancelled: await this.opts.store.cancelIfPending(runId) };
+  }
+
   private async execute(record: JobRunRecord): Promise<void> {
+    // Registered synchronously, before any await, so a cancel() call racing right after
+    // claim() always finds either this controller or (if execute() hasn't been invoked at
+    // all yet) the still-queued/retrying row via cancelIfPending — never a gap where the run
+    // is already "running" in the store but not yet cancellable by either path.
+    const ctrl = { ac: new AbortController(), cancelled: false };
+    this.controllers.set(record.id, ctrl);
+    try {
+      await this.executeInner(record, ctrl);
+    } finally {
+      this.controllers.delete(record.id);
+    }
+  }
+
+  private async executeInner(record: JobRunRecord, ctrl: { ac: AbortController; cancelled: boolean }): Promise<void> {
     const handler = this.handlers.get(record.jobKey);
     const startedIso = new Date().toISOString();
     await this.opts.store.markStarted(record.id, startedIso).catch(() => {});
@@ -115,23 +164,29 @@ export class JobEngine {
       return;
     }
 
-    const ac = new AbortController();
     const def = this.defs.get(record.jobKey);
     const timeoutMs = def?.timeoutMs ?? 60_000;
     let timedOut = false;
-    let timer: NodeJS.Timeout | undefined;
 
     // The abort signal alone is advisory: a handler that never reads ctx.signal (or is
     // blocked in a socket read) would otherwise hold its worker slot forever, and once
     // every slot is held the engine stops draining entirely. Racing the handler against
-    // the deadline guarantees the slot is always released.
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        timedOut = true;
-        ac.abort();
-        reject(new JobTimeoutError(record.jobKey, timeoutMs));
-      }, timeoutMs);
+    // this promise guarantees the slot is always released, whether the abort came from the
+    // timeout firing or from an explicit JobEngine.cancel() call — timedOut/cancelled are set
+    // before abort() so the catch block below can tell the two causes apart deterministically.
+    // Since executeInner() reaches this point only after an earlier await (markStarted), a
+    // cancel() call can already have aborted the signal by the time this listener would be
+    // registered — the 'abort' event does not replay for late listeners, so check
+    // signal.aborted up front rather than relying solely on the event.
+    const abortReason = new Promise<never>((_resolve, reject) => {
+      const onAbort = () => reject(ctrl.cancelled ? new JobCancelledError(record.jobKey) : new JobTimeoutError(record.jobKey, timeoutMs));
+      if (ctrl.ac.signal.aborted) { onAbort(); return; }
+      ctrl.ac.signal.addEventListener("abort", onAbort, { once: true });
     });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      ctrl.ac.abort();
+    }, timeoutMs);
 
     const ctx: JobContext = {
       runId: record.id,
@@ -139,17 +194,18 @@ export class JobEngine {
       payload: record.payload ?? {},
       trigger: record.trigger,
       requestId: record.correlationId,
-      signal: ac.signal,
+      signal: ctrl.ac.signal,
       progress: (percent, message) => this.opts.store.updateProgress(record.id, percent, message),
     };
 
-    // Keep a reference to the handler's promise so that, when the deadline wins the race,
-    // a later rejection from the abandoned handler doesn't surface as an unhandled rejection.
+    // Keep a reference to the handler's promise so that, when the abort reason wins the
+    // race, a later rejection from the abandoned handler doesn't surface as an unhandled
+    // rejection.
     const work = handler(ctx);
     work.catch(() => {});
 
     try {
-      const result = await Promise.race([work, deadline]);
+      const result = await Promise.race([work, abortReason]);
       await this.opts.store.succeed(record.id, result ?? {}, new Date().toISOString());
       this.log("info", "job succeeded", { jobKey: record.jobKey, runId: record.id });
     } catch (err) {
@@ -157,7 +213,12 @@ export class JobEngine {
       const def2 = this.defs.get(record.jobKey);
       const maxRetries = def2?.maxRetries ?? 0;
       const backoff = def2?.retryBackoffMs ?? 0;
-      if (timedOut || ac.signal.aborted) {
+      if (ctrl.cancelled) {
+        await this.opts.store.cancel(record.id);
+        this.log("warn", "job cancelled", { jobKey: record.jobKey, runId: record.id });
+        return;
+      }
+      if (timedOut) {
         await this.opts.store.timeout(record.id, error, new Date().toISOString());
         this.log("error", "job timed out", { jobKey: record.jobKey, runId: record.id, error });
         return;

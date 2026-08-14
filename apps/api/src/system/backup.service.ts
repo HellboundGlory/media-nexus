@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable } from "@nestjs/common";
-import { and, eq, ne } from "drizzle-orm";
 import { mkdirSync, readdirSync, statSync, unlinkSync, type Stats } from "node:fs";
 import { join } from "node:path";
-import { schema, type Db, type DbHandle } from "@medianexus/database";
-import { DB_TOKEN, DB_HANDLE_TOKEN } from "../db/database.module";
+import type { DbHandle } from "@medianexus/database";
+import { DB_HANDLE_TOKEN } from "../db/database.module";
 import { ConfigService } from "./config.service";
 
 const FILE_PREFIX = "medianexus-backup-";
@@ -30,29 +29,22 @@ export type BackupResult =
  * already, gap report J9) — a separate export would just be another plaintext-credentials
  * artifact to manage, with no restore capability the DB file doesn't already provide.
  *
- * Concurrency guard: `job_definition.concurrencyLimit` is declared but not enforced
- * anywhere in `packages/jobs/src/engine.ts` (confirmed during this session — recorded in
- * GAP-REPORT-INDEX.md), so two `job_run` rows for `system.backup` (a scheduled fire racing
- * a manual trigger) could execute concurrently. Rather than changing the shared engine,
- * this service checks for another in-flight run itself and no-ops if found.
+ * Concurrency: `job_definition.concurrencyLimit` (seeded as 1 for this job) is enforced
+ * generically by `JobEngine.drain()` (roadmap P1, gap report B11) — a scheduled fire racing
+ * a manual trigger can no longer both reach `running` for the same jobKey, so this service
+ * no longer needs its own in-flight guard.
  */
 @Injectable()
 export class BackupService {
   constructor(
-    @Inject(DB_TOKEN) private readonly db: Db,
     @Inject(DB_HANDLE_TOKEN) private readonly handle: DbHandle,
     private readonly config: ConfigService,
   ) {}
 
-  async run(runId: string): Promise<BackupResult> {
+  async run(): Promise<BackupResult> {
     const cfg = await this.config.get();
     const backupPath = cfg["system.backupPath"];
     if (!backupPath) return { skipped: true, reason: "system.backupPath is not configured" };
-
-    const inFlight = await this.db.select({ id: schema.jobRun.id }).from(schema.jobRun)
-      .where(and(eq(schema.jobRun.jobKey, "system.backup"), eq(schema.jobRun.status, "running"), ne(schema.jobRun.id, runId)))
-      .limit(1);
-    if (inFlight.length > 0) return { skipped: true, reason: "a backup is already in progress" };
 
     mkdirSync(backupPath, { recursive: true });
     const name = `${FILE_PREFIX}${new Date().toISOString().replace(/[:.]/g, "-")}${FILE_SUFFIX}`;

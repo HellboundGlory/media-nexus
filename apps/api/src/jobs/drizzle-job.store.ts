@@ -19,6 +19,7 @@ export class DrizzleJobStore implements JobStore {
       key: d.key, name: d.name, schedule: d.schedule, enabled: d.enabled,
       timeoutMs: d.timeoutMs, maxRetries: d.maxRetries, retryBackoffMs: d.retryBackoffMs,
       priority: d.priority, concurrencyLimit: d.concurrencyLimit,
+      lastExecutedAt: d.lastExecutedAt ?? undefined,
     };
   }
 
@@ -51,7 +52,11 @@ export class DrizzleJobStore implements JobStore {
         or(eq(schema.jobRun.status, "queued"), eq(schema.jobRun.status, "retrying")),
         sql`(${schema.jobRun.dueAt} IS NULL OR ${schema.jobRun.dueAt} <= ${nowIso})`,
       ))
-      .orderBy(asc(schema.jobRun.dueAt))
+      // secondary id tiebreak: two rows with identical dueAt must sort deterministically, so
+      // two concurrent JobEngine.drain() calls (tick()'s scheduled poll vs. a manual-trigger
+      // dispatch) agree on the same claim candidate instead of each claiming a different row
+      // for the same jobKey (roadmap P1, gap report B11).
+      .orderBy(asc(schema.jobRun.dueAt), asc(schema.jobRun.id))
       .limit(limit);
     return rows.map((r) => this.toRecord(r));
   }
@@ -97,6 +102,29 @@ export class DrizzleJobStore implements JobStore {
 
   async cancel(runId: string): Promise<void> {
     await this.db.update(schema.jobRun).set({ status: "cancelled", finishedAt: new Date().toISOString() }).where(eq(schema.jobRun.id, runId));
+  }
+
+  async findById(runId: string): Promise<JobRunRecord | null> {
+    const rows = await this.db.select().from(schema.jobRun).where(eq(schema.jobRun.id, runId)).limit(1);
+    return rows[0] ? this.toRecord(rows[0]) : null;
+  }
+
+  async cancelIfPending(runId: string): Promise<boolean> {
+    const rows = await this.db
+      .update(schema.jobRun)
+      .set({ status: "cancelled", finishedAt: new Date().toISOString() })
+      .where(and(
+        eq(schema.jobRun.id, runId),
+        or(eq(schema.jobRun.status, "queued"), eq(schema.jobRun.status, "retrying")),
+      ))
+      .returning();
+    return rows.length > 0;
+  }
+
+  async recordFired(jobKey: string, firedAtIso: string): Promise<void> {
+    await this.db.update(schema.jobDefinition)
+      .set({ lastExecutedAt: firedAtIso, updatedAt: firedAtIso })
+      .where(eq(schema.jobDefinition.key, jobKey));
   }
 
   async recentRuns(limit = 50): Promise<JobRunRecord[]> {

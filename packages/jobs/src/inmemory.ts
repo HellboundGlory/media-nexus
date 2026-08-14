@@ -27,15 +27,21 @@ export class InMemoryJobStore implements JobStore {
     return [...this.runs.values()]
       .filter((r) => r.status === "queued" || r.status === "retrying")
       .filter((r) => !r.dueAt || r.dueAt <= nowIso)
-      .sort((a, b) => (a.dueAt ?? "").localeCompare(b.dueAt ?? ""))
+      // secondary id tiebreak: two due rows with identical dueAt must sort deterministically,
+      // so two concurrent drain() calls agree on the same claim candidate (see engine.ts)
+      .sort((a, b) => (a.dueAt ?? "").localeCompare(b.dueAt ?? "") || a.id.localeCompare(b.id))
       .slice(0, limit);
   }
 
   async claim(runId: string): Promise<boolean> {
     const r = this.runs.get(runId);
-    if (!r) return false;
+    if (!r || (r.status !== "queued" && r.status !== "retrying")) return false;
     this.runs.set(runId, { ...r, status: "running" });
     return true;
+  }
+
+  async findById(runId: string): Promise<JobRunRecord | null> {
+    return this.runs.get(runId) ?? null;
   }
 
   async markStarted(runId: string, startedIso: string): Promise<void> {
@@ -67,5 +73,17 @@ export class InMemoryJobStore implements JobStore {
   async cancel(runId: string): Promise<void> {
     const r = this.runs.get(runId);
     if (r) this.runs.set(runId, { ...r, status: "cancelled" });
+  }
+
+  async cancelIfPending(runId: string): Promise<boolean> {
+    const r = this.runs.get(runId);
+    if (!r || (r.status !== "queued" && r.status !== "retrying")) return false;
+    this.runs.set(runId, { ...r, status: "cancelled", finishedAt: new Date().toISOString() });
+    return true;
+  }
+
+  async recordFired(jobKey: string, firedAtIso: string): Promise<void> {
+    const d = this.defs.get(jobKey);
+    if (d) this.defs.set(jobKey, { ...d, lastExecutedAt: firedAtIso });
   }
 }

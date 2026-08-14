@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { Controller, Get, Param, Post } from "@nestjs/common";
+import { Controller, Delete, Get, Param, Post } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { ApiError } from "@medianexus/shared";
 import { JobsService } from "./jobs.service";
@@ -28,5 +28,21 @@ export class JobsController {
       throw new ApiError({ code: "NOT_FOUND", message: `No job handler for "${jobKey}"` });
     }
     return this.jobs.dispatch({ jobKey, trigger: "manual" });
+  }
+
+  @Get("commands/:id")
+  @ApiOperation({ summary: "Poll a single command (job run) by id" })
+  async getRun(@Param("id") id: string) {
+    const run = await this.jobs.findRun(id);
+    if (!run) throw new ApiError({ code: "NOT_FOUND", message: `No job run "${id}"` });
+    return run;
+  }
+
+  @Delete("commands/:id")
+  @ApiOperation({ summary: "Cancel a queued or in-flight command" })
+  async cancelRun(@Param("id") id: string) {
+    const run = await this.jobs.findRun(id);
+    if (!run) throw new ApiError({ code: "NOT_FOUND", message: `No job run "${id}"` });
+    return this.jobs.cancel(id);
   }
 }

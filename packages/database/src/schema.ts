@@ -327,6 +327,9 @@ export const jobDefinition = sqliteTable("job_definition", {
   retryBackoffMs: integer("retry_backoff_ms").notNull().default(5_000),
   priority: integer("priority").notNull().default(100),
   concurrencyLimit: integer("concurrency_limit").notNull().default(1),
+  // Persisted so schedule due-ness survives a restart (roadmap P1, gap report B11) —
+  // previously tracked only in an in-process Map, so a restart silently skipped overdue work.
+  lastExecutedAt: nullableIso("last_executed_at"),
   createdAt: iso("created_at"),
   updatedAt: iso("updated_at"),
 });
