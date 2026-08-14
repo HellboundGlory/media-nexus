@@ -26,9 +26,9 @@ export const releaseSchema = z.object({
   isProper: z.boolean().default(false),
   isRepack: z.boolean().default(false),
   /** Languages detected from the release title (ISO 639-1/639-2 codes). Optional so
-   *  existing constructions without it stay valid; feeds the custom-format LanguageSpec
-   *  (roadmap P2). */
-  languages: z.array(z.string()).optional().default([]),
+   *  existing constructions without it stay valid; the custom-format matcher falls back
+   *  to title detection when it's absent (roadmap P2). */
+  languages: z.array(z.string()).optional(),
 });
 export type Release = z.infer<typeof releaseSchema>;
 

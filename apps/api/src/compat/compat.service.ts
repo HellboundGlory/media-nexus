@@ -29,8 +29,9 @@ import { IndexersService } from "../indexers/indexers.service";
 import { redactSettings } from "../common/redact";
 
 /** Map our ordered-registry profile shape onto the Sonarr/Radarr wire shape:
- *  `items` become {quality:{id,name},allowed:true} entries and `cutoff` becomes
- *  the real cutoff quality id (previously a hardcoded 0 — gap report D6). */
+ *  `items` become {quality:{id,name},allowed:true} entries, `cutoff` becomes the real
+ *  cutoff quality id, and the format-score thresholds come from the profile (previously
+ *  hardcoded 0 literals — gap report D6). */
 function toCompatQualityProfile(p: typeof schema.qualityProfile.$inferSelect): CompatQualityProfile {
   return {
     id: p.id,
@@ -38,8 +39,8 @@ function toCompatQualityProfile(p: typeof schema.qualityProfile.$inferSelect): C
     upgradeAllowed: p.upgradeAllowed,
     cutoff: p.cutoffQualityId,
     items: p.items.map((id) => ({ quality: { id, name: qualityMeta(id)?.title ?? "Unknown" }, allowed: true })),
-    minFormatScore: 0,
-    cutoffFormatScore: 0,
+    minFormatScore: p.minFormatScore ?? 0,
+    cutoffFormatScore: p.cutoffFormatScore ?? 0,
   };
 }
 

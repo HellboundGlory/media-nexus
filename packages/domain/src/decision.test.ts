@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { describe, it, expect } from "vitest";
 import { evaluate, pickBest, compareDecisions, type DecisionContext } from "./decision";
+import type { CustomFormat } from "./custom-formats";
 import { qualityId, type QualityProfileLike, type Quality } from "./quality";
 import { movieTarget } from "./media";
 import type { Release } from "./release";
@@ -192,5 +193,102 @@ describe("pickBest / compareDecisions", () => {
 
     const c = evaluate(release({ id: "c", seeders: 5, ageHours: 1 }), ctx); // newer
     expect(compareDecisions(c, a)).toBeGreaterThan(0);
+  });
+});
+
+describe("custom-format scoring (roadmap P2)", () => {
+  const REMUX_FORMATS: CustomFormat[] = [{
+    id: "f1", name: "x265",
+    specs: [{ type: "term", term: "x265", useRegex: false, negate: false, caseSensitive: false }],
+  }];
+  // helper: a format-aware context scoring the "x265" term format at 100
+  function fmtCtx(over: Partial<DecisionContext> = {}): DecisionContext {
+    return baseContext({ customFormats: REMUX_FORMATS, formatScores: { f1: 100 }, ...over });
+  }
+
+  it("computes the release's formatScore and exposes it on the decision", () => {
+    const d = evaluate(release({ title: "Movie.2020.1080p.x265" }), fmtCtx());
+    expect(d.formatScore).toBe(100);
+    const d2 = evaluate(release({ title: "Movie.2020.1080p.WEB-DL" }), fmtCtx());
+    expect(d2.formatScore).toBe(0);
+  });
+
+  describe("minFormatScore gate", () => {
+    it("rejects a release whose format score is below the profile minimum", () => {
+      const d = evaluate(release({ title: "Movie.2020.1080p.WEB-DL" }), fmtCtx({ minFormatScore: 50 }));
+      expect(d.approved).toBe(false);
+      expect(d.rejections.map((r) => r.reason)).toContain("below_min_format_score");
+    });
+    it("approves a release at or above the minimum", () => {
+      const d = evaluate(release({ title: "Movie.2020.1080p.x265" }), fmtCtx({ minFormatScore: 50 }));
+      expect(d.approved).toBe(true);
+    });
+    it("is inert when minFormatScore is 0", () => {
+      const d = evaluate(release({ title: "Movie.2020.1080p.WEB-DL" }), fmtCtx({ minFormatScore: 0 }));
+      expect(d.approved).toBe(true);
+    });
+  });
+
+  describe("format score as comparator tiebreaker after quality", () => {
+    it("prefers the higher format score at equal quality", () => {
+      const ctx = fmtCtx();
+      const a = evaluate(release({ id: "a", title: "Movie.2020.1080p.x265", seeders: 5 }), ctx);
+      const b = evaluate(release({ id: "b", title: "Movie.2020.1080p.WEB-DL", seeders: 50 }), ctx);
+      // b has more seeders but a wins on format score (quality tied)
+      expect(compareDecisions(a, b)).toBeGreaterThan(0);
+      expect(pickBest([a, b])?.release.id).toBe("a");
+    });
+  });
+
+  describe("upgrade driven purely by format score", () => {
+    it("upgrades a same-quality release with a higher format score, below format cutoff", () => {
+      const ctx = fmtCtx({
+        profile: { items: [qualityId(q("hdtv", "720p")), qualityId(q("web", "1080p"))], cutoffQualityId: qualityId(q("web", "1080p")) },
+        existingFiles: [existingFile(q("hdtv", "720p"))], // name "x.mkv" -> format score 0
+      });
+      const d = evaluate(release({ title: "Movie.2020.720p.x265", quality: q("hdtv", "720p") }), ctx);
+      // same quality as held file, but format score 100 > 0
+      expect(d.approved).toBe(true);
+    });
+
+    it("upgrades at the SAME quality even when the quality cutoff is already met, if the format cutoff isn't", () => {
+      const ctx = fmtCtx({
+        profile: {
+          items: [qualityId(q("web", "1080p"))], cutoffQualityId: qualityId(q("web", "1080p")),
+        },
+        cutoffFormatScore: 50, // context-level threshold (as decision.service populates)
+        existingFiles: [existingFile(q("web", "1080p"))], // meets quality cutoff, format score 0 < 50
+      });
+      const d = evaluate(release({ title: "Movie.2020.1080p.x265", quality: q("web", "1080p") }), ctx);
+      // quality cutoff met but format cutoff not -> a higher-format same-quality release upgrades
+      expect(d.approved).toBe(true);
+    });
+
+    it("rejects a lower format score at the same quality when the held file is below cutoff (no upgrade on either axis)", () => {
+      const ctx = fmtCtx({
+        profile: {
+          items: [qualityId(q("hdtv", "720p")), qualityId(q("web", "1080p"))],
+          cutoffQualityId: qualityId(q("web", "1080p")),
+        },
+        existingFiles: [existingFile(q("hdtv", "720p"))], // below quality cutoff, format score 0
+      });
+      const d = evaluate(release({ title: "Movie.2020.720p.WEB-DL", quality: q("hdtv", "720p") }), ctx);
+      expect(d.approved).toBe(false);
+      expect(d.rejections.map((r) => r.reason)).toContain("not_an_upgrade");
+    });
+
+    it("rejects nothing-on-format-either when the held file already meets both cutoffs", () => {
+      // existing file x.mkv meets quality cutoff; format score 0 >= cutoff 0 -> cutoff already met
+      const ctx = fmtCtx({
+        profile: {
+          items: [qualityId(q("web", "1080p"))], cutoffQualityId: qualityId(q("web", "1080p")),
+          cutoffFormatScore: 0,
+        },
+        existingFiles: [existingFile(q("web", "1080p"))],
+      });
+      const d = evaluate(release({ title: "Movie.2020.1080p.x265", quality: q("web", "1080p") }), ctx);
+      expect(d.approved).toBe(false);
+      expect(d.rejections.map((r) => r.reason)).toContain("cutoff_already_met");
+    });
   });
 });

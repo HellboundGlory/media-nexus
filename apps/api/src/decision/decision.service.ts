@@ -41,24 +41,29 @@ export class DecisionService {
     const target = item ? await this.media.resolveTarget(mediaType, mediaId, release.title) : null;
     if (!item || !target) {
       return {
-        release, approved: false, profile: null,
+        release, approved: false, profile: null, formatScore: 0,
         rejections: [{ reason: "unresolved_target", message: "could not determine which media/episode this release is for" }],
       };
     }
 
-    const [existingFiles, isBlocklisted, hasActiveQueueConflict, cfg, profile, freeSpaceBytes] = await Promise.all([
+    const [existingFiles, isBlocklisted, hasActiveQueueConflict, cfg, profile, freeSpaceBytes, customFormats] = await Promise.all([
       this.media.existingFiles(target),
       this.blocklist.isBlocklisted({ mediaType, mediaId, title: release.title, indexerId: release.indexerId }),
       this.hasActiveQueueConflict(mediaType, mediaId),
       this.config.get(),
       getQualityProfile(this.db, item.qualityProfileId),
       this.freeSpaceFor(item.rootFolderPath),
+      this.db.select().from(schema.customFormat),
     ]);
 
     const context: DecisionContext = {
       target, profile, existingFiles, isBlocklisted, hasActiveQueueConflict,
       preferredProtocol: cfg["media.preferredProtocol"],
       freeSpaceBytes, minimumFreeSpaceMb: cfg["media.minimumFreeSpaceMb"],
+      customFormats,
+      formatScores: profile?.formatScores,
+      minFormatScore: profile?.minFormatScore,
+      cutoffFormatScore: profile?.cutoffFormatScore,
     };
     return evaluate(release, context);
   }

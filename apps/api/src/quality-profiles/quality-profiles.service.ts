@@ -43,6 +43,9 @@ export class QualityProfilesService {
       upgradeAllowed: input.upgradeAllowed,
       language: input.language,
       isDefault: input.isDefault,
+      formatScores: input.formatScores,
+      minFormatScore: input.minFormatScore,
+      cutoffFormatScore: input.cutoffFormatScore,
       createdAt: now,
       updatedAt: now,
     };
@@ -63,6 +66,9 @@ export class QualityProfilesService {
       upgradeAllowed: input.upgradeAllowed ?? existing.upgradeAllowed,
       language: input.language ?? existing.language,
       isDefault: input.isDefault ?? existing.isDefault,
+      formatScores: input.formatScores ?? existing.formatScores,
+      minFormatScore: input.minFormatScore ?? existing.minFormatScore,
+      cutoffFormatScore: input.cutoffFormatScore ?? existing.cutoffFormatScore,
     };
     if (!merged.items.includes(merged.cutoffQualityId)) {
       throw new ApiError({ code: "VALIDATION_ERROR", message: "cutoffQualityId must be one of items" });

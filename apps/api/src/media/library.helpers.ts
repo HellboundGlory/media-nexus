@@ -137,7 +137,21 @@ export function ensureAvailabilitySync(tx: Tx, mediaType: MediaType, mediaId: st
 export async function getQualityProfile(db: Db, qualityProfileId: string | null): Promise<QualityProfileLike | null> {
   if (!qualityProfileId) return null;
   const rows = await db
-    .select({ items: schema.qualityProfile.items, cutoffQualityId: schema.qualityProfile.cutoffQualityId })
+    .select({
+      items: schema.qualityProfile.items,
+      cutoffQualityId: schema.qualityProfile.cutoffQualityId,
+      formatScores: schema.qualityProfile.formatScores,
+      minFormatScore: schema.qualityProfile.minFormatScore,
+      cutoffFormatScore: schema.qualityProfile.cutoffFormatScore,
+    })
     .from(schema.qualityProfile).where(eq(schema.qualityProfile.id, qualityProfileId)).limit(1);
-  return rows[0] ?? null;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    items: row.items,
+    cutoffQualityId: row.cutoffQualityId,
+    formatScores: row.formatScores ?? {},
+    minFormatScore: row.minFormatScore ?? 0,
+    cutoffFormatScore: row.cutoffFormatScore ?? 0,
+  };
 }
