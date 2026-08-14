@@ -9,6 +9,7 @@ import { MediaServersService } from "../media-servers/media-servers.service";
 import { MetadataService } from "../metadata/metadata.service";
 import { LibraryScanService } from "../library-scan/library-scan.service";
 import { RecycleBinService } from "../media/recycle-bin.service";
+import { MediaProbeService } from "../media/media-probe.service";
 import { HealthCheckService } from "../health/health-check.service";
 import { HousekeepingService } from "../system/housekeeping.service";
 import { BackupService } from "../system/backup.service";
@@ -29,6 +30,7 @@ export class JobHandlers implements OnModuleInit {
     private readonly cardigannSync: CardigannSyncService,
     private readonly libraryScan: LibraryScanService,
     private readonly recycleBin: RecycleBinService,
+    private readonly mediaProbe: MediaProbeService,
     private readonly healthCheck: HealthCheckService,
     private readonly housekeeping: HousekeepingService,
     private readonly backup: BackupService,
@@ -48,6 +50,7 @@ export class JobHandlers implements OnModuleInit {
     this.jobs.register("media.definitionSync", () => this.cardigannSync.run());
     this.jobs.register("library.scan", () => this.libraryScan.scanAll());
     this.jobs.register("media.recycleBinTrim", () => this.recycleBin.purgeExpired());
+    this.jobs.register("media.mediaInfoRefresh", () => this.mediaProbe.probeMissing(20));
   }
 
   private async indexerRefresh(): Promise<unknown> {

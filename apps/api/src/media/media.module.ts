@@ -2,6 +2,7 @@
 import { Global, Module } from "@nestjs/common";
 import { MediaRepository } from "./media.repository";
 import { RecycleBinService } from "./recycle-bin.service";
+import { MediaProbeService } from "./media-probe.service";
 
 /**
  * Global because the media abstraction is a leaf dependency of nearly every other
@@ -9,7 +10,7 @@ import { RecycleBinService } from "./recycle-bin.service";
  */
 @Global()
 @Module({
-  providers: [MediaRepository, RecycleBinService],
-  exports: [MediaRepository, RecycleBinService],
+  providers: [MediaRepository, RecycleBinService, MediaProbeService],
+  exports: [MediaRepository, RecycleBinService, MediaProbeService],
 })
 export class MediaModule {}

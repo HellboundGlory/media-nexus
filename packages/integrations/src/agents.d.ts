@@ -16,3 +16,8 @@ declare module "socks-proxy-agent" {
     constructor(proxy: string);
   }
 }
+declare module "@ffprobe-installer/ffprobe" {
+  /** Static per-platform ffprobe binary, resolved at install. CJS: `module.exports = {...}`. */
+  const ffprobe: { path: string; version: string; url: string };
+  export default ffprobe;
+}

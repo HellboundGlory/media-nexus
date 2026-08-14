@@ -115,6 +115,7 @@ export async function seedStatic(db: Db): Promise<void> {
     { key: "media.definitionSync", name: "Cardigann definition sync", description: "Fetch upstream Cardigann definitions (Prowlarr/Indexers v11), validate them, and upsert supported definitions as built-in indexers (tagged supported/unsupported; live built-ins are never hard-deleted)", schedule: "0 */6 * * *", timeoutMs: 600_000, maxRetries: 1, priority: 140 },
     { key: "library.scan", name: "Library scan", description: "Reconcile files on disk against the library — picks up files added outside the app and clears ones that vanished", schedule: "0 */6 * * *", timeoutMs: 300_000, maxRetries: 1, priority: 180 },
     { key: "media.recycleBinTrim", name: "Recycle bin trim", description: "Delete recycle-bin entries past media.recycleBinRetentionDays (no-op when the recycle bin isn't configured)", schedule: "0 4 * * *", timeoutMs: 60_000, maxRetries: 1, priority: 200 },
+    { key: "media.mediaInfoRefresh", name: "Media info refresh", description: "Probe media files with no mediaInfo and populate media_file.mediaInfo + languages (codec, resolution, runtime, audio/subtitle languages)", schedule: "*/1 * * * *", timeoutMs: 60_000, maxRetries: 2, priority: 80 },
   ];
   for (const j of jobs) {
     const existing = await db.select().from(schema.jobDefinition).where(eq(schema.jobDefinition.key, j.key)).limit(1);

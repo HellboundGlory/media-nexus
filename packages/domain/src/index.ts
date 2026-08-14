@@ -13,3 +13,4 @@ export * from "./import-decision";
 export * from "./naming";
 export * from "./health";
 export * from "./provider-status";
+export * from "./media-info";
