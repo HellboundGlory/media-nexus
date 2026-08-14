@@ -8,6 +8,7 @@
  */
 import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql, type SQL } from "drizzle-orm";
+import type { CustomFormatSpec } from "@medianexus/domain";
 
 // ---------- helpers ----------
 const iso = (name: string) => text(name).notNull();
@@ -61,6 +62,12 @@ export const qualityProfile = sqliteTable("quality_profile", {
   upgradeAllowed: bool("upgrade_allowed", true),
   language: text("language").notNull().default("en"),
   isDefault: bool("is_default", false),
+  // Custom-format scoring (roadmap P2, gap report B4/D6): per-format scores keyed by
+  // custom format id + grab/min and upgrade/cutoff format-score thresholds. Absent/0
+  // means format behavior is inert, matching every profile today.
+  formatScores: json<Record<string, number>>("format_scores", sql`'{}'`),
+  minFormatScore: integer("min_format_score").notNull().default(0),
+  cutoffFormatScore: integer("cutoff_format_score").notNull().default(0),
   createdAt: iso("created_at"),
   updatedAt: iso("updated_at"),
 });
@@ -76,6 +83,19 @@ export const qualityDefinition = sqliteTable("quality_definition", {
   minSize: integer("min_size"), // MB per runtime-minute; null = no minimum
   maxSize: integer("max_size"), // MB per runtime-minute; null = unlimited
   preferredSize: integer("preferred_size"), // MB per runtime-minute; null = no preference
+  updatedAt: iso("updated_at"),
+});
+
+// Custom-format catalog (roadmap P2, gap report B4/D6). A named collection of release
+// matching specs (term/regex, size, language, indexer). `specs` is JSON; the concrete
+// per-spec shape is validated by packages/domain/src/custom-formats.ts. Profiles reference
+// formats by id through quality_profile.format_scores, so deleting a format here can
+// orphan a score key entry but never crashes a decision (absent keys score 0).
+export const customFormat = sqliteTable("custom_format", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  specs: json<CustomFormatSpec[]>("specs").notNull(),
+  createdAt: iso("created_at"),
   updatedAt: iso("updated_at"),
 });
 
@@ -451,6 +471,7 @@ export const schema = {
   setting,
   qualityProfile,
   qualityDefinition,
+  customFormat,
   rootFolder,
   movie,
   series,
