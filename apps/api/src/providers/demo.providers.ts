@@ -15,6 +15,7 @@ import {
   type IndexerContract,
 } from "@medianexus/integrations";
 import { schema, type Db } from "@medianexus/database";
+import { tagApplies } from "../common/tags";
 import { ApiError } from "@medianexus/shared";
 import { DB_TOKEN } from "../db/database.module";
 import { ConfigService } from "../system/config.service";
@@ -122,17 +123,22 @@ export class ProvidersService {
   /** Pick the best download client for a release protocol (usenet|torrent). Clients that
    *  are backed off / auto-disabled (B10) are skipped from automatic selection so grabs
    *  don't land on a dead client; an explicit `downloadClientId` is honored verbatim
-   *  (explicit/manual override must still be able to reach a recovery path). */
+   *  (explicit/manual override must still be able to reach a recovery path). When
+   *  `mediaTags` is given, only tag-eligible clients are considered (roadmap P2, gap C6):
+   *  an untagged client serves anything; a tagged client only serves media sharing a tag. */
   async pickDownloadClient(
     protocol: "usenet" | "torrent",
     explicitId?: string,
+    mediaTags?: string[],
   ): Promise<ConfiguredClient> {
     const clients = await this.configuredDownloadClients();
     if (explicitId) {
       const hit = clients.find((c) => c.row?.id === explicitId);
       if (hit) return hit;
     }
-    const matches = clients.filter((c) => c.row && c.row.kind === protocol);
+    const matches = clients
+      .filter((c) => c.row && c.row.kind === protocol)
+      .filter((c) => tagApplies(c.row?.tags, mediaTags));
     const viable: ConfiguredClient[] = [];
     for (const c of matches) {
       if (c.row && await this.status.isSkipped("downloadClient", c.row.id)) continue;

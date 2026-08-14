@@ -8,6 +8,7 @@ import type { Db } from "@medianexus/database";
 import type { Release, CreateIndexer, UpdateIndexerBody } from "@medianexus/domain";
 import { ProvidersService } from "../providers/demo.providers";
 import { redactSettings, REDACTED } from "../common/redact";
+import { tagApplies } from "../common/tags";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 import { z } from "zod";
@@ -309,28 +310,37 @@ export class IndexersService {
   async search(input: { mediaType: "movie" | "series"; mediaId: string; query?: string; seasons?: number[]; episodes?: number[]; limit?: number }) {
     const query = this.buildQuery(input.query, input.seasons, input.episodes);
     // ID-based lookup (roadmap D1): resolve the title's stable external ids so providers
-    // can use t=tvsearch / t=movie instead of fuzzy t=search when available.
-    const ids = await this.lookupSearchIds(input.mediaType, input.mediaId);
+    // can use t=tvsearch / t=movie instead of fuzzy t=search when available; its tags
+    // drive tag-scoped indexer search (roadmap P2, gap C6).
+    const { tags, ...ids } = await this.lookupSearchIds(input.mediaType, input.mediaId);
     const results = await this.fetchReleases(
-      query, input.limit ?? 20, input.mediaType, input.seasons?.[0], input.episodes?.[0], ids,
+      query, input.limit ?? 20, input.mediaType, input.seasons?.[0], input.episodes?.[0], ids, tags,
     );
     const decisions = await this.decisions.evaluateMany(input.mediaType, input.mediaId, results);
     const releases = results.map((r, i) => ({ ...r, decision: decisions[i] }));
     return { mediaType: input.mediaType, mediaId: input.mediaId, query, releases };
   }
 
-  /** Load the stable external ids a provider needs for ID-based search (D1). */
+  /** Load the stable external ids + tags a provider needs for ID search / tag scoping. */
   private async lookupSearchIds(
     mediaType: "movie" | "series", mediaId: string,
-  ): Promise<{ tvdbId?: number; imdbId?: string; tmdbId?: number }> {
+  ): Promise<{ tvdbId?: number; imdbId?: string; tmdbId?: number; tags: string[] }> {
     if (mediaType === "series") {
       const rows = await this.db.select().from(schema.series).where(eq(schema.series.id, mediaId)).limit(1);
       const r = rows[0];
-      return { tvdbId: r?.tvdbId ?? undefined, imdbId: r?.imdbId ?? undefined, tmdbId: r?.tmdbId ?? undefined };
+      return { tvdbId: r?.tvdbId ?? undefined, imdbId: r?.imdbId ?? undefined, tmdbId: r?.tmdbId ?? undefined, tags: r?.tags ?? [] };
     }
     const rows = await this.db.select().from(schema.movie).where(eq(schema.movie.id, mediaId)).limit(1);
     const r = rows[0];
-    return { imdbId: r?.imdbId ?? undefined, tmdbId: r?.tmdbId ?? undefined };
+    return { imdbId: r?.imdbId ?? undefined, tmdbId: r?.tmdbId ?? undefined, tags: r?.tags ?? [] };
+  }
+
+  /** The media's tags, for tag-based download-client routing at grab time (gap C6). */
+  private async mediaTagsFor(mediaType: "movie" | "series", mediaId: string): Promise<string[]> {
+    const table = mediaType === "series" ? schema.series : schema.movie;
+    const col = mediaType === "series" ? schema.series.id : schema.movie.id;
+    const rows = await this.db.select().from(table).where(eq(col, mediaId)).limit(1);
+    return rows[0]?.tags ?? [];
   }
 
   /** Category-only "recent releases" poll across every configured indexer (roadmap D2,
@@ -356,10 +366,16 @@ export class IndexersService {
     season?: number,
     episode?: number,
     ids?: { tvdbId?: number; imdbId?: string; tmdbId?: number },
+    mediaTags?: string[],
   ): Promise<Release[]> {
     const configured = await this.providers.configuredIndexers();
     const results: Release[] = [];
     for (const { row, provider } of configured) {
+      // Tag-scoped search (roadmap P2, gap C6): a tagged indexer only serves media that
+      // shares a tag; untagged indexers serve everything. Only applied when a media
+      // target is in scope (search) — the category-only RSS poll (pollRecent, mediaTags
+      // undefined) stays unscoped across every indexer.
+      if (mediaTags !== undefined && !tagApplies(row.tags, mediaTags)) continue;
       const gate = await this.status.beforeCall("indexer", row.id, query ? "query" : "poll");
       if (gate.skip) continue;
       try {
@@ -426,7 +442,7 @@ export class IndexersService {
       });
     }
 
-    const client = await this.providers.pickDownloadClient(release.protocol as "usenet" | "torrent", input.downloadClientId);
+    const client = await this.providers.pickDownloadClient(release.protocol as "usenet" | "torrent", input.downloadClientId, await this.mediaTagsFor(input.mediaType, input.mediaId));
     const clientId = client.row?.id ?? null;
     let downloadId: string;
     try {

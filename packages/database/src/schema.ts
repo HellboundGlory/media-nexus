@@ -238,6 +238,19 @@ export const downloadClient = sqliteTable("download_client", {
   updatedAt: iso("updated_at"),
 });
 
+// ---------- Tag catalog (roadmap P2, gap report C6) ----------
+// A user-facing tag catalog. Entity `tags` columns (movie, series, indexer,
+// download_client) reference tag IDs (stable keys), so renaming a tag's label/color never
+// orphans the arrays. The table is a catalog only — the arrays stay free-form — and
+// tag-based routing (indexer scoping / download-client routing) matches on the strings.
+export const tag = sqliteTable("tag", {
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  color: text("color"),
+  createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+});
+
 // ---------- 5. Acquisition ----------
 // Remote path mapping (roadmap P1, gap report B8): translates a download client's
 // self-reported content path (e.g. /downloads/x inside its own container) into the path
@@ -431,6 +444,7 @@ export const schema = {
   auditLog,
   healthCheckResult,
   providerStatus,
+  tag,
 };
 
 export type Schema = typeof schema;

@@ -140,3 +140,19 @@ export const updateRemotePathMappingSchema = z.object({
 export type UpdateRemotePathMappingBody = z.infer<typeof updateRemotePathMappingSchema>;
 
 export const upsertSettingSchema = z.record(z.string(), z.unknown());
+
+// ---------- Tags (roadmap P2, gap report C6) ----------
+// Create/update bodies for the tag catalog. `id` is the stable key that entity `tags`
+// arrays reference, so re-labelling/re-colouring never orphans the arrays.
+export const createTagSchema = z.object({
+  id: z.string().trim().min(1).max(64).regex(/^[a-zA-Z0-9][a-zA-Z0-9-]*$/, "Tag id must be alphanumeric with optional hyphens"),
+  label: z.string().trim().min(1).optional(),
+  color: z.string().trim().optional(),
+});
+export type CreateTag = z.infer<typeof createTagSchema>;
+
+export const updateTagSchema = z.object({
+  label: z.string().trim().min(1).optional(),
+  color: z.string().trim().nullish(),
+});
+export type UpdateTag = z.infer<typeof updateTagSchema>;
