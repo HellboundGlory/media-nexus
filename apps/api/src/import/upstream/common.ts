@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { schema, type Db } from "@medianexus/database";
 import { qualityId } from "@medianexus/domain";
 import type { SourceDb, ImportRow } from "../importer.types";
+import { encryptFields, getProviderSecret, INDEXER_SETTINGS_SECRET_FIELDS } from "../../secrets/provider-secrets";
 import { str, num, bool, jsonc } from "../rows";
 
 const iso = () => new Date().toISOString();
@@ -74,13 +75,17 @@ export async function importIndexers(
       unknownSettings++;
     }
     const protocolRaw = str(r, "Protocol");
+    const impl = str(r, "Implementation") ?? "newznab";
+    // J9: encrypt credentials at rest — must mirror exactly what the read path
+    // (`ProvidersService.configuredIndexers()`) decrypts for the same implementation.
+    settings = encryptFields(settings, INDEXER_SETTINGS_SECRET_FIELDS[impl] ?? [], getProviderSecret());
     await target.insert(schema.indexer).values({
       id: derivedId,
       definitionKey: str(r, "DefinitionName") ?? str(r, "Implementation") ?? "generic-newznab",
       name: str(r, "Name") ?? `Indexer ${id}`,
       protocol: (String(protocolRaw ?? "usenet").toLowerCase() === "torrent" ? "torrent" : "usenet"),
       enabled: bool(r, "Enable", true),
-      implementation: str(r, "Implementation") ?? "newznab",
+      implementation: impl,
       settings,
       proxy: null,
       priority: num(r, "Priority") ?? 25,

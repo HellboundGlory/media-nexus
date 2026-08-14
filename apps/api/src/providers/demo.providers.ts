@@ -19,6 +19,15 @@ import { ApiError } from "@medianexus/shared";
 import { DB_TOKEN } from "../db/database.module";
 import { ConfigService } from "../system/config.service";
 import { ProviderStatusService } from "./provider-status.service";
+import { parseCardigannYaml } from "@medianexus/integrations";
+import {
+  DOWNLOAD_CLIENT_SECRET_FIELDS,
+  INDEXER_SETTINGS_SECRET_FIELDS,
+  PROXY_SECRET_FIELDS,
+  cardigannSecretFields,
+  decryptFields,
+  getProviderSecret,
+} from "../secrets/provider-secrets";
 
 export const MEMORY_INDEXER = Symbol("MEMORY_INDEXER");
 export const MEMORY_DOWNLOAD_CLIENT = Symbol("MEMORY_DOWNLOAD_CLIENT");
@@ -53,10 +62,20 @@ export class ProvidersService {
   async configuredIndexers(): Promise<ConfiguredIndexer[]> {
     const rows = await this.db.select().from(schema.indexer).where(eq(schema.indexer.enabled, true));
     const flare = (await this.config.get())["discovery.flareSolverrBaseUrl"] || undefined;
+    const secret = getProviderSecret();
     const out: ConfiguredIndexer[] = [];
     for (const row of rows) {
-      const settings = (row.settings ?? {}) as Record<string, unknown>;
-      const proxy = row.proxy as { type?: string; host?: string; port?: number; username?: string; password?: string; enabled?: boolean; flareSolverr?: boolean } | null;
+      const def = row.implementation === "cardigann"
+        ? (await this.db.select().from(schema.indexerDefinition).where(eq(schema.indexerDefinition.key, row.definitionKey)).limit(1))[0]
+        : undefined;
+      // J9: decrypt stored credentials before building a provider — tolerant, so a row
+      // that is still plaintext (e.g. mid-run upstream import) still works.
+      const secretFields = row.implementation === "cardigann"
+        ? cardigannSecretFields(def?.cardigannYml ? parseCardigannYaml(def.cardigannYml) : undefined)
+        : (INDEXER_SETTINGS_SECRET_FIELDS[row.implementation] ?? []);
+      const settings = decryptFields((row.settings ?? {}) as Record<string, unknown>, secretFields, secret);
+      const rawProxy = row.proxy as { type?: string; host?: string; port?: number; username?: string; password?: string; enabled?: boolean; flareSolverr?: boolean } | null;
+      const proxy = rawProxy ? decryptFields(rawProxy, PROXY_SECRET_FIELDS, secret) as typeof rawProxy : rawProxy;
       const fetcher = buildFetcher({
         proxy: (proxy ? { enabled: proxy.enabled ?? true, type: proxy.type as never, host: proxy.host as string, port: proxy.port ?? 0, username: proxy.username, password: proxy.password } : null) as never,
         flareSolverrUrl: proxy?.flareSolverr && flare ? flare : undefined,
@@ -69,8 +88,7 @@ export class ProvidersService {
           provider: new NewznabProvider(row.id, row.protocol as "usenet" | "torrent", settings as never, fetcher as never),
         });
       } else if (row.implementation === "cardigann") {
-        const def = await this.db.select().from(schema.indexerDefinition).where(eq(schema.indexerDefinition.key, row.definitionKey)).limit(1);
-        const yml = def[0]?.cardigannYml;
+        const yml = def?.cardigannYml;
         if (!yml) continue;
         out.push({
           row,
@@ -89,9 +107,11 @@ export class ProvidersService {
 
   async configuredDownloadClients(): Promise<ConfiguredClient[]> {
     const rows = await this.db.select().from(schema.downloadClient).where(eq(schema.downloadClient.enabled, true));
+    const secret = getProviderSecret();
     const out: ConfiguredClient[] = [];
     for (const row of rows) {
-      const settings = (row.settings ?? {}) as Record<string, unknown>;
+      // J9: decrypt stored credentials before building a provider (tolerant to plaintext).
+      const settings = decryptFields((row.settings ?? {}) as Record<string, unknown>, DOWNLOAD_CLIENT_SECRET_FIELDS[row.implementation] ?? [], secret);
       if (row.implementation === "sabnzbd") out.push({ row, provider: new SabnzbdProvider(settings as never) });
       else if (row.implementation === "qbittorrent") out.push({ row, provider: new QbittorrentProvider(settings as never) });
       else if (row.implementation === "memory") out.push({ row, provider: this.memClient });

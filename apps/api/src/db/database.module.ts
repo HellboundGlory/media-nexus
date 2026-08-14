@@ -4,6 +4,7 @@ import { Inject } from "@nestjs/common";
 import { createDb, type Db, type DbHandle } from "@medianexus/database";
 import { seedStatic } from "@medianexus/database";
 import { parseEnv } from "@medianexus/shared";
+import { runSecretBackfill } from "../secrets/secret-backfill";
 
 export const DB_TOKEN = Symbol("DATABASE");
 export const DB_HANDLE_TOKEN = Symbol("DATABASE_HANDLE");
@@ -32,6 +33,13 @@ export class DatabaseLifecycle implements OnModuleDestroy {
         const handle = createDb(env.DATABASE_URL);
         if (env.AUTO_MIGRATE) handle.runMigrations();
         await seedStatic(handle.db);
+        // Gap report J9 — encrypt pre-existing plaintext provider credentials in place.
+        // Idempotent + non-destructive: re-runs every boot and no-ops once everything is
+        // already encrypted. Must run after migrations (so the tables exist) and needs the
+        // secret from the environment (like auth.service.ts).
+        if (env.AUTO_MIGRATE && env.MEDIA_NEXUS_SECRET) {
+          runSecretBackfill(handle.db, env.MEDIA_NEXUS_SECRET);
+        }
         return handle;
       },
     },

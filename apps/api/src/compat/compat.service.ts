@@ -26,6 +26,7 @@ import { SeriesService } from "../series/series.service";
 import { MoviesService } from "../movies/movies.service";
 import { JobsService } from "../jobs/jobs.service";
 import { IndexersService } from "../indexers/indexers.service";
+import { redactSettings } from "../common/redact";
 
 /** Map our ordered-registry profile shape onto the Sonarr/Radarr wire shape:
  *  `items` become {quality:{id,name},allowed:true} entries and `cutoff` becomes
@@ -187,7 +188,9 @@ export class CompatService {
         const defNames = await this.db.select().from(schema.indexerDefinition);
         return rows.map((r): CompatIndexerDef => {
           const def = defNames.find((d) => d.key === r.definitionKey);
-          const settings = (r.settings ?? {}) as Record<string, unknown>;
+          // J9: redact credential fields before exposing to a Prowlarr-ecosystem client —
+          // previously leaked plaintext API keys/passwords, and would now leak ciphertext.
+          const settings = redactSettings((r.settings ?? {}) as Record<string, unknown>) ?? {};
           return {
             id: r.id,
             name: r.name,

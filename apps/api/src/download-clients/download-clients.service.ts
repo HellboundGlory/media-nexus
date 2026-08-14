@@ -17,6 +17,7 @@ import { z } from "zod";
 import { EventTypes } from "@medianexus/events";
 import { EventsService } from "../events/events.service";
 import { ProviderStatusService } from "../providers/provider-status.service";
+import { DOWNLOAD_CLIENT_SECRET_FIELDS, encryptFields, getProviderSecret } from "../secrets/provider-secrets";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   sabnzbd: sabnzbdSettingsSchema,
@@ -44,7 +45,9 @@ export class DownloadClientsService {
   async get(id: string) {
     const rows = await this.db.select().from(schema.downloadClient).where(eq(schema.downloadClient.id, id)).limit(1);
     if (!rows[0]) throw ApiError.notFound("download client", id);
-    return rows[0];
+    // J9: never return stored ciphertext (or plaintext) for credential fields — redact,
+    // matching `list()`. Internal callers (test/remove) only use `.id`, so this is safe.
+    return { ...rows[0], settings: redactSettings(rows[0].settings) };
   }
 
   async create(input: CreateDownloadClient) {
@@ -61,6 +64,7 @@ export class DownloadClientsService {
     }
     const now = new Date().toISOString();
     const kind = input.kind ?? (input.implementation === "sabnzbd" ? "usenet" : "torrent");
+    const secret = getProviderSecret();
     const row = {
       id: newEntityId("dc"),
       name: input.name,
@@ -68,13 +72,15 @@ export class DownloadClientsService {
       kind,
       enabled: input.enabled ?? true,
       priority: input.priority ?? 1,
-      settings: parsed.data as Record<string, unknown>,
+      // J9: store client credentials encrypted at rest (decrypted on read when providers are built).
+      settings: encryptFields(parsed.data as Record<string, unknown>, DOWNLOAD_CLIENT_SECRET_FIELDS[input.implementation] ?? [], secret) as Record<string, unknown>,
       tags: input.tags ?? [],
       createdAt: now,
       updatedAt: now,
     };
     await this.db.insert(schema.downloadClient).values(row);
-    return row;
+    // J9: never return stored ciphertext for credential fields — redact, matching `list()`.
+    return { ...row, settings: redactSettings(row.settings) };
   }
 
   async remove(id: string) {

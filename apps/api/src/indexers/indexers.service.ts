@@ -19,6 +19,7 @@ import { episodeQueryTag } from "@medianexus/domain";
 import { parseCardigannYaml, cardigannSettingsSchema } from "@medianexus/integrations";
 import { DecisionService } from "../decision/decision.service";
 import { ProviderStatusService } from "../providers/provider-status.service";
+import { cardigannSecretFields, encryptFields, getProviderSecret, INDEXER_SETTINGS_SECRET_FIELDS, PROXY_SECRET_FIELDS } from "../secrets/provider-secrets";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   memory: memoryIndexerSettingsSchema,
@@ -90,7 +91,9 @@ export class IndexersService {
   async get(id: string) {
     const rows = await this.db.select().from(schema.indexer).where(eq(schema.indexer.id, id)).limit(1);
     if (!rows[0]) throw ApiError.notFound("indexer", id);
-    return rows[0];
+    // J9: never return stored ciphertext (or plaintext) for credential fields — redact,
+    // matching `list()`. Internal callers (test/remove) only use `.id`, so this is safe.
+    return { ...rows[0], settings: redactSettings(rows[0].settings), proxy: rows[0].proxy ? redactSettings(rows[0].proxy) : null };
   }
 
   async create(input: CreateIndexer) {
@@ -99,12 +102,14 @@ export class IndexersService {
     const impl = def[0].implementation;
 
     let parsedSettings: Record<string, unknown>;
+    let secretFields: string[];
     if (impl === "cardigann") {
       if (!def[0].cardigannYml) throw new ApiError({ code: "VALIDATION_ERROR", message: "Cardigann definition has no YAML body" });
       const parsed = parseCardigannYaml(def[0].cardigannYml);
       const res = cardigannSettingsSchema(parsed).safeParse(input.settings);
       if (!res.success) throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid settings for ${def[0].name}`, details: res.error.issues });
       parsedSettings = res.data as Record<string, unknown>;
+      secretFields = cardigannSecretFields(parsed);
     } else {
       const s = settingsSchemas[impl];
       if (!s) {
@@ -115,9 +120,11 @@ export class IndexersService {
         throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid settings for ${impl}`, details: parsed.error.issues });
       }
       parsedSettings = parsed.data as Record<string, unknown>;
+      secretFields = INDEXER_SETTINGS_SECRET_FIELDS[impl] ?? [];
     }
 
     const now = new Date().toISOString();
+    const secret = getProviderSecret();
     const row = {
       id: newEntityId("idx"),
       definitionKey: input.definitionKey,
@@ -125,8 +132,9 @@ export class IndexersService {
       protocol: input.protocol,
       enabled: input.enabled ?? true,
       implementation: impl,
-      settings: parsedSettings,
-      proxy: input.proxy ?? null,
+      // J9: store credentials encrypted at rest (decrypted on read when providers are built).
+      settings: encryptFields(parsedSettings, secretFields, secret),
+      proxy: input.proxy ? encryptFields(input.proxy, PROXY_SECRET_FIELDS, secret) : null,
       priority: input.priority ?? 25,
       status: "ok",
       tags: input.tags ?? [],
@@ -134,7 +142,8 @@ export class IndexersService {
       updatedAt: now,
     };
     await this.db.insert(schema.indexer).values(row);
-    return row;
+    // J9: never return stored ciphertext for credential fields — redact, matching `list()`.
+    return { ...row, settings: redactSettings(row.settings), proxy: row.proxy ? redactSettings(row.proxy) : null };
   }
 
   /** Run a live health check on one configured indexer and persist the result.
@@ -195,7 +204,7 @@ export class IndexersService {
     return stats;
   }
 
-  private async bestProviderFor(row: (typeof schema.indexer.$inferSelect)) {
+  private async bestProviderFor(row: { id: string }) {
     const configured = await this.providers.configuredIndexers();
     return configured.find((c) => c.row.id === row.id) ?? { row, provider: null as never };
   }
