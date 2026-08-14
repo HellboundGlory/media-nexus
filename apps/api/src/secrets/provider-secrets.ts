@@ -109,6 +109,18 @@ export function cardigannSecretFields(defs: { settings?: { name: string; type: s
   return (defs?.settings ?? []).filter((s) => s.type === "password").map((s) => s.name);
 }
 
+/** Encrypt a Cardigann provider session (raw cookie-jar JSON) for at-rest storage (J9 AES-256-GCM). No-op when no secret. */
+export function encryptSessionValue(raw: string | undefined, secret: string | undefined): string | undefined {
+  if (!secret || !raw) return raw;
+  return encryptSecret(raw, secret);
+}
+
+/** Decrypt a stored Cardigann session; tolerant — plaintext (or any un-decryptable value) passes through. */
+export function decryptSessionValue(cipher: string | undefined, secret: string | undefined): string | undefined {
+  if (!cipher || !secret) return cipher;
+  try { return decryptSecret(cipher, secret); } catch { return cipher; }
+}
+
 // ---------- settings-blob (`setting` table) secret fields ----------
 
 /** Setting-table keys that hold at-rest credentials. */

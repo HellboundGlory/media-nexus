@@ -32,6 +32,11 @@ export interface IndexerContract {
    *  Newznab/Torznab/Cardigann wire formats; core never sees vendor shapes. */
   search(params: SearchParams): Promise<Release[]>;
   healthcheck(): Promise<HealthResult>;
+  /** Optional session persistence surface (roadmap D4, Stage 2): providers that keep
+   *  session/cookie state (e.g. Cardigann login) expose a raw serialized session here so the
+   *  API layer can round-trip it through the database (encrypted at rest). Undefined when the
+   *  provider has no session to persist. */
+  readonly session?: string;
   /** Optional capability detection (`t=caps`): a normalized map of what this indexer
    *  instance supports (search modes, supported params, categories). Core persists it to
    *  the per-indexer `indexer.capabilities` column (not the shared `indexer_definition`

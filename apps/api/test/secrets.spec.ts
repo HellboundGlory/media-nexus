@@ -24,9 +24,11 @@ import {
   decryptFields,
   decryptRuntimeSettings,
   decryptSecretValue,
+  decryptSessionValue,
   decryptSettingValue,
   encryptFields,
   encryptRuntimeSettings,
+  encryptSessionValue,
   encryptSettingValue,
   isEncrypted,
   INDEXER_SETTINGS_SECRET_FIELDS,
@@ -288,5 +290,18 @@ describe("create()/get() never return raw credentials", () => {
     expect((got.settings as Record<string, unknown>).apiKey).toBe("[REDACTED]");
     expect((got.proxy as Record<string, unknown> | null)?.password).toBe("[REDACTED]");
     expect((got.settings as Record<string, unknown>).baseUrl).toBe("https://x");
+  });
+});
+
+describe("Cardigann session value encryption (roadmap D4, Stage 2)", () => {
+  it("round-trips a raw Cardigann session through the J9 AES-256-GCM codec", () => {
+    const raw = JSON.stringify([{ name: "session", value: "abc123" }, { name: "uid", value: "5" }]);
+    const encrypted = encryptSessionValue(raw, SECRET);
+    expect(encrypted).not.toBe(raw);
+    expect(decryptSessionValue(encrypted, SECRET)).toBe(raw);
+    // tolerant: plaintext passes through
+    expect(decryptSessionValue(raw, SECRET)).toBe(raw);
+    // no secret → no encryption (pass-through)
+    expect(encryptSessionValue(raw, undefined)).toBe(raw);
   });
 });

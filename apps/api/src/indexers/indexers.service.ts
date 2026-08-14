@@ -20,7 +20,7 @@ import { episodeQueryTag } from "@medianexus/domain";
 import { parseCardigannYaml, cardigannSettingsSchema } from "@medianexus/integrations";
 import { DecisionService } from "../decision/decision.service";
 import { ProviderStatusService } from "../providers/provider-status.service";
-import { cardigannSecretFields, decryptFields, encryptFields, getProviderSecret, INDEXER_SETTINGS_SECRET_FIELDS, PROXY_SECRET_FIELDS } from "../secrets/provider-secrets";
+import { cardigannSecretFields, decryptFields, decryptSessionValue, encryptFields, encryptSessionValue, getProviderSecret, INDEXER_SETTINGS_SECRET_FIELDS, PROXY_SECRET_FIELDS } from "../secrets/provider-secrets";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   memory: memoryIndexerSettingsSchema,
@@ -392,6 +392,20 @@ export class IndexersService {
       try {
         const releases = await provider.search({ mediaType, query, categories: undefined, limit, season, episode, ...ids });
         await this.status.recordSuccess("indexer", row.id);
+        // D4 Stage 2: persist a Cardigann login-session update (encrypted at rest) so a
+        // freshly established/refreshed session survives the next search (indexers are rebuilt
+        // from the DB each call, so the session must round-trip through the column).
+        if (row.implementation === "cardigann" && provider.session) {
+          const secret = getProviderSecret();
+          const stored = decryptSessionValue(row.sessionState ?? undefined, secret);
+          if (provider.session !== stored) {
+            const encrypted = encryptSessionValue(provider.session, secret) ?? null;
+            await this.db.update(schema.indexer)
+              .set({ sessionState: encrypted, updatedAt: new Date().toISOString() })
+              .where(eq(schema.indexer.id, row.id));
+            row.sessionState = encrypted;
+          }
+        }
         for (const r of releases) {
           results.push({ ...r, indexerId: row.id, indexerName: row.name });
         }

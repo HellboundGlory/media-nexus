@@ -29,6 +29,7 @@ import {
   PROXY_SECRET_FIELDS,
   cardigannSecretFields,
   decryptFields,
+  decryptSessionValue,
   getProviderSecret,
 } from "../secrets/provider-secrets";
 
@@ -125,9 +126,9 @@ export class ProvidersService {
             definitionText: yml,
             settings: settings as Record<string, never>,
             fetcher: fetcher as never,
-            // D4 Stage 1: carry the indexer's session state in so a search can round-trip it
-            // (plain opaque column until the Stage 2 login engine wires J9 encryption).
-            sessionState: row.sessionState ?? undefined,
+            // D4 Stage 2: decrypt the stored (J9 AES-256-GCM) session into a raw session value
+            // the provider can restore into its cookie jar; tolerant to plaintext.
+            sessionState: decryptSessionValue(row.sessionState ?? undefined, secret) ?? undefined,
           }),
         });
       }

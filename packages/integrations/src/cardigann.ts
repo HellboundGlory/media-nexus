@@ -33,6 +33,7 @@ import {
   applyFilter, isFilterSupported, UnsupportedFilterError,
   type FilterArg, type FilterArgs,
 } from "./cardigann-filters";
+import { CookieJar } from "./cardigann-login";
 
 export type CardigannSettingType = "text" | "password" | "number" | "checkbox" | "select" | "info";
 
@@ -116,11 +117,49 @@ export interface CardigannSearchBlock {
   fields?: FieldsBlock;
 }
 
+export type CardigannLoginMethod = "form" | "post" | "cookie" | "get" | "oneurl";
+
+export interface LoginErrorBlock {
+  /** Optional path whose response should be checked for login failure. */
+  path?: string;
+  selector?: string;
+  message?: SelectorBlock;
+}
+
+export interface LoginTestBlock {
+  path: string;
+  selector?: string;
+}
+
+export interface CardigannLoginBlock {
+  method?: CardigannLoginMethod;
+  /** Login endpoint (relative or absolute). */
+  path?: string;
+  /** Explicit form submission path (form method). */
+  submitpath?: string;
+  /** CSS selector for the login <form> on the login page (form method). */
+  form?: string;
+  /** Cookie names the site sets after login. */
+  cookies?: string[];
+  inputs?: Record<string, string | number | boolean>;
+  /** Dynamically extracted hidden login fields (evaluated against the login page DOM). */
+  selectorinputs?: Record<string, SelectorBlock>;
+  getselectorinputs?: Record<string, SelectorBlock>;
+  /** Whether to scrape hidden inputs from the login <form> (form method). */
+  selectors?: boolean;
+  /** Detect login failure in a response. */
+  error?: LoginErrorBlock[];
+  /** Verify a logged-in session. */
+  test?: LoginTestBlock;
+  headers?: Record<string, string[]>;
+}
+
 export interface CardigannDefinition {
   name: string;
   description?: string;
   settings: CardigannSetting[];
   search: CardigannSearchBlock;
+  login?: CardigannLoginBlock;
   /** Filter names this definition uses that this interpreter cannot execute. */
   unsupportedFilters: string[];
 }
@@ -138,7 +177,47 @@ export function parseCardigannYaml(text: string): CardigannDefinition {
   const searchDoc = (doc.search ?? {}) as Record<string, unknown>;
   const search = parseSearch(searchDoc);
   const unsupportedFilters = collectUnsupportedFilters(search);
-  return { name, description: asString(doc.description), settings, search, unsupportedFilters };
+  const login = doc.login && typeof doc.login === "object" ? parseLogin(doc.login as Record<string, unknown>) : undefined;
+  const out: CardigannDefinition = { name, description: asString(doc.description), settings, search, unsupportedFilters };
+  if (login) out.login = login;
+  return out;
+}
+
+function parseLogin(r: Record<string, unknown>): CardigannLoginBlock {
+  const out: CardigannLoginBlock = {};
+  const method = asString(r.method) as CardigannLoginMethod | undefined;
+  if (method && ["form", "post", "cookie", "get", "oneurl"].includes(method)) out.method = method;
+  if (r.path) out.path = asString(r.path);
+  if (r.submitpath) out.submitpath = asString(r.submitpath);
+  if (r.form) out.form = asString(r.form);
+  if (Array.isArray(r.cookies)) out.cookies = r.cookies.map((c) => asString(c) ?? "");
+  if (r.inputs && typeof r.inputs === "object") out.inputs = r.inputs as Record<string, string | number | boolean>;
+  const selInputs = (r.selectorinputs ?? {}) as Record<string, unknown>;
+  if (selInputs && typeof selInputs === "object" && Object.keys(selInputs).length) {
+    out.selectorinputs = {};
+    for (const [k, v] of Object.entries(selInputs)) out.selectorinputs[k] = parseSelector(v);
+  }
+  const getSel = (r.getselectorinputs ?? {}) as Record<string, unknown>;
+  if (getSel && typeof getSel === "object" && Object.keys(getSel).length) {
+    out.getselectorinputs = {};
+    for (const [k, v] of Object.entries(getSel)) out.getselectorinputs[k] = parseSelector(v);
+  }
+  if (typeof r.selectors === "boolean") out.selectors = r.selectors;
+  if (Array.isArray(r.error)) {
+    out.error = (r.error as Record<string, unknown>[]).map((e) => {
+      const eb: LoginErrorBlock = {};
+      if (e.path) eb.path = asString(e.path);
+      if (e.selector) eb.selector = asString(e.selector);
+      if (e.message && typeof e.message === "object") eb.message = parseSelector(e.message);
+      return eb;
+    });
+  }
+  if (r.test && typeof r.test === "object") {
+    const t = r.test as Record<string, unknown>;
+    if (t.path) { out.test = { path: asString(t.path) ?? "", selector: asString(t.selector) }; }
+  }
+  if (r.headers && typeof r.headers === "object") out.headers = r.headers as Record<string, string[]>;
+  return out;
 }
 
 function parseSettings(raw: unknown): CardigannSetting[] {
@@ -418,8 +497,9 @@ class FieldEvaluator {
     return v;
   }
 
-  /** Evaluate one SelectorBlock against a row. Returns the value (string, or ms for date fields handled by callers). */
-  private evalSelector(sel: SelectorBlock, row: Row, ctx: RenderCtx): string | number {
+  /** Evaluate one SelectorBlock against a row. Returns the value (string, or ms for date fields handled by callers).
+   *  Public so the login flow can reuse it for selectorinputs (evaluated against the whole login page DOM). */
+  evalSelector(sel: SelectorBlock, row: Row, ctx: RenderCtx): string | number {
     let value: string | number = "";
 
     if (sel.text !== undefined) {
@@ -562,11 +642,14 @@ export class CardigannProvider implements IndexerContract {
   readonly key: string;
   readonly protocol: "usenet" | "torrent";
   private readonly def: CardigannDefinition;
+  private readonly login: CardigannLoginBlock | undefined;
   private readonly settings: Record<string, unknown>;
   private readonly fetcher: Fetcher;
   private readonly baseUrl: string;
   private readonly funcs: Record<string, TplFunc>;
-  private session: string | undefined;
+  private readonly evaluator: FieldEvaluator;
+  private jar: CookieJar;
+  private storedSession: string | undefined;
 
   constructor(opts: {
     key: string;
@@ -579,18 +662,26 @@ export class CardigannProvider implements IndexerContract {
     this.key = opts.key;
     this.protocol = opts.protocol;
     this.def = parseCardigannYaml(opts.definitionText);
+    this.login = this.def.login;
     this.settings = opts.settings;
     this.fetcher = opts.fetcher ?? fetch;
     this.baseUrl = String(this.settings["baseUrl"] ?? "").replace(/\/$/, "");
     this.funcs = templateFuncs();
-    this.session = opts.sessionState;
+    this.evaluator = new FieldEvaluator(this.def.search.fields ?? {}, this.funcs);
+    this.storedSession = opts.sessionState;
+    this.jar = CookieJar.fromSerialized(opts.sessionState);
   }
 
   get definitionName(): string { return this.def.name; }
 
+  /** Raw serialized session (cookie jar JSON). Exposed so the API layer can persist it encrypted. */
+  get session(): string | undefined { return this.login ? this.sessionValue() : undefined; }
+
   /** Session/cookie state accessor — lets a search carry it in and out (DB round-trip). */
-  get sessionState(): string | undefined { return this.session; }
-  setSessionState(v: string | undefined): void { this.session = v; }
+  get sessionState(): string | undefined { return this.sessionValue(); }
+  setSessionState(v: string | undefined): void { this.storedSession = v; this.jar = CookieJar.fromSerialized(v); }
+
+  private sessionValue(): string | undefined { return this.storedSession; }
 
   private ctx(query: string, categories?: number[]): RenderCtx {
     return {
@@ -611,6 +702,8 @@ export class CardigannProvider implements IndexerContract {
     if (this.def.unsupportedFilters.length) {
       throw new UnsupportedFilterError(this.def.unsupportedFilters.join(", "));
     }
+    // Stage 2: ensure a valid session before searching when the definition requires login.
+    if (this.login?.method) await this.ensureLoggedIn();
     const releases: Release[] = [];
     for (const p of (this.def.search.paths ?? [])) {
       releases.push(...await this.searchPath(p, params));
@@ -620,36 +713,182 @@ export class CardigannProvider implements IndexerContract {
 
   private async searchPath(p: CardigannSearchPath, params: SearchParams): Promise<Release[]> {
     const ctx = this.ctx(params.query ?? "", params.categories);
-    const base = this.baseUrl.includes("://") ? this.baseUrl : `https://${this.baseUrl}`;
     const renderedPath = renderTemplate(p.path, ctx as TemplateContext, this.funcs);
     const inputs = this.effectiveInputs(p, ctx);
-
-    // Absolute paths are used verbatim; relative paths are joined to the tracker base
-    // (upstream defs often omit the leading slash, so insert it if missing).
-    let url = /^https?:\/\//i.test(renderedPath)
-      ? renderedPath
-      : `${base}${renderedPath.startsWith("/") ? "" : "/"}${renderedPath}`;
-    const init: RequestInit = {};
     const headers: Record<string, string> = {};
     for (const [k, vals] of Object.entries(this.def.search.headers ?? {})) {
       headers[k] = vals.map((v) => renderTemplate(v, ctx as TemplateContext, this.funcs)).join(", ");
     }
-
-    if (p.method !== "post") {
-      const qs = this.buildQuery(inputs, p.queryseparator);
-      if (qs) url += (url.includes("?") ? "&" : "?") + qs;
-      if (headers["content-type"]) delete headers["content-type"];
-    } else {
-      init.method = "POST";
-      init.body = this.buildQuery(inputs, p.queryseparator) || undefined;
-      headers["content-type"] = headers["content-type"] ?? "application/x-www-form-urlencoded";
-    }
-
-    const resp = await this.fetcher(url, { headers, ...init });
+    const resp = await this.http(renderedPath, { method: p.method, inputs, headers, queryseparator: p.queryseparator, ctx });
     const body = await resp.text();
-
     const mode = p.response?.type ?? "html";
     return this.parseResponse(mode, body, ctx);
+  }
+
+  /**
+   * Central HTTP helper used by both search and the login flow. It joins a (already-rendered)
+   * path to the tracker base (or uses it verbatim when absolute), attaches the cookie jar as a
+   * `Cookie` header, sends a GET (query params) or POST (form body), and absorbs any
+   * `Set-Cookie` from the response into the jar. This is what makes sessions persist across
+   * the DB round-trip.
+   */
+  private async http(
+    renderedPath: string,
+    opts: { method?: "get" | "post"; inputs?: Record<string, string>; headers?: Record<string, string>; queryseparator?: string; ctx?: RenderCtx; followRedirect?: boolean } = {},
+  ): Promise<Response> {
+    const ctx = opts.ctx ?? this.ctx("");
+    const base = this.baseUrl.includes("://") ? this.baseUrl : `https://${this.baseUrl}`;
+    let url = /^https?:\/\//i.test(renderedPath)
+      ? renderedPath
+      : `${base}${renderedPath.startsWith("/") ? "" : "/"}${renderedPath}`;
+    const method = opts.method ?? "get";
+    const headers: Record<string, string> = { ...(opts.headers ?? {}) };
+    const cookieHeader = this.jar.toCookieHeader();
+    if (cookieHeader) headers["cookie"] = cookieHeader;
+    // Login requests must NOT follow redirects: undici drops the intermediate response's
+    // Set-Cookie when it follows a 3xx, and login sessions are exactly the cookies set on that
+    // redirect (e.g. POST /login → 302 with a session cookie).
+    const redirect = opts.followRedirect === false ? ("manual" as const) : ("follow" as const);
+
+    let resp: Response;
+    if (method === "post") {
+      const body = this.buildQuery(opts.inputs ?? {}, opts.queryseparator);
+      headers["content-type"] = headers["content-type"] ?? "application/x-www-form-urlencoded";
+      resp = await this.fetcher(url, { method: "POST", headers, body: body || undefined, redirect });
+    } else {
+      const qs = this.buildQuery(opts.inputs ?? {}, opts.queryseparator);
+      if (qs) url += (url.includes("?") ? "&" : "?") + qs;
+      resp = await this.fetcher(url, { method: "GET", headers, redirect });
+    }
+    this.jar.absorbResponse(resp);
+    void ctx;
+    return resp;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stage 2 login engine
+  // ---------------------------------------------------------------------------
+
+  /** Ensure a valid session exists (re-login when expired/missing) for definitions that require it. */
+  private async ensureLoggedIn(): Promise<void> {
+    const L = this.login!;
+    if (L.test) {
+      // Authoritative check: if a restored session already passes, reuse it.
+      if (this.jar.hasCookies() && await this.loginTestPasses(L)) return;
+    } else if (this.jar.hasCookies()) {
+      // No test block — trust the restored cookies.
+      return;
+    }
+    await this.performLogin(L);
+  }
+
+  private async performLogin(L: CardigannLoginBlock): Promise<void> {
+    const ctx = this.ctx("");
+    const headers: Record<string, string> = {};
+    for (const [k, vals] of Object.entries(L.headers ?? {})) {
+      headers[k] = vals.map((v) => renderTemplate(v, ctx as TemplateContext, this.funcs)).join(", ");
+    }
+    const inputs = this.renderedLoginInputs(L.inputs, ctx);
+
+    switch (L.method) {
+      case "cookie": {
+        const cookieVal = inputs["cookie"] ?? inputs[Object.keys(inputs)[0]] ?? "";
+        this.jar = new CookieJar();
+        this.jar.parseCookieString(cookieVal);
+        break;
+      }
+      case "oneurl": {
+        await this.http(renderTemplate(L.path ?? "/", ctx as TemplateContext, this.funcs), { method: "get", ctx, followRedirect: false });
+        break;
+      }
+      case "get": {
+        const resp = await this.http(renderTemplate(L.path ?? "/", ctx as TemplateContext, this.funcs), { method: "get", inputs, headers, ctx, followRedirect: false });
+        const body = await resp.text();
+        this.checkLoginErrorOnBody(body, L);
+        break;
+      }
+      case "post": {
+        const resp = await this.http(renderTemplate(L.path ?? "/", ctx as TemplateContext, this.funcs), { method: "post", inputs, headers, ctx, followRedirect: false });
+        const body = await resp.text();
+        this.checkLoginErrorOnBody(body, L);
+        break;
+      }
+      case "form": {
+        const pageResp = await this.http(renderTemplate(L.path ?? "/", ctx as TemplateContext, this.funcs), { method: "get", headers, ctx, followRedirect: false });
+        const html = await pageResp.text();
+        const $ = cheerio.load(html);
+        const merged = { ...inputs };
+        const pageRow: Row = { kind: "dom", $, el: $("html").first() };
+        for (const [k, sel] of Object.entries(L.selectorinputs ?? {})) {
+          const v = this.evaluator.evalSelector(sel, pageRow, ctx);
+          if (v !== undefined && String(v) !== "") merged[k] = String(v);
+        }
+        if (L.selectors) {
+          $("form input[type='hidden']").each((_i, el) => {
+            const n = $(el).attr("name");
+            const v = $(el).attr("value");
+            if (n) merged[n] = v ?? "";
+          });
+        }
+        const submit = L.submitpath ?? this.resolveFormAction($, L.form) ?? L.path ?? "/";
+        const resp = await this.http(renderTemplate(submit, ctx as TemplateContext, this.funcs), { method: "post", inputs: merged, headers, ctx, followRedirect: false });
+        const body = await resp.text();
+        this.checkLoginErrorOnBody(body, L);
+        break;
+      }
+      default:
+        return;
+    }
+
+    if (L.test) {
+      if (!await this.loginTestPasses(L)) {
+        throw new Error(`Cardigann login failed: test selector "${L.test.selector ?? L.test.path}" not found`);
+      }
+    }
+    // Persist the (raw) session so the API layer can encrypt it into indexer.sessionState.
+    this.storedSession = this.jar.serialize();
+  }
+
+  private renderedLoginInputs(inputs: Record<string, string | number | boolean> | undefined, ctx: RenderCtx): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(inputs ?? {})) {
+      out[k] = renderTemplate(String(v), ctx as TemplateContext, this.funcs);
+    }
+    return out;
+  }
+
+  private async loginTestPasses(L: CardigannLoginBlock): Promise<boolean> {
+    const ctx = this.ctx("");
+    const resp = await this.http(renderTemplate(L.test?.path ?? "/", ctx as TemplateContext, this.funcs), { method: "get", ctx });
+    const html = await resp.text();
+    if (!L.test?.selector) return true;
+    const $ = cheerio.load(html);
+    return $(L.test.selector).length > 0;
+  }
+
+  private resolveFormAction($: cheerio.CheerioAPI, formSel?: string): string | undefined {
+    if (formSel) {
+      const el = $(formSel).first();
+      if (el.length) {
+        const action = el.attr("action");
+        if (action) return action;
+      }
+    }
+    return undefined;
+  }
+
+  private checkLoginErrorOnBody(body: string, L: CardigannLoginBlock): void {
+    if (!L.error?.length) return;
+    const $ = cheerio.load(body);
+    const html = $("html").first();
+    for (const e of L.error) {
+      if (!e.selector) continue;
+      if ($(e.selector).length) {
+        let msg = "";
+        if (e.message) msg = String(this.evaluator.evalSelector(e.message as SelectorBlock, { kind: "dom", $, el: html }, this.ctx("")));
+        throw new Error(`Cardigann login failed${msg ? `: ${msg}` : ""}`);
+      }
+    }
   }
 
   private effectiveInputs(p: CardigannSearchPath, ctx: RenderCtx): Record<string, string> {
