@@ -13,6 +13,11 @@ export interface DbHandle {
   db: Db;
   close: () => void;
   runMigrations: () => void;
+  /** Online backup to `destPath` via SQLite's native backup API (roadmap P1, gap report
+   *  B9) — safe to call on a live, open connection with in-flight writes; it does its own
+   *  internal page-transfer/checkpointing rather than taking an exclusive lock the way a
+   *  raw file copy would. Rejects if this handle is an in-memory database. */
+  backup: (destPath: string) => Promise<void>;
 }
 
 export const MIGRATIONS_DIR = resolve(__dirname, "../migrations");
@@ -53,6 +58,11 @@ export function createDb(url: string): DbHandle {
     db,
     close: () => sqlite.close(),
     runMigrations: () => migrate(db, { migrationsFolder: MIGRATIONS_DIR }),
+    backup: async (destPath: string) => {
+      if (filePath === ":memory:") throw new Error("cannot back up an in-memory database");
+      mkdirSync(dirname(resolve(destPath)), { recursive: true });
+      await sqlite.backup(destPath);
+    },
   };
 }
 

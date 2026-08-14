@@ -362,6 +362,18 @@ export const auditLog = sqliteTable("audit_log", {
   createdAt: iso("created_at"),
 }, (t) => [index("audit_created_idx").on(t.createdAt), index("audit_entity_idx").on(t.entityType, t.entityId)]);
 
+// Health check registry (roadmap P1, gap report B9): persisted results of the
+// system.healthCheck job's run, one row per check key, upserted on every run so results
+// survive between runs and can be read without re-running (GET /api/v1/system/health).
+export const healthCheckResult = sqliteTable("health_check_result", {
+  id: text("id").primaryKey(),
+  key: text("key").notNull(),
+  ok: bool("ok", true),
+  level: text("level").notNull(), // ok | warning | error
+  message: text("message").notNull(),
+  checkedAt: iso("checked_at"),
+}, (t) => [uniqueIndex("health_check_result_key_idx").on(t.key)]);
+
 // ---------- exported schema ----------
 export const schema = {
   apiKey,
@@ -388,6 +400,7 @@ export const schema = {
   jobDefinition,
   jobRun,
   auditLog,
+  healthCheckResult,
 };
 
 export type Schema = typeof schema;

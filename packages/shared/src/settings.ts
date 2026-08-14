@@ -81,6 +81,19 @@ export const runtimeSettingsSchema = z.object({
   "media.servers": z.array(mediaServerConfigSchema).default([]),
   "system.timezone": z.string().default("UTC"),
   "ui.theme": z.enum(["dark", "light"]).default("dark"),
+  // Housekeeping retention windows (roadmap P1, gap report B9). Orphan rows (no matching
+  // movie/series) are always swept regardless of age; these only bound the unconditional
+  // growth of terminal/completed rows. history_entry is deliberately not age-trimmed — it's
+  // the user-facing "what happened" record.
+  "system.housekeeping.jobRunRetentionDays": z.number().int().nonnegative().default(30),
+  "system.housekeeping.auditLogRetentionDays": z.number().int().nonnegative().default(90),
+  "system.housekeeping.queueRetentionDays": z.number().int().nonnegative().default(14),
+  // Gap report B6's own forward-reference: blocklist entries expire via housekeeping (B9).
+  "system.housekeeping.blocklistRetentionDays": z.number().int().nonnegative().default(30),
+  // Backup (roadmap P1, gap report B9). Empty path means disabled — the job no-ops rather
+  // than falling back to a path inside the app's own working directory.
+  "system.backupPath": z.string().default(""),
+  "system.backupRetentionCount": z.number().int().nonnegative().default(7),
 });
 
 export type RuntimeSettings = z.infer<typeof runtimeSettingsSchema>;

@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: MIT
-import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
-import { count } from "drizzle-orm";
-import { schema } from "@medianexus/database";
+import { Injectable, OnModuleInit } from "@nestjs/common";
 import type { JobContext } from "@medianexus/jobs";
-import { DB_TOKEN } from "../db/database.module";
-import type { Db } from "@medianexus/database";
 import { JobsService } from "./jobs.service";
 import { AcquisitionService } from "../acquisition/acquisition.service";
 import { RssSyncService } from "../acquisition/rss-sync.service";
@@ -13,12 +9,14 @@ import { MediaServersService } from "../media-servers/media-servers.service";
 import { MetadataService } from "../metadata/metadata.service";
 import { LibraryScanService } from "../library-scan/library-scan.service";
 import { RecycleBinService } from "../media/recycle-bin.service";
+import { HealthCheckService } from "../health/health-check.service";
+import { HousekeepingService } from "../system/housekeeping.service";
+import { BackupService } from "../system/backup.service";
 
 /** Registration of the built-in job handlers (kept small; more land per milestone). */
 @Injectable()
 export class JobHandlers implements OnModuleInit {
   constructor(
-    @Inject(DB_TOKEN) private readonly db: Db,
     private readonly jobs: JobsService,
     private readonly acquisition: AcquisitionService,
     private readonly rssSync: RssSyncService,
@@ -27,10 +25,15 @@ export class JobHandlers implements OnModuleInit {
     private readonly metadata: MetadataService,
     private readonly libraryScan: LibraryScanService,
     private readonly recycleBin: RecycleBinService,
+    private readonly healthCheck: HealthCheckService,
+    private readonly housekeeping: HousekeepingService,
+    private readonly backup: BackupService,
   ) {}
 
   onModuleInit(): void {
-    this.jobs.register("system.healthCheck", (ctx) => this.healthCheck(ctx));
+    this.jobs.register("system.healthCheck", () => this.healthCheck.run());
+    this.jobs.register("system.housekeeping", () => this.housekeeping.run());
+    this.jobs.register("system.backup", (ctx) => this.backup.run(ctx.runId));
     this.jobs.register("discovery.indexerRefresh", () => this.indexerRefresh());
     this.jobs.register("acquisition.downloadMonitor", (ctx) => this.downloadMonitor(ctx));
     this.jobs.register("media.rssSync", () => this.rssSync.runFeedPoll());
@@ -39,13 +42,6 @@ export class JobHandlers implements OnModuleInit {
     this.jobs.register("media.metadataRefresh", () => this.metadata.refreshMissing(5));
     this.jobs.register("library.scan", () => this.libraryScan.scanAll());
     this.jobs.register("media.recycleBinTrim", () => this.recycleBin.purgeExpired());
-  }
-
-  private async healthCheck(_ctx: JobContext): Promise<unknown> {
-    const [m] = await this.db.select({ n: count() }).from(schema.movie);
-    const [s] = await this.db.select({ n: count() }).from(schema.series);
-    const [h] = await this.db.select({ n: count() }).from(schema.historyEntry);
-    return { db: "ok", counts: { movies: m.n, series: s.n, history: h.n } };
   }
 
   private async indexerRefresh(): Promise<unknown> {

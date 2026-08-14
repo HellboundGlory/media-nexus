@@ -64,6 +64,33 @@ set was removed — see [docs/implementation/roadmap.md](../implementation/roadm
    `/api/sonarr/v3`, `/api/radarr/v3`, `/api/prowlarr/v1`).
 5. Confirm the acceptance path: a monitored series auto-grabs a missing episode and imports it into the library.
 
+## Backup & restore
+
+Beyond the manual `data.bak` copy above (for upgrades), MediaNexus can back itself up on a schedule
+(roadmap P1, gap report B9):
+
+- Set `system.backupPath` (System → Settings, or `PUT /api/v1/system/config`) to a directory the app can write to —
+  it's empty by default, which leaves the `system.backup` job disabled (it no-ops cleanly rather than guessing a
+  location). `system.backupRetentionCount` (default 7) bounds how many backups are kept; older ones are deleted
+  automatically as new ones land.
+- The job runs weekly (`0 3 * * 0`) and can also be triggered on demand: `POST /api/v1/system/commands/system.backup`.
+- Each run produces one timestamped file, `medianexus-backup-<ISO timestamp>.sqlite3`, via SQLite's own online-backup
+  API — safe to run against the live, in-use database (no need to stop the app first). List existing backups with
+  `GET /api/v1/system/backups`.
+- **No separate config export.** The backup file already contains the full `setting`/`indexer`/`download_client`
+  tables (including credentials — see [docs/security.md](../security.md) on credentials being stored in plaintext
+  today), so it's a complete, restorable snapshot on its own.
+
+**To restore a backup** (manual — there's no in-app restore button, matching how upgrades themselves are handled):
+
+1. Stop the app (`docker compose down`, or stop the process).
+2. Replace the live database file (`DATABASE_URL`'s path, `./data/media-nexus.db` by default) with the backup file
+   you want to restore, keeping the original filename the app expects.
+3. Start the app back up (`docker compose up -d`). Pending migrations (if the backup predates the version you're
+   restoring into) run automatically on boot, same as any other startup.
+4. Verify: `curl http://localhost:8080/health/ready` -> `{"status":"ok","db":"up"}`; open the web UI and confirm
+   your library/settings look like the point in time the backup was taken.
+
 ## Rollback
 
 Keep your previous app + its data. If anything is wrong, restore the old app; MediaNexus never modifies the source DB,

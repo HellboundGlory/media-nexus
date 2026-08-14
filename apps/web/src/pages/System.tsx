@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Play, Webhook, Database, Copy, Check, RotateCw, Eye, EyeOff, Lock } from "lucide-react";
+import { KeyRound, Play, Webhook, Database, Copy, Check, RotateCw, Eye, EyeOff, Lock, HeartPulse } from "lucide-react";
 import { api } from "../api/client";
-import type { JobRun } from "../api/types";
+import type { JobRun, HealthStatus } from "../api/types";
 import { Badge, statusTone, ErrorState, formatDate } from "../lib/ui";
+
+function healthTone(level: string): "ok" | "warn" | "danger" {
+  return level === "ok" ? "ok" : level === "warning" ? "warn" : "danger";
+}
 
 export default function System() {
   const qc = useQueryClient();
@@ -42,10 +46,14 @@ export default function System() {
   const runs = useQuery({ queryKey: ["job-runs"], queryFn: () => api.get<JobRun[]>("/system/jobs/runs") });
   const cfg = useQuery({ queryKey: ["config"], queryFn: () => api.get<Record<string, unknown>>("/system/config") });
   const audit = useQuery({ queryKey: ["audit"], queryFn: () => api.get<any[]>("/system/audit") });
+  const health = useQuery({ queryKey: ["health"], queryFn: () => api.get<HealthStatus>("/system/health") });
 
   const trigger = useMutation({
     mutationFn: (jobKey: string) => api.post(`/system/commands/${jobKey}`),
-    onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["job-runs"] }), 800),
+    onSuccess: () => setTimeout(() => {
+      qc.invalidateQueries({ queryKey: ["job-runs"] });
+      qc.invalidateQueries({ queryKey: ["health"] });
+    }, 800),
   });
 
   const saveTheme = useMutation({
@@ -56,6 +64,7 @@ export default function System() {
   const endpoints = [
     ["GET", "/api/v1/system/status"], ["GET", "/api/v1/system/config"], ["PUT", "/api/v1/system/config"],
     ["POST", "/api/v1/system/commands/:jobKey"], ["GET", "/api/v1/system/jobs"], ["GET", "/api/v1/system/jobs/runs"],
+    ["GET", "/api/v1/system/health"], ["GET", "/api/v1/system/backups"],
     ["GET", "/api/v1/movies"], ["POST", "/api/v1/movies"], ["GET", "/api/v1/series"], ["POST", "/api/v1/series"],
     ["GET", "/api/v1/series/:id/seasons"], ["POST", "/api/v1/search"], ["POST", "/api/v1/grabs"],
     ["GET", "/api/v1/indexers"], ["POST", "/api/v1/indexers"], ["GET", "/api/v1/indexers/definitions"],
@@ -119,6 +128,30 @@ export default function System() {
           <p className="text-xs text-zinc-500">Settings persist via the <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">setting</code> table. Endpoint inventory below reflects the native + compat API.</p>
         </section>
       </div>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 font-medium"><HeartPulse className="h-4 w-4" /> Health</h3>
+          {health.data?.checkedAt && <span className="text-xs text-zinc-500">Last checked {formatDate(health.data.checkedAt)}</span>}
+        </div>
+        {health.isError && <ErrorState error={health.error} onRetry={() => health.refetch()} />}
+        {!health.isError && !health.data?.results.length && (
+          <p className="text-sm text-zinc-500">No results yet — run a health check above.</p>
+        )}
+        {!!health.data?.results.length && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {health.data.results.map((r) => (
+              <div key={r.key} className="flex items-start gap-2 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+                <Badge tone={healthTone(r.level)}>{r.level}</Badge>
+                <div className="min-w-0">
+                  <p className="truncate font-mono text-xs text-zinc-500">{r.key}</p>
+                  <p className="text-xs text-zinc-700 dark:text-zinc-300">{r.message}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
         <h3 className="mb-1 flex items-center gap-2 font-medium"><Database className="h-4 w-4" /> Metadata (TMDB)</h3>

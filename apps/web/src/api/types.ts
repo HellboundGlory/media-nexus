@@ -206,6 +206,19 @@ export interface JobRun {
   createdAt?: string;
 }
 
+export interface HealthCheckResult {
+  key: string;
+  ok: boolean;
+  level: "ok" | "warning" | "error";
+  message: string;
+}
+
+export interface HealthStatus {
+  results: HealthCheckResult[];
+  overall: "ok" | "warning" | "error";
+  checkedAt: string | null;
+}
+
 export type DiscoverMediaType = "movie" | "series";
 export type DiscoverCategory = "trending" | "popular" | "upcoming" | "top_rated";
 

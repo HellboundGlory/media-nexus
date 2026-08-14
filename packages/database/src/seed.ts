@@ -102,7 +102,10 @@ export async function seedStatic(db: Db): Promise<void> {
   const jobs = [
     { key: "system.healthCheck", name: "System health check", description: "Heartbeat + system status refresh", schedule: "*/5 * * * *", timeoutMs: 20_000, maxRetries: 3, priority: 50 },
     { key: "discovery.indexerRefresh", name: "Indexer health refresh", description: "Re-check configured indexers", schedule: "0 */6 * * *", timeoutMs: 120_000, maxRetries: 2, priority: 100 },
-    { key: "system.metadataCleanup", name: "Metadata cleanup", description: "Prune stale availability/history", schedule: "0 4 * * *", timeoutMs: 60_000, maxRetries: 1, priority: 200 },
+    // Replaces the dead system.metadataCleanup row (seeded with no registered handler,
+    // failed every run — removed by migration 0011) in the same 04:00 daily slot.
+    { key: "system.housekeeping", name: "Housekeeping", description: "Sweep orphaned rows and trim job_run/audit_log/terminal queue/blocklist entries past their configured retention", schedule: "0 4 * * *", timeoutMs: 60_000, maxRetries: 1, priority: 200 },
+    { key: "system.backup", name: "Backup", description: "Online SQLite backup to system.backupPath (no-op when unconfigured)", schedule: "0 3 * * 0", timeoutMs: 120_000, maxRetries: 1, priority: 200 },
     { key: "acquisition.downloadMonitor", name: "Download monitor", description: "Poll download clients and import completed downloads", schedule: "*/1 * * * *", timeoutMs: 60_000, maxRetries: 2, priority: 80 },
     { key: "media.rssSync", name: "RSS sync", description: "Poll configured indexers' recent-releases feeds and auto-grab matches for monitored missing movies/episodes", schedule: "*/10 * * * *", timeoutMs: 180_000, maxRetries: 2, priority: 60 },
     { key: "media.missingSearch", name: "Missing search", description: "Actively search indexers for monitored missing movies/episodes the passive RSS poll hasn't caught (safety net)", schedule: "0 5 * * *", timeoutMs: 180_000, maxRetries: 2, priority: 60 },

@@ -9,9 +9,11 @@ import { IndexersModule } from "../indexers/indexers.module";
 import { MediaServersModule } from "../media-servers/media-servers.module";
 import { MetadataModule } from "../metadata/metadata.module";
 import { LibraryScanModule } from "../library-scan/library-scan.module";
+import { HealthModule } from "../health/health.module";
+import { SystemModule } from "../system/system.module";
 
 @Module({
-  imports: [AcquisitionModule, IndexersModule, MediaServersModule, MetadataModule, LibraryScanModule],
+  imports: [AcquisitionModule, IndexersModule, MediaServersModule, MetadataModule, LibraryScanModule, HealthModule, SystemModule],
   providers: [DrizzleJobStore, JobsService, JobHandlers],
   controllers: [JobsController],
   exports: [JobsService],

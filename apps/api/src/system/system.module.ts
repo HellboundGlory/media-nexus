@@ -4,11 +4,13 @@ import { SystemStatusService } from "./system-status.service";
 import { SystemController } from "./system.controller";
 import { SettingsModule } from "./settings.module";
 import { AdminGuard } from "../common/admin.guard";
+import { HousekeepingService } from "./housekeeping.service";
+import { BackupService } from "./backup.service";
 
 @Module({
   imports: [SettingsModule],
-  providers: [SystemStatusService, AdminGuard],
+  providers: [SystemStatusService, AdminGuard, HousekeepingService, BackupService],
   controllers: [SystemController],
-  exports: [SystemStatusService],
+  exports: [SystemStatusService, HousekeepingService, BackupService],
 })
 export class SystemModule {}

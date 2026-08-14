@@ -10,6 +10,7 @@ import { redactDeep } from "../common/redact";
 import { AdminGuard } from "../common/admin.guard";
 import { SystemStatusService } from "./system-status.service";
 import { ConfigService } from "./config.service";
+import { BackupService } from "./backup.service";
 
 const upsertSchema = z.record(z.string(), z.unknown());
 
@@ -19,7 +20,15 @@ export class SystemController {
   constructor(
     private readonly statusSvc: SystemStatusService,
     private readonly configSvc: ConfigService,
+    private readonly backupSvc: BackupService,
   ) {}
+
+  @Get("backups")
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "List backup files produced by the system.backup job (admin)" })
+  async backups() {
+    return this.backupSvc.list();
+  }
 
   @Get("status")
   @ApiOperation({ summary: "Application status" })

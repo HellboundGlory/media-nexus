@@ -55,6 +55,7 @@ export const EventTypes = {
   JobStarted: "system.job.started",
   JobSucceeded: "system.job.succeeded",
   JobFailed: "system.job.failed",
+  HealthCheckCompleted: "system.health.completed",
 } as const;
 
 export const KNOWN_EVENT_TYPES = Object.values(EventTypes);
