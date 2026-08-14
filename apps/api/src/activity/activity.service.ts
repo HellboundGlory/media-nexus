@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import type { Db } from "@medianexus/database";
@@ -58,5 +58,49 @@ export class ActivityService {
     });
 
     return { removed: id };
+  }
+
+  /** Bulk-remove multiple queue entries (roadmap C4). Same semantics as
+   *  `removeQueueEntry` per id — best-effort client remove leaving client-side data, plus
+   *  a `removed` history row — but skips entries that don't exist. Returns how many were
+   *  actually removed. */
+  async bulkRemoveQueue(ids: string[]): Promise<{ removed: number }> {
+    let removed = 0;
+    for (const id of ids) {
+      const rows = await this.db.select().from(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, id)).limit(1);
+      const entry = rows[0];
+      if (!entry) continue;
+      if (entry.downloadClientId && entry.downloadId) {
+        const client = (await this.providers.configuredDownloadClients()).find((c) => c.row?.id === entry.downloadClientId);
+        if (client) {
+          try {
+            await client.provider.remove(entry.downloadId, false);
+          } catch (err) {
+            this.logger.warn(`failed to remove "${entry.title}" from its download client: ${(err as Error).message}`);
+          }
+        }
+      }
+      const now = new Date().toISOString();
+      this.db.transaction((tx) => {
+        tx.delete(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, id)).run();
+        tx.insert(schema.historyEntry).values({
+          id: newEntityId("hist"),
+          mediaType: entry.mediaType,
+          mediaId: entry.mediaId,
+          action: "removed",
+          data: { title: entry.title, downloadId: entry.downloadId },
+          createdAt: now,
+        }).run();
+      });
+      removed++;
+    }
+    return { removed };
+  }
+
+  /** Bulk-delete history entries (roadmap C4). Returns how many rows were removed. */
+  async bulkRemoveHistory(ids: string[]): Promise<{ removed: number }> {
+    if (ids.length === 0) return { removed: 0 };
+    const res = this.db.delete(schema.historyEntry).where(inArray(schema.historyEntry.id, ids)).run();
+    return { removed: res.changes };
   }
 }

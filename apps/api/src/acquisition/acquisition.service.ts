@@ -456,6 +456,60 @@ export class AcquisitionService {
     return this.importSeries(entry, content, cfg, item);
   }
 
+  private async findQueueEntry(id: string): Promise<QueueEntryRow | null> {
+    const rows = await this.db.select().from(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, id)).limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** Re-attempt a failed/terminal queue entry's import (roadmap C4 — retry). Resets the
+   *  import retry budget, re-arms the entry to a non-terminal status (so the download
+   *  monitor keeps it in play instead of skipping it forever), then immediately attempts
+   *  the import from the download's auto-resolved payload. Never blocklists — this is the
+   *  user saying "try again", not "never again"; if the payload isn't present yet the entry
+   *  is left re-armed for the monitor to import once the client reports it completed.
+   */
+  async retryQueueEntry(id: string): Promise<{ ok: boolean; message?: string }> {
+    const entry = await this.findQueueEntry(id);
+    if (!entry) throw ApiError.notFound("queue entry", id);
+    if (entry.status === "imported") throw new ApiError({ code: "CONFLICT", message: "Entry is already imported — remove it first if you want to re-grab" });
+    const data = (entry.data ?? {}) as Record<string, unknown>;
+    const { importAttempts: _a, lastImportError: _e, ...rest } = data;
+    await this.db.update(schema.downloadQueueEntry)
+      .set({ status: "downloading", errorMessage: null, data: rest, updatedAt: new Date().toISOString() })
+      .where(eq(schema.downloadQueueEntry.id, id));
+    try {
+      await this.importQueueEntry(id, {});
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: (err as Error).message };
+    }
+  }
+
+  /** Manually import a queue entry, optionally pointing the app at an explicit file/folder
+   *  when automatic matching picked wrong or guessed a different path (roadmap C4 —
+   *  manual-import). Reuses the whole `decideImportFile`-based import pipeline through
+   *  `importCompletedEntry`. */
+  async manualImportQueueEntry(id: string, opts: { path?: string }): Promise<ImportResult> {
+    const entry = await this.findQueueEntry(id);
+    if (!entry) throw ApiError.notFound("queue entry", id);
+    if (entry.status === "imported") throw new ApiError({ code: "CONFLICT", message: "Entry is already imported" });
+    const item = syntheticCompletedItem(entry, opts.path);
+    try {
+      return await this.importCompletedEntry(entry, item);
+    } catch (err) {
+      throw new ApiError({ code: "UNPROCESSABLE", message: `Import failed for "${entry.title}": ${(err as Error).message}` });
+    }
+  }
+
+  /** Run the import pipeline for a queue entry using a synthetic "completed" client item,
+   *  optionally forcing the content path (drives manual-import's explicit-path mode via
+   *  `resolveContent`, which honors `item.contentPath` first). */
+  private async importQueueEntry(id: string, opts: { path?: string }): Promise<ImportResult> {
+    const entry = await this.findQueueEntry(id);
+    if (!entry) throw ApiError.notFound("queue entry", id);
+    return this.importCompletedEntry(entry, syntheticCompletedItem(entry, opts.path));
+  }
+
   private async importMovie(
     entry: QueueEntryRow,
     content: ResolvedContent,
@@ -844,6 +898,22 @@ export class AcquisitionService {
 
 function sanitizeEntry(title: string): string {
   return title.replace(/[^A-Za-z0-9 _()[\]-]/g, "").trim() || "download";
+}
+
+/** A minimal "completed" client item used to drive `importCompletedEntry` for a queue
+ *  entry on demand (retry / manual-import): `resolveContent` only consults
+ *  `item.contentPath` / `downloadId`, and the history/emit paths only use `downloadId` +
+ *  `title` — `status` is never read inside the import. `contentPath` encodes the
+ *  manual-import explicit path (or undefined = auto-resolve). */
+function syntheticCompletedItem(entry: QueueEntryRow, contentPath?: string): ClientQueueItem {
+  return {
+    downloadId: entry.downloadId ?? "",
+    title: entry.title,
+    status: "completed",
+    progress: 100,
+    size: entry.size ?? 0,
+    contentPath,
+  };
 }
 
 function isVideo(path: string): boolean {
