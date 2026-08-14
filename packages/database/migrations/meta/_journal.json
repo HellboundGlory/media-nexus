@@ -99,6 +99,13 @@
       "when": 1786690000000,
       "tag": "0013_provider_status",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1786780000000,
+      "tag": "0014_indexer_capabilities",
+      "breakpoints": true
     }
   ]
 }

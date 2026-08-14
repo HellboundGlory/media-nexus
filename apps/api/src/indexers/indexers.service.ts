@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { asc, desc, eq, sql as dsql } from "drizzle-orm";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
@@ -29,6 +29,7 @@ const settingsSchemas: Record<string, z.ZodType> = {
 
 @Injectable()
 export class IndexersService {
+  private readonly logger = new Logger(IndexersService.name);
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly providers: ProvidersService,
@@ -234,15 +235,26 @@ export class IndexersService {
     } else {
       await this.status.recordFailure("indexer", id, new Error(health.message ?? "healthcheck failed"));
     }
+    // Capability detection (roadmap D1): a healthy indexer also advertises what it
+    // supports via `t=caps`. Best-effort — a detection failure never fails the test — and
+    // stored per-indexer (a shared definition's instances can advertise different caps).
+    let capabilities: Record<string, unknown> | null = null;
+    if (health.ok && provider.capabilities) {
+      try {
+        capabilities = await provider.capabilities();
+      } catch (err) {
+        this.logger.warn(`capability detection failed for "${row.name}": ${(err as Error).message}`);
+      }
+    }
     // lastSyncAt is the manual "ran a healthcheck" timestamp — distinct from the
     // escalations/backoff tracked in provider_status, and only meaningful here.
     await this.db.update(schema.indexer)
-      .set({ lastSyncAt: now, updatedAt: now })
+      .set({ lastSyncAt: now, capabilities, updatedAt: now })
       .where(eq(schema.indexer.id, id));
     if (!health.ok) {
       this.events.publish(EventTypes.IndexerFailed, { indexerId: id, error: health.message ?? "healthcheck failed" }, { aggType: "indexer", aggId: id });
     }
-    return { id, ok: health.ok, latencyMs: health.latencyMs, message: health.message };
+    return { id, ok: health.ok, latencyMs: health.latencyMs, message: health.message, capabilities };
   }
 
   /** Health-check every enabled indexer (used by the discovery.indexerRefresh job). */
@@ -296,10 +308,29 @@ export class IndexersService {
    *  these decisions instead of re-evaluating each candidate itself. */
   async search(input: { mediaType: "movie" | "series"; mediaId: string; query?: string; seasons?: number[]; episodes?: number[]; limit?: number }) {
     const query = this.buildQuery(input.query, input.seasons, input.episodes);
-    const results = await this.fetchReleases(query, input.limit ?? 20, input.mediaType);
+    // ID-based lookup (roadmap D1): resolve the title's stable external ids so providers
+    // can use t=tvsearch / t=movie instead of fuzzy t=search when available.
+    const ids = await this.lookupSearchIds(input.mediaType, input.mediaId);
+    const results = await this.fetchReleases(
+      query, input.limit ?? 20, input.mediaType, input.seasons?.[0], input.episodes?.[0], ids,
+    );
     const decisions = await this.decisions.evaluateMany(input.mediaType, input.mediaId, results);
     const releases = results.map((r, i) => ({ ...r, decision: decisions[i] }));
     return { mediaType: input.mediaType, mediaId: input.mediaId, query, releases };
+  }
+
+  /** Load the stable external ids a provider needs for ID-based search (D1). */
+  private async lookupSearchIds(
+    mediaType: "movie" | "series", mediaId: string,
+  ): Promise<{ tvdbId?: number; imdbId?: string; tmdbId?: number }> {
+    if (mediaType === "series") {
+      const rows = await this.db.select().from(schema.series).where(eq(schema.series.id, mediaId)).limit(1);
+      const r = rows[0];
+      return { tvdbId: r?.tvdbId ?? undefined, imdbId: r?.imdbId ?? undefined, tmdbId: r?.tmdbId ?? undefined };
+    }
+    const rows = await this.db.select().from(schema.movie).where(eq(schema.movie.id, mediaId)).limit(1);
+    const r = rows[0];
+    return { imdbId: r?.imdbId ?? undefined, tmdbId: r?.tmdbId ?? undefined };
   }
 
   /** Category-only "recent releases" poll across every configured indexer (roadmap D2,
@@ -318,14 +349,21 @@ export class IndexersService {
    *  no decision — the target isn't known yet). Each indexer is gated on backoff /
    *  rate-limit (B10): a dead indexer is skipped instead of adding its full HTTP timeout
    *  to every search/poll, and a success clears its failure state. */
-  private async fetchReleases(query: string, limit: number, mediaType: "movie" | "series" = "movie"): Promise<Release[]> {
+  private async fetchReleases(
+    query: string,
+    limit: number,
+    mediaType: "movie" | "series" = "movie",
+    season?: number,
+    episode?: number,
+    ids?: { tvdbId?: number; imdbId?: string; tmdbId?: number },
+  ): Promise<Release[]> {
     const configured = await this.providers.configuredIndexers();
     const results: Release[] = [];
     for (const { row, provider } of configured) {
       const gate = await this.status.beforeCall("indexer", row.id, query ? "query" : "poll");
       if (gate.skip) continue;
       try {
-        const releases = await provider.search({ mediaType, query, categories: undefined, limit });
+        const releases = await provider.search({ mediaType, query, categories: undefined, limit, season, episode, ...ids });
         await this.status.recordSuccess("indexer", row.id);
         for (const r of releases) {
           results.push({ ...r, indexerId: row.id, indexerName: row.name });

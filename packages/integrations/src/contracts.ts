@@ -15,6 +15,14 @@ export interface SearchParams {
   query?: string;
   categories?: number[];
   limit?: number;
+  /** ID-based lookup support (roadmap P1, gap report D1): when present, a newznab/torznab
+   *  provider uses the more precise `t=tvsearch` / `t=movie` modes instead of fuzzy
+   *  `t=search`. `season`/`episode` narrow a tvsearch to a single episode. */
+  tvdbId?: number | string;
+  imdbId?: string;
+  tmdbId?: number | string;
+  season?: number;
+  episode?: number;
 }
 
 export interface IndexerContract {
@@ -24,6 +32,10 @@ export interface IndexerContract {
    *  Newznab/Torznab/Cardigann wire formats; core never sees vendor shapes. */
   search(params: SearchParams): Promise<Release[]>;
   healthcheck(): Promise<HealthResult>;
+  /** Optional capability detection (`t=caps`): a normalized map of what this indexer
+   *  instance supports (search modes, supported params, categories). Core persists it to
+   *  `indexer_definition.capabilities` where available. Undefined = not supported. */
+  capabilities?(): Promise<Record<string, unknown>>;
 }
 
 // ---------- Download client ----------

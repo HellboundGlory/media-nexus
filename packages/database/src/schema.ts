@@ -203,6 +203,7 @@ export const indexer = sqliteTable("indexer", {
   status: text("status").notNull().default("disabled"), // ok | error | disabled
   lastError: text("last_error"),
   lastSyncAt: text("last_sync_at"),
+  capabilities: text("capabilities", { mode: "json" }).$type<Record<string, unknown> | null>(),
   tags: json<string[]>("tags"),
   createdAt: iso("created_at"),
   updatedAt: iso("updated_at"),

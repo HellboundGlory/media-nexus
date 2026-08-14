@@ -21,11 +21,24 @@ export interface NewznabItem {
   size?: number | string;
   category?: string[];
   enclosure?: { url?: string; length?: number | string; type?: string };
+  pubDate?: string;
   "newznab:attr"?: { name?: string; value?: string }[];
 }
 
 export interface NewznabChannel {
   item?: NewznabItem[];
+  caps?: NewznabCaps;
+}
+
+export interface NewznabCaps {
+  searching?: {
+    search?: { available?: string; supportedParams?: string };
+    "tv-search"?: { available?: string; supportedParams?: string };
+    "movie-search"?: { available?: string; supportedParams?: string };
+  };
+  categories?: {
+    category?: Array<{ id?: number | string; name?: string }>;
+  };
 }
 
 export interface NewznabJson {
@@ -61,7 +74,7 @@ export function parseNewznabJson(
       protocol: opts.protocol,
       categories: cats,
       size,
-      ageHours: 0,
+      ageHours: toAgeHours(item.pubDate ?? newznabAttr(item, "pubdate")),
       seeders: nzNumber(newznabAttr(item, "seeders")),
       leechers: nzNumber(newznabAttr(item, "leechers")),
       peers: nzNumber(newznabAttr(item, "peers")),
@@ -104,6 +117,39 @@ function splitCats(raw: string): number[] {
     .filter((n) => Number.isInteger(n) && n > 0);
 }
 
+/** Hours elapsed since a release's `pubDate`. 0 when absent/unparseable (matching the old
+ *  hardcoded value). Accepts RFC 2822 (newznab's usual format) and ISO 8601. */
+export function toAgeHours(pubDate: string | undefined): number {
+  if (!pubDate) return 0;
+  const t = Date.parse(pubDate);
+  if (Number.isNaN(t)) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / 3_600_000));
+}
+
+/** Pure parser of a `t=caps&o=json` response into a normalized capabilities map ready to
+ *  persist to `indexer_definition.capabilities`. */
+export function parseNewznabCaps(json: NewznabJson): Record<string, unknown> {
+  const caps = json?.channel?.caps;
+  const searching = caps?.searching ?? {};
+  const searchModes: Record<string, { available: boolean; supportedParams: string[] }> = {};
+  const entries: Array<[string, keyof NonNullable<NewznabCaps["searching"]>]> = [
+    ["search", "search"],
+    ["tvsearch", "tv-search"],
+    ["movie", "movie-search"],
+  ];
+  for (const [key, wire] of entries) {
+    const node = searching[wire];
+    searchModes[key] = {
+      available: node?.available === "yes",
+      supportedParams: (node?.supportedParams ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    };
+  }
+  const categories = (caps?.categories?.category ?? [])
+    .map((c) => Number(c.id))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  return { searchModes, categories, fetchedAt: new Date().toISOString() };
+}
+
 /** HTTP provider. Validated against Newznab/Torznab settings zod schemas at the API layer. */
 export class NewznabProvider implements IndexerContract {
 
@@ -127,12 +173,33 @@ export class NewznabProvider implements IndexerContract {
   async search(params: SearchParams): Promise<Release[]> {
     const cats = this.settings.categories ?? [];
     const q = new URLSearchParams();
-    q.set("t", "search");
-    // without `q` this is a category/front-page search (RSS-style); with `q` a title search
-    if (params.query) q.set("q", params.query);
-    else q.set("cat", cats.join(","));
+
+    // ID-based modes (roadmap D1) win over fuzzy title search when we hold a stable
+    // external id — far more accurate on ambiguous titles and remakes. Everything else
+    // (query-only movie/series search, and the empty-query category/RSS poll) falls back
+    // to `t=search` exactly as before.
+    let mode: "search" | "tvsearch" | "movie" = "search";
+    if (params.mediaType === "series" && params.tvdbId !== undefined) mode = "tvsearch";
+    else if (params.mediaType === "movie" && (params.imdbId !== undefined || params.tmdbId !== undefined)) mode = "movie";
+
+    q.set("t", mode);
+    if (mode === "tvsearch") {
+      q.set("tvdbid", String(params.tvdbId));
+      if (params.season !== undefined) q.set("season", String(params.season));
+      if (params.episode !== undefined) q.set("ep", String(params.episode));
+      if (params.query) q.set("q", params.query); // optional re-sid for ids that like both
+    } else if (mode === "movie") {
+      if (params.imdbId) q.set("imdbid", params.imdbId);
+      else if (params.tmdbId !== undefined) q.set("tmdbid", String(params.tmdbId));
+      if (params.query) q.set("q", params.query);
+    } else {
+      // without `q` this is a category/front-page search (RSS-style); with `q` a title search
+      if (params.query) q.set("q", params.query);
+      else if (cats.length) q.set("cat", cats.join(","));
+    }
+
     if (this.settings.apiKey) q.set("apikey", this.settings.apiKey);
-    if (cats.length && params.query) q.set("cat", cats.join(","));
+    if (cats.length && mode === "search" && params.query) q.set("cat", cats.join(","));
     q.set("extended", "1");
     q.set("o", "json");
     q.set("limit", String(params.limit ?? 100));
@@ -145,6 +212,17 @@ export class NewznabProvider implements IndexerContract {
       indexerName: this.label(),
       protocol: this.protocol,
     }).slice(0, params.limit ?? 100);
+  }
+
+  /** Capability detection (`t=caps&o=json`, roadmap D1): parse what search modes / params /
+   *  categories this indexer instance advertises, normalized for persistence (core stores
+   *  it on `indexer_definition.capabilities`). */
+  async capabilities(): Promise<Record<string, unknown>> {
+    const q = new URLSearchParams({ t: "caps", o: "json" });
+    const res = await this.request(`/api?${q.toString()}`);
+    if (!res.ok) throw new Error(`caps request failed: HTTP ${res.status}`);
+    const json = (await res.json()) as NewznabJson;
+    return parseNewznabCaps(json);
   }
 
   async healthcheck(): Promise<HealthResult> {
