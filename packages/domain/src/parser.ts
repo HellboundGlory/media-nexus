@@ -49,6 +49,52 @@ function determineEdition(title: string): string {
 const YEAR_RE = /\b(19\d{2}|20\d{2})\b/;
 const SXXEXX_RE = /S(\d{1,2})E(\d{1,2})/i;
 
+/** ISO 639-1/639-2 code -> release-title tokens that signal that language. */
+const LANGUAGE_TERMS: Record<string, string[]> = {
+  en: ["english", "eng"],
+  fr: ["french", "vff", "vfq", "vof", "multi-french", "frenchaudio"],
+  de: ["german", "deutsch"],
+  es: ["spanish", "castellano"],
+  it: ["italian"],
+  pt: ["portuguese", "português", "portugues"],
+  ja: ["japanese", "jap"],
+  ko: ["korean", "korea"],
+  zh: ["chinese", "mandarin", "cantonese", "chin"],
+  hi: ["hindi"],
+  ar: ["arabic"],
+  ru: ["russian", "rus"],
+  nl: ["dutch", "nederlands"],
+  pl: ["polish"],
+  sv: ["swedish", "swesub"],
+  da: ["danish"],
+  no: ["norwegian"],
+  fi: ["finnish"],
+  tr: ["turkish"],
+  cs: ["czech"],
+  el: ["greek"],
+  he: ["hebrew"],
+  th: ["thai"],
+  vi: ["vietnamese"],
+  hu: ["hungarian"],
+  ro: ["romanian"],
+  uk: ["ukrainian"],
+  id: ["indonesian"],
+};
+
+/** Best-effort language detection from a release title. Conservatively returns the
+ *  languages it can confidently name; returns [] for e.g. "MULTi" and unmarked titles
+ *  rather than guessing. Feeds the custom-format LanguageSpec (roadmap P2). */
+export function parseLanguages(title: string): string[] {
+  const lower = title.toLowerCase();
+  const out: string[] = [];
+  for (const [code, terms] of Object.entries(LANGUAGE_TERMS)) {
+    if (terms.some((t) => new RegExp(`(?:^|[._\\s\\-])${t.replace(/[^\w-]/g, "")}(?:[._\\s\\-]|$)`).test(lower))) {
+      out.push(code);
+    }
+  }
+  return out;
+}
+
 export function parseYear(title: string): number | undefined {
   const m = YEAR_RE.exec(title);
   return m ? Number(m[1]) : undefined;

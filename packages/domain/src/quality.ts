@@ -103,6 +103,15 @@ export const qualityProfileBaseSchema = z.object({
   upgradeAllowed: z.boolean().default(true),
   language: z.string().default("en"),
   isDefault: z.boolean().default(false),
+  /** Per-custom-format scores keyed by custom format id (roadmap P2). A format absent
+   *  from the map contributes 0 regardless of whether it matches a release. */
+  formatScores: z.record(z.string(), z.number().int()).default({}),
+  /** Grab-side threshold: releases scoring below this are rejected, and the metric fed
+   *  into the upgrade check. 0 disables the gate (matching every profile today). */
+  minFormatScore: z.number().int().min(0).default(0),
+  /** Upgrade-side cutoff: once an existing file's format score reaches this (while also
+   *  meeting the quality cutoff), no further upgrades are wanted. 0 disables it. */
+  cutoffFormatScore: z.number().int().min(0).default(0),
 });
 export const qualityProfileSchema = qualityProfileBaseSchema.refine((p) => p.items.includes(p.cutoffQualityId), {
   message: "cutoffQualityId must be one of items",
@@ -118,6 +127,12 @@ export type UpdateQualityProfileBody = z.infer<typeof updateQualityProfileSchema
 export interface QualityProfileLike {
   items: number[];
   cutoffQualityId: number;
+  /** Custom-format scores (P2). Absent when the caller only needs quality-level checks;
+   *  the decision engine defaults missing scores to 0 so format behavior is inert until
+   *  a profile actually configures formats. */
+  formatScores?: Record<string, number>;
+  minFormatScore?: number;
+  cutoffFormatScore?: number;
 }
 
 /** Is this quality allowed at all by the profile? */

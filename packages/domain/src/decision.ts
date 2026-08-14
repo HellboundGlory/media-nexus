@@ -2,6 +2,9 @@
 import type { Release } from "./release";
 import type { ReleaseTarget, ExistingFile } from "./media";
 import { qualityAllowed, meetsCutoff, compareQuality, profilePosition, type QualityProfileLike } from "./quality";
+import {
+  calculateFormatScore, releaseMatchInput, existingFileMatchInput, type CustomFormat,
+} from "./custom-formats";
 
 /**
  * Release decision engine (roadmap P0.3, gap report B1).
@@ -35,6 +38,7 @@ export type RejectionReason =
   | "not_allowed_by_profile"
   | "cutoff_already_met"
   | "not_an_upgrade"
+  | "below_min_format_score"
   | "blocklisted"
   | "queue_conflict"
   | "wrong_protocol"
@@ -61,6 +65,27 @@ export interface DecisionContext {
   /** `media.minimumFreeSpaceMb` setting — the safety margin required to remain *after*
    *  the release downloads (roadmap P1, gap report B8). */
   minimumFreeSpaceMb: number;
+  /** Custom formats to score releases/existing files against (roadmap P2). Optional so
+   *  callers that don't configure formats (and pre-existing tests) stay valid: an empty
+   *  list makes every format score 0 and format behavior inert. */
+  customFormats?: CustomFormat[];
+  /** Per-format scores for the assigned profile, keyed by custom format id. */
+  formatScores?: Record<string, number>;
+  /** Grab-side threshold — a release scoring below this is rejected. 0 disables. */
+  minFormatScore?: number;
+  /** Upgrade-side cutoff — once an existing file reaches this format score (and the
+   *  quality cutoff), no further upgrades are wanted. 0 disables. */
+  cutoffFormatScore?: number;
+}
+
+/** Score a release against the profile's formats; 0 when none are configured. */
+export function releaseFormatScore(release: Release, ctx: DecisionContext): number {
+  return calculateFormatScore(ctx.customFormats ?? [], ctx.formatScores ?? {}, releaseMatchInput(release));
+}
+
+/** Score an existing library file (conservative floor — see custom-formats.ts header). */
+function existingFormatScore(file: ExistingFile, ctx: DecisionContext): number {
+  return calculateFormatScore(ctx.customFormats ?? [], ctx.formatScores ?? {}, existingFileMatchInput(file));
 }
 
 export interface Decision {
@@ -69,6 +94,9 @@ export interface Decision {
   rejections: Rejection[];
   /** Carried through so `pickBest()` doesn't need a separate profile argument. */
   profile: QualityProfileLike | null;
+  /** Total custom-format score of the release under the profile's scores (0 if none
+   *  configured). Used as the tiebreaker after quality and by the upgrade check. */
+  formatScore: number;
 }
 
 export type Specification = (release: Release, context: DecisionContext) => Rejection | null;
@@ -82,19 +110,43 @@ const profileAllowedSpecification: Specification = (release, ctx) => {
   };
 };
 
-/** Rejects when an existing file already meets the profile's cutoff (no further
- *  upgrades wanted) or when the release isn't actually better than what's already
- *  in the library. Looks at the best existing file among those the target covers —
- *  a deliberate simplification of upstream's per-episode granularity. */
+/** Rejects when an existing file already meets the profile's quality AND format cutoff
+ *  (no further upgrades wanted) or when the release isn't actually better than what's
+ *  already in the library — on quality OR custom-format score. Looks at the best existing
+ *  file among those the target covers — a deliberate simplification of upstream's
+ *  per-episode granularity.
+ *
+ *  Custom-format scoring (roadmap P2) makes a same-or-lower quality release eligible for
+ *  upgrade when its format score beats the held file's, gated by `cutoffFormatScore` the
+ *  same way the quality cutoff gates quality upgrades. */
 const upgradeSpecification: Specification = (release, ctx) => {
   if (!ctx.profile) return null;
   if (ctx.existingFiles.length === 0) return null; // nothing to upgrade over — wanted/missing
   const best = ctx.existingFiles.reduce((a, b) => (compareQuality(b.quality, a.quality) > 0 ? b : a));
-  if (meetsCutoff(ctx.profile, best.quality)) {
-    return { reason: "cutoff_already_met", message: "the existing file already meets the quality cutoff" };
+  const bestScore = existingFormatScore(best, ctx);
+  const cutoffFormatScore = ctx.cutoffFormatScore ?? 0;
+  if (meetsCutoff(ctx.profile, best.quality) && bestScore >= cutoffFormatScore) {
+    return { reason: "cutoff_already_met", message: "the existing file already meets the quality and format cutoff" };
   }
-  if (compareQuality(release.quality, best.quality) <= 0) {
-    return { reason: "not_an_upgrade", message: "release is not a higher quality than the existing file" };
+  const qualityBetter = compareQuality(release.quality, best.quality) > 0;
+  const formatBetter = releaseFormatScore(release, ctx) > bestScore;
+  if (!qualityBetter && !formatBetter) {
+    return { reason: "not_an_upgrade", message: "release is not a higher quality or format score than the existing file" };
+  }
+  return null;
+};
+
+/** Rejects releases whose custom-format score falls below the profile's `minFormatScore`.
+ *  0 (the default) disables the gate entirely. */
+const minFormatScoreSpecification: Specification = (release, ctx) => {
+  const min = ctx.minFormatScore ?? 0;
+  if (min <= 0) return null;
+  const score = releaseFormatScore(release, ctx);
+  if (score < min) {
+    return {
+      reason: "below_min_format_score",
+      message: `release format score ${score} is below the profile's minimum of ${min}`,
+    };
   }
   return null;
 };
@@ -131,24 +183,28 @@ export const SPECIFICATIONS: readonly Specification[] = [
   blocklistSpecification,
   queueConflictSpecification,
   profileAllowedSpecification,
+  minFormatScoreSpecification,
   upgradeSpecification,
   protocolSpecification,
   freeSpaceSpecification,
 ];
 
 export function evaluate(release: Release, context: DecisionContext): Decision {
+  const formatScore = releaseFormatScore(release, context);
   const rejections = SPECIFICATIONS.map((spec) => spec(release, context)).filter((r): r is Rejection => r !== null);
-  return { release, approved: rejections.length === 0, rejections, profile: context.profile };
+  return { release, approved: rejections.length === 0, rejections, profile: context.profile, formatScore };
 }
 
-/** Rank two *approved* decisions: profile order (or global quality if no profile
- *  was assigned) -> seeders -> freshness. Custom-format score and size proximity
- *  are documented slots for later (see file header), not built yet. */
+/** Rank two *approved* decisions: profile order (or global quality if no profile was
+ *  assigned) -> custom-format score -> seeders -> freshness. Size proximity is a
+ *  documented later slot (see file header). */
 export function compareDecisions(a: Decision, b: Decision): number {
   const qualityDiff = a.profile
     ? profilePosition(a.profile, a.release.quality) - profilePosition(a.profile, b.release.quality)
     : compareQuality(a.release.quality, b.release.quality);
   if (qualityDiff !== 0) return qualityDiff;
+  const formatDiff = a.formatScore - b.formatScore;
+  if (formatDiff !== 0) return formatDiff;
   const seedersDiff = (a.release.seeders ?? 0) - (b.release.seeders ?? 0);
   if (seedersDiff !== 0) return seedersDiff;
   return b.release.ageHours - a.release.ageHours; // newer (lower ageHours) wins

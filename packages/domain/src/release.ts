@@ -25,6 +25,10 @@ export const releaseSchema = z.object({
   isFreeleech: z.boolean().default(false),
   isProper: z.boolean().default(false),
   isRepack: z.boolean().default(false),
+  /** Languages detected from the release title (ISO 639-1/639-2 codes). Optional so
+   *  existing constructions without it stay valid; feeds the custom-format LanguageSpec
+   *  (roadmap P2). */
+  languages: z.array(z.string()).optional().default([]),
 });
 export type Release = z.infer<typeof releaseSchema>;
 
