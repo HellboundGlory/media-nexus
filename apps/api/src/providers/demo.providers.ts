@@ -18,6 +18,7 @@ import { schema, type Db } from "@medianexus/database";
 import { ApiError } from "@medianexus/shared";
 import { DB_TOKEN } from "../db/database.module";
 import { ConfigService } from "../system/config.service";
+import { ProviderStatusService } from "./provider-status.service";
 
 export const MEMORY_INDEXER = Symbol("MEMORY_INDEXER");
 export const MEMORY_DOWNLOAD_CLIENT = Symbol("MEMORY_DOWNLOAD_CLIENT");
@@ -46,6 +47,7 @@ export class ProvidersService {
     @Inject(MEMORY_INDEXER) private readonly memIdx: MemoryIndexerProvider,
     @Inject(MEMORY_DOWNLOAD_CLIENT) private readonly memClient: MemoryDownloadClientProvider,
     private readonly config: ConfigService,
+    private readonly status: ProviderStatusService,
   ) {}
 
   async configuredIndexers(): Promise<ConfiguredIndexer[]> {
@@ -97,7 +99,10 @@ export class ProvidersService {
     return out;
   }
 
-  /** Pick the best download client for a release protocol (usenet|torrent). */
+  /** Pick the best download client for a release protocol (usenet|torrent). Clients that
+   *  are backed off / auto-disabled (B10) are skipped from automatic selection so grabs
+   *  don't land on a dead client; an explicit `downloadClientId` is honored verbatim
+   *  (explicit/manual override must still be able to reach a recovery path). */
   async pickDownloadClient(
     protocol: "usenet" | "torrent",
     explicitId?: string,
@@ -108,9 +113,14 @@ export class ProvidersService {
       if (hit) return hit;
     }
     const matches = clients.filter((c) => c.row && c.row.kind === protocol);
-    matches.sort((a, b) => (a.row?.priority ?? 1) - (b.row?.priority ?? 1));
-    if (!matches[0]) throw new ApiError({ code: "UNPROCESSABLE", message: `No enabled ${protocol} download client is configured` });
-    return matches[0];
+    const viable: ConfiguredClient[] = [];
+    for (const c of matches) {
+      if (c.row && await this.status.isSkipped("downloadClient", c.row.id)) continue;
+      viable.push(c);
+    }
+    viable.sort((a, b) => (a.row?.priority ?? 1) - (b.row?.priority ?? 1));
+    if (!viable[0]) throw new ApiError({ code: "UNPROCESSABLE", message: `No enabled ${protocol} download client is configured` });
+    return viable[0];
   }
 
   getRegistry(): ProviderRegistry {
@@ -141,7 +151,8 @@ export class ProvidersService {
       inject: [PROVIDER_REGISTRY],
     },
     ProvidersService,
+    ProviderStatusService,
   ],
-  exports: [MEMORY_INDEXER, MEMORY_DOWNLOAD_CLIENT, PROVIDER_REGISTRY, ProvidersService],
+  exports: [MEMORY_INDEXER, MEMORY_DOWNLOAD_CLIENT, PROVIDER_REGISTRY, ProvidersService, ProviderStatusService],
 })
 export class DemoProvidersModule {}

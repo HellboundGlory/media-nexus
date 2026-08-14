@@ -12,6 +12,7 @@ import type { RuntimeSettings } from "@medianexus/shared";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 import { ProvidersService, type ConfiguredClient } from "../providers/demo.providers";
+import { ProviderStatusService } from "../providers/provider-status.service";
 import { LocalStorageProvider, findLargestVideo, findAllVideos } from "@medianexus/integrations";
 import type { ClientQueueItem, DownloadClientContract } from "@medianexus/integrations";
 import {
@@ -89,19 +90,27 @@ export class AcquisitionService {
     private readonly rootFolders: RootFoldersService,
     private readonly remotePathMappings: RemotePathMappingsService,
     private readonly recycleBin: RecycleBinService,
+    private readonly status: ProviderStatusService,
   ) {}
 
-  /** Poll every configured download client and import anything completed. */
+  /** Poll every configured download client and import anything completed. A client that
+   *  is backed off / auto-disabled (B10) is skipped here, so a dead client's getQueue() is
+   *  not retried on every 15s tick; a successful sync clears its failure state. */
   async syncAll(): Promise<{ clients: number; imported: number; updated: number }> {
     const clients = await this.providers.configuredDownloadClients();
     let imported = 0;
     let updated = 0;
     for (const client of clients) {
+      const clientId = client.row?.id ?? null;
+      const gate = await this.status.beforeCall("downloadClient", clientId, "query");
+      if (gate.skip) continue;
       try {
         const r = await this.syncForClient(client);
+        await this.status.recordSuccess("downloadClient", clientId);
         imported += r.imported;
         updated += r.updated;
       } catch (err) {
+        await this.status.recordFailure("downloadClient", clientId, err);
         this.logger.warn(`client sync failed (${client.row?.id ?? "memory"}): ${(err as Error).message}`);
         this.events.publish(EventTypes.DownloadClientFailed, { clientId: client.row?.id ?? null, error: (err as Error).message });
       }

@@ -14,6 +14,9 @@ import {
   memoryClientSettingsSchema,
 } from "@medianexus/integrations";
 import { z } from "zod";
+import { EventTypes } from "@medianexus/events";
+import { EventsService } from "../events/events.service";
+import { ProviderStatusService } from "../providers/provider-status.service";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   sabnzbd: sabnzbdSettingsSchema,
@@ -28,6 +31,8 @@ export class DownloadClientsService {
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly providers: ProvidersService,
+    private readonly status: ProviderStatusService,
+    private readonly events: EventsService,
   ) {}
 
   list() {
@@ -75,16 +80,28 @@ export class DownloadClientsService {
   async remove(id: string) {
     await this.get(id);
     await this.db.delete(schema.downloadClient).where(eq(schema.downloadClient.id, id));
+    await this.status.clearProvider("downloadClient", id);
     return { removed: id };
   }
 
-  /** Runs a live healthcheck against the provider built from the stored config. */
+  /** Runs a live healthcheck against the provider built from the stored config.
+   *  This is the download-client mirror of IndexersService.test() — the explicit recovery
+   *  path (B10). Deliberately ungated by backoff so a manual test reaches a
+   *  backed-off/auto-disabled client, and routes through
+   *  ProviderStatusService.recordSuccess()/recordFailure() (the only recovery path that
+   *  clears a download client's auto-disable). */
   async test(id: string) {
     const row = await this.get(id);
     const { provider } = (await this.providers.configuredDownloadClients()).find((c) => c.row?.id === id)
       ?? { provider: null };
     if (!provider) throw new ApiError({ code: "UNPROCESSABLE", message: "Provider not materializable" });
     const health = await provider.healthcheck();
+    if (health.ok) {
+      await this.status.recordSuccess("downloadClient", id);
+    } else {
+      await this.status.recordFailure("downloadClient", id, new Error(health.message ?? "healthcheck failed"));
+      this.events.publish(EventTypes.DownloadClientFailed, { clientId: id, error: health.message ?? "healthcheck failed" });
+    }
     return { id, implementation: row.implementation, ...health };
   }
 }

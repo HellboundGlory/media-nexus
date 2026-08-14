@@ -25,6 +25,7 @@ import { RemotePathMappingsService } from "../src/remote-path-mappings/remote-pa
 import { RecycleBinService } from "../src/media/recycle-bin.service";
 import type { DecisionService } from "../src/decision/decision.service";
 import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
+import { ProviderStatusService } from "../src/providers/provider-status.service";
 import type { SeriesService } from "../src/series/series.service";
 import type { MoviesService } from "../src/movies/movies.service";
 
@@ -130,6 +131,7 @@ describe("P0.4 — an exhausted import failure blocklists the release", () => {
     const service = new AcquisitionService(
       db, config, events, providers, new MediaRepository(db), blocklist,
       rootFolders, new RemotePathMappingsService(db), new RecycleBinService(config),
+      new ProviderStatusService(db, config),
     );
     const configured: ConfiguredClient = { row: null, provider: client };
 
@@ -189,7 +191,8 @@ describe("P0.4/P0.3 — IndexersService.grab() refuses a release the decision en
       pickDownloadClient: async () => ({ row: null, provider: { addRelease: async () => { addCalled = true; return { downloadId: "d1" }; } } }),
     } as unknown as ProvidersService;
     const decisions = stubDecisions((r) => ({ release: r, approved: true, profile: null, rejections: [] }));
-    const svc = new IndexersService(db, providers, events, config, decisions);
+    const status = new ProviderStatusService(db, config);
+    const svc = new IndexersService(db, providers, events, config, decisions, status);
 
     await svc.grab({
       mediaType: "movie", mediaId: "m1", releaseId: "r1", indexerId: "idx1",

@@ -72,6 +72,14 @@ export const runtimeSettingsSchema = z.object({
   "media.recycleBinPath": z.string().default(""),
   "media.recycleBinRetentionDays": z.number().int().nonnegative().default(7),
   "discovery.flareSolverrBaseUrl": z.string().default(""),
+  // Per-indexer rate limiting (roadmap P1, gap report B10). A sliding window over
+  // `indexers.rateLimitWindowSeconds`; a provider that exceeds the cap is skipped by
+  // ProviderStatusService.beforeCall() until the window rolls over. Generous defaults so
+  // normal operations (search fans out over N indexers; RSS polls a few times/hour) are
+  // unaffected — this guards against a runaway or hostile indexer, not routine use.
+  "indexers.rateLimitWindowSeconds": z.number().int().positive().default(60),
+  "indexers.maxQueriesPerWindow": z.number().int().positive().default(20),
+  "indexers.maxGrabsPerWindow": z.number().int().positive().default(5),
   "notifications.webhooks": z.array(webhookNotificationSchema).default([]),
   "notifications.discord": z.array(discordNotificationSchema).default([]),
   "notifications.telegram": z.array(telegramNotificationSchema).default([]),

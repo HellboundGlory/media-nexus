@@ -28,6 +28,7 @@ import { RootFoldersService } from "../src/root-folders/root-folders.service";
 import { RemotePathMappingsService } from "../src/remote-path-mappings/remote-path-mappings.service";
 import { RecycleBinService } from "../src/media/recycle-bin.service";
 import type { ProvidersService, ConfiguredClient } from "../src/providers/demo.providers";
+import { ProviderStatusService } from "../src/providers/provider-status.service";
 
 const dir = mkdtempSync(join(tmpdir(), "mn-acq-"));
 const handles: { close: () => void }[] = [];
@@ -86,6 +87,7 @@ async function harness(): Promise<Harness> {
   const service = new AcquisitionService(
     handle.db, config, events, providers, new MediaRepository(handle.db), blocklist,
     new RootFoldersService(handle.db), new RemotePathMappingsService(handle.db), new RecycleBinService(config),
+    new ProviderStatusService(handle.db, config),
   );
   return {
     db: handle.db, service, blocklist, events, client, configured: { row: null, provider: client },

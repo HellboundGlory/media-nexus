@@ -20,6 +20,7 @@ import { IndexersService } from "../src/indexers/indexers.service";
 import { EventsService } from "../src/events/events.service";
 import { EventBus } from "@medianexus/events";
 import type { ProvidersService } from "../src/providers/demo.providers";
+import { ProviderStatusService } from "../src/providers/provider-status.service";
 
 const dir = mkdtempSync(join(tmpdir(), "mn-decision-"));
 const handles: { close: () => void }[] = [];
@@ -167,7 +168,7 @@ describe("IndexersService.search() attaches a decision to every result (gap repo
         },
       }],
     } as unknown as ProvidersService;
-    const svc = new IndexersService(db, providers, events, config, decisions);
+    const svc = new IndexersService(db, providers, events, config, decisions, new ProviderStatusService(db, config));
 
     const res = await svc.search({ mediaType: "movie", mediaId: "m1" });
 

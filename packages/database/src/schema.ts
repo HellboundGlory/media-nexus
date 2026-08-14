@@ -377,6 +377,31 @@ export const healthCheckResult = sqliteTable("health_check_result", {
   checkedAt: iso("checked_at"),
 }, (t) => [uniqueIndex("health_check_result_key_idx").on(t.key)]);
 
+// Generic per-provider health/backoff/rate-limit state (roadmap P1, gap report B10).
+// One row per (providerType, providerId); generic across indexers + download clients and
+// later notifications/import lists, so the backoff/auto-disable/rate-limit machinery is
+// shared rather than duplicated per provider kind. Keyed by a plain providerId string (no
+// FK — the referent lives in indexer or download_client depending on providerType, and the
+// table must stay generic for future kinds). Not a hard-disable: `enabled` on the provider
+// row itself is untouched; auto-disabled providers are skipped by the call sites in
+// ProviderStatusService and re-enabled via the manual test()/healthcheck recovery path.
+export const providerStatus = sqliteTable("provider_status", {
+  id: text("id").primaryKey(),
+  providerType: text("provider_type").notNull(), // indexer | downloadClient
+  providerId: text("provider_id").notNull(),
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  escalationLevel: integer("escalation_level").notNull().default(0),
+  disabledUntil: nullableIso("disabled_until"), // null = not backed off
+  autoDisabled: bool("auto_disabled", false),
+  lastError: text("last_error"),
+  lastFailureAt: nullableIso("last_failure_at"),
+  lastSuccessAt: nullableIso("last_success_at"),
+  rateLimit: json<Record<string, { count: number; windowStart: number }> | null>("rate_limit"),
+  updatedAt: iso("updated_at"),
+}, (t) => [
+  uniqueIndex("provider_status_type_id_idx").on(t.providerType, t.providerId),
+]);
+
 // ---------- exported schema ----------
 export const schema = {
   apiKey,
@@ -404,6 +429,7 @@ export const schema = {
   jobRun,
   auditLog,
   healthCheckResult,
+  providerStatus,
 };
 
 export type Schema = typeof schema;

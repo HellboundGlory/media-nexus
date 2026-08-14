@@ -10,6 +10,7 @@ import { DB_TOKEN } from "../db/database.module";
 import { ConfigService } from "../system/config.service";
 import { RootFoldersService } from "../root-folders/root-folders.service";
 import { ProvidersService } from "../providers/demo.providers";
+import { ProviderStatusService } from "../providers/provider-status.service";
 import { EventsService } from "../events/events.service";
 
 /** The exact prefix `AcquisitionService.importCompletedEntry()` throws when
@@ -33,6 +34,7 @@ export class HealthCheckService {
     private readonly config: ConfigService,
     private readonly rootFolders: RootFoldersService,
     private readonly providers: ProvidersService,
+    private readonly providerStatus: ProviderStatusService,
     private readonly events: EventsService,
   ) {}
 
@@ -68,13 +70,16 @@ export class HealthCheckService {
   private async buildContext(): Promise<HealthContext> {
     const cfg = await this.config.get();
 
-    const indexers = await this.db.select({ enabled: schema.indexer.enabled, status: schema.indexer.status }).from(schema.indexer);
+    const indexerAutoDisabled = await this.providerStatus.autoDisabledIds("indexer");
+    const indexers = (await this.db.select({ id: schema.indexer.id, enabled: schema.indexer.enabled, status: schema.indexer.status }).from(schema.indexer))
+      .map((i) => ({ enabled: i.enabled, status: i.status, autoDisabled: indexerAutoDisabled.has(i.id) }));
 
     const configuredClients = await this.providers.configuredDownloadClients();
+    const clientAutoDisabled = await this.providerStatus.autoDisabledIds("downloadClient");
     const downloadClients = await Promise.all(
       configuredClients.map(async (c) => {
         const reachable = await c.provider.healthcheck().then((r) => r.ok).catch(() => false);
-        return { enabled: true, kind: c.provider.kind, reachable };
+        return { enabled: true, kind: c.provider.kind, reachable, autoDisabled: clientAutoDisabled.has(c.row?.id ?? "") };
       }),
     );
 

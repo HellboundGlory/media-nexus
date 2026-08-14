@@ -18,6 +18,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { episodeQueryTag } from "@medianexus/domain";
 import { parseCardigannYaml, cardigannSettingsSchema } from "@medianexus/integrations";
 import { DecisionService } from "../decision/decision.service";
+import { ProviderStatusService } from "../providers/provider-status.service";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   memory: memoryIndexerSettingsSchema,
@@ -33,6 +34,7 @@ export class IndexersService {
     private readonly events: EventsService,
     private readonly config: ConfigService,
     private readonly decisions: DecisionService,
+    private readonly status: ProviderStatusService,
   ) {}
 
   async definitions() {
@@ -135,15 +137,25 @@ export class IndexersService {
     return row;
   }
 
-  /** Run a live health check on one configured indexer and persist the result. */
+  /** Run a live health check on one configured indexer and persist the result.
+   *  This is the explicit recovery path (B10): deliberately ungated by backoff — a manual
+   *  test must reach a backed-off/auto-disabled provider — and it is the single writer of
+   *  `indexer.status` via ProviderStatusService.recordSuccess()/recordFailure(). */
   async test(id: string) {
     const row = await this.get(id);
     const { provider } = await this.bestProviderFor(row);
     if (!provider) throw new ApiError({ code: "UNPROCESSABLE", message: "No provider for this indexer" });
     const health = await provider.healthcheck();
     const now = new Date().toISOString();
+    if (health.ok) {
+      await this.status.recordSuccess("indexer", id);
+    } else {
+      await this.status.recordFailure("indexer", id, new Error(health.message ?? "healthcheck failed"));
+    }
+    // lastSyncAt is the manual "ran a healthcheck" timestamp — distinct from the
+    // escalations/backoff tracked in provider_status, and only meaningful here.
     await this.db.update(schema.indexer)
-      .set({ status: health.ok ? "ok" : "error", lastError: health.ok ? null : (health.message ?? null), lastSyncAt: now, updatedAt: now })
+      .set({ lastSyncAt: now, updatedAt: now })
       .where(eq(schema.indexer.id, id));
     if (!health.ok) {
       this.events.publish(EventTypes.IndexerFailed, { indexerId: id, error: health.message ?? "healthcheck failed" }, { aggType: "indexer", aggId: id });
@@ -191,6 +203,7 @@ export class IndexersService {
   async remove(id: string) {
     await this.get(id);
     await this.db.delete(schema.indexer).where(eq(schema.indexer.id, id));
+    await this.status.clearProvider("indexer", id);
     return { removed: id };
   }
 
@@ -220,17 +233,23 @@ export class IndexersService {
 
   /** Fan out a query over every configured indexer, collecting whatever comes back.
    *  Shared by search() (query-scoped, decision-attached) and pollRecent() (empty query,
-   *  no decision — the target isn't known yet). */
+   *  no decision — the target isn't known yet). Each indexer is gated on backoff /
+   *  rate-limit (B10): a dead indexer is skipped instead of adding its full HTTP timeout
+   *  to every search/poll, and a success clears its failure state. */
   private async fetchReleases(query: string, limit: number, mediaType: "movie" | "series" = "movie"): Promise<Release[]> {
     const configured = await this.providers.configuredIndexers();
     const results: Release[] = [];
     for (const { row, provider } of configured) {
+      const gate = await this.status.beforeCall("indexer", row.id, query ? "query" : "poll");
+      if (gate.skip) continue;
       try {
         const releases = await provider.search({ mediaType, query, categories: undefined, limit });
+        await this.status.recordSuccess("indexer", row.id);
         for (const r of releases) {
           results.push({ ...r, indexerId: row.id, indexerName: row.name });
         }
       } catch (err) {
+        await this.status.recordFailure("indexer", row.id, err);
         this.events.publish(EventTypes.IndexerFailed, { indexerId: row.id, error: (err as Error).message }, { aggType: "indexer", aggId: row.id });
       }
     }
@@ -256,12 +275,19 @@ export class IndexersService {
       for (const { row, provider } of configured) {
         let found: Release | null = null;
         if (row.id === input.indexerId || !input.indexerId) {
-          const releases = await provider.search({ mediaType: input.mediaType, query }).catch(() => []);
-          found = releases.find((r) => r.id === input.releaseId) ?? null;
-          if (!found) {
-            // fall back to catalog/RSS search (some providers only return the release there)
-            const all = await provider.search({ mediaType: input.mediaType, query: "" }).catch(() => []);
-            found = all.find((r) => r.id === input.releaseId) ?? null;
+          const gate = await this.status.beforeCall("indexer", row.id, "grab");
+          if (gate.skip) continue;
+          try {
+            const releases = await provider.search({ mediaType: input.mediaType, query });
+            found = releases.find((r) => r.id === input.releaseId) ?? null;
+            if (!found) {
+              // fall back to catalog/RSS search (some providers only return the release there)
+              const all = await provider.search({ mediaType: input.mediaType, query: "" });
+              found = all.find((r) => r.id === input.releaseId) ?? null;
+            }
+            if (found) await this.status.recordSuccess("indexer", row.id);
+          } catch (err) {
+            await this.status.recordFailure("indexer", row.id, err);
           }
         }
         if (found) { release = { ...found, indexerId: row.id, indexerName: row.name }; break; }
@@ -281,7 +307,16 @@ export class IndexersService {
     }
 
     const client = await this.providers.pickDownloadClient(release.protocol as "usenet" | "torrent", input.downloadClientId);
-    const { downloadId } = await client.provider.addRelease({ release, category: input.mediaType });
+    const clientId = client.row?.id ?? null;
+    let downloadId: string;
+    try {
+      const res = await client.provider.addRelease({ release, category: input.mediaType });
+      downloadId = res.downloadId;
+      await this.status.recordSuccess("downloadClient", clientId);
+    } catch (err) {
+      await this.status.recordFailure("downloadClient", clientId, err);
+      throw err;
+    }
 
     const now = new Date().toISOString();
     const queueId = newEntityId("q");

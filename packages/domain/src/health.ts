@@ -31,8 +31,8 @@ export interface HealthCheckResult {
 
 /** Everything a check needs, assembled once per run by the API layer. */
 export interface HealthContext {
-  indexers: { enabled: boolean; status: string }[];
-  downloadClients: { enabled: boolean; kind: "usenet" | "torrent"; reachable: boolean }[];
+  indexers: { enabled: boolean; status: string; autoDisabled: boolean }[];
+  downloadClients: { enabled: boolean; kind: "usenet" | "torrent"; reachable: boolean; autoDisabled: boolean }[];
   rootFolders: { name: string; accessible: boolean; freeBytes: number | null }[];
   downloadsPathConfigured: boolean;
   downloadsPathAccessible: boolean;
@@ -91,6 +91,37 @@ const downloadClientsUnreachable: HealthCheck = (ctx) => {
   return ok("downloadClients.unreachable", "All download clients are reachable.");
 };
 
+// Roadmap P1, gap report B10: a provider that hit the auto-disable threshold (repeated
+// consecutive failures) is skipped by the wired call sites until an explicit recovery path
+// (manual test()/healthcheck) clears it. This surfaces that a provider is soft-disabled —
+// distinct from `indexers.allFailing`/`downloadClients.unreachable`, which read live
+// healthcheck state, not the accumulated backoff state.
+const indexersAutoDisabled: HealthCheck = (ctx) => {
+  const enabled = ctx.indexers.filter((i) => i.enabled);
+  if (enabled.length === 0) return ok("indexers.autoDisabled", "No enabled indexers to check.");
+  const disabled = enabled.filter((i) => i.autoDisabled);
+  if (disabled.length === enabled.length) {
+    return err("indexers.autoDisabled", `All ${enabled.length} enabled indexer(s) are auto-disabled after repeated failures — run a manual indexer health check to re-enable.`);
+  }
+  if (disabled.length > 0) {
+    return warn("indexers.autoDisabled", `${disabled.length} of ${enabled.length} enabled indexer(s) are auto-disabled after repeated failures.`);
+  }
+  return ok("indexers.autoDisabled", "No enabled indexers are auto-disabled.");
+};
+
+const downloadClientsAutoDisabled: HealthCheck = (ctx) => {
+  const enabled = ctx.downloadClients.filter((c) => c.enabled);
+  if (enabled.length === 0) return ok("downloadClients.autoDisabled", "No download clients to check.");
+  const disabled = enabled.filter((c) => c.autoDisabled);
+  if (disabled.length === enabled.length) {
+    return err("downloadClients.autoDisabled", `All ${enabled.length} configured download client(s) are auto-disabled after repeated failures — run a manual client health check to re-enable.`);
+  }
+  if (disabled.length > 0) {
+    return warn("downloadClients.autoDisabled", `${disabled.length} of ${enabled.length} download client(s) are auto-disabled after repeated failures.`);
+  }
+  return ok("downloadClients.autoDisabled", "No download clients are auto-disabled.");
+};
+
 const rootFoldersMissingOrUnwritable: HealthCheck = (ctx) => {
   if (ctx.rootFolders.length === 0) return warn("rootFolders.missingOrUnwritable", "No root folders configured.");
   const bad = ctx.rootFolders.filter((r) => !r.accessible);
@@ -145,7 +176,9 @@ const acquisitionContentNotFound: HealthCheck = (ctx) => {
 export const HEALTH_CHECKS: readonly HealthCheck[] = [
   indexersNone,
   indexersAllFailing,
+  indexersAutoDisabled,
   downloadClientsUnreachable,
+  downloadClientsAutoDisabled,
   rootFoldersMissingOrUnwritable,
   downloadsPathMissing,
   diskSpaceLow,

@@ -37,6 +37,7 @@ import { MoviesService } from "../src/movies/movies.service";
 import { SeriesService } from "../src/series/series.service";
 import type { DecisionService } from "../src/decision/decision.service";
 import type { ProvidersService } from "../src/providers/demo.providers";
+import { ProviderStatusService } from "../src/providers/provider-status.service";
 import type { ClientQueueItem } from "@medianexus/integrations";
 
 const dir = mkdtempSync(join(tmpdir(), "mn-txn-"));
@@ -87,7 +88,8 @@ describe("IndexersService.grab() is transactional", () => {
     const decisions = {
       evaluate: async (_mt: string, _mid: string, r: Release) => ({ release: r, approved: true, profile: null, rejections: [] }) as Decision,
     } as unknown as DecisionService;
-    const svc = new IndexersService(db, providers, events, config, decisions);
+    const status = new ProviderStatusService(db, config);
+    const svc = new IndexersService(db, providers, events, config, decisions, status);
 
     // The transaction writes download_queue_entry first, then history_entry second — fail
     // the second write and confirm the first (which had already executed its own INSERT
@@ -148,6 +150,7 @@ describe("AcquisitionService import-apply is transactional", () => {
     const service = new AcquisitionService(
       db, config, events, providers, new MediaRepository(db), blocklist,
       new RootFoldersService(db), new RemotePathMappingsService(db), new RecycleBinService(config),
+      new ProviderStatusService(db, config),
     );
 
     const item: ClientQueueItem = { downloadId: "d1", title: entry.title, status: "completed", progress: 100, size: 2048, contentPath: folder };
