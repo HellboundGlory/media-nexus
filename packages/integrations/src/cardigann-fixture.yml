@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: MIT
+# New-shape fixture (D4 Stage 1): rows/fields blocks + Go-template substitution.
 name: MockPrivateTracker
 description: A simple Cardigann-style definition used in tests
 settings:
@@ -14,11 +15,24 @@ search:
     - path: /browse.php
       method: get
       inputs:
-        q: "${query.escape}${query.plus}"
-        apikey: "${apikey}"
-      rows: tr.torrent
-      title: td.name a
-      link: td.name a@href
-      details: td.name a@href
-      size: td.size
-      seeders: td.seeders
+        q: "{{ .Keywords }}"
+        apikey: "{{ .Config.apikey }}"
+  rows:
+    selector: tr.torrent
+    filters:
+      - name: andmatch
+  fields:
+    title:
+      selector: td.name a
+    details:
+      selector: td.name a
+      attribute: href
+    download:
+      selector: td.name a
+      attribute: href
+    size:
+      selector: td.size
+    seeders:
+      selector: td.seeders
+    category:
+      text: 1000

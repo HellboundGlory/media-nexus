@@ -224,6 +224,13 @@ export const indexer = sqliteTable("indexer", {
   lastError: text("last_error"),
   lastSyncAt: text("last_sync_at"),
   capabilities: text("capabilities", { mode: "json" }).$type<Record<string, unknown> | null>(),
+  // Session/cookie state for Cardigann indexers (roadmap D4, Stage 1). An opaque, plain-text
+  // placeholder: there is no write path to persist a session yet, so nothing here is encrypted.
+  // The J9 AES-256-GCM codec (@medianexus/shared crypto.ts) is wired in when the Stage 2 login
+  // engine adds the DB write/read path. For now it lets a provider's session value round-trip
+  // through the DB via the CardigannProvider accessor (there is no in-memory provider cache for
+  // indexers the way download-clients have clientCache). Null until a provider sets it.
+  sessionState: text("session_state"),
   tags: json<string[]>("tags"),
   createdAt: iso("created_at"),
   updatedAt: iso("updated_at"),

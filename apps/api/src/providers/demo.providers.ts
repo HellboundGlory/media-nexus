@@ -125,6 +125,9 @@ export class ProvidersService {
             definitionText: yml,
             settings: settings as Record<string, never>,
             fetcher: fetcher as never,
+            // D4 Stage 1: carry the indexer's session state in so a search can round-trip it
+            // (plain opaque column until the Stage 2 login engine wires J9 encryption).
+            sessionState: row.sessionState ?? undefined,
           }),
         });
       }

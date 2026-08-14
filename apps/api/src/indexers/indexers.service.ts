@@ -58,7 +58,18 @@ export class IndexersService {
 
   /** Create a custom Cardigann definition (validated YAML) → selectable like built-ins. */
   async createDefinition(input: { key: string; name: string; protocol: "usenet" | "torrent"; cardigannYml: string }) {
-    try { parseCardigannYaml(input.cardigannYml); } catch (err) {
+    try {
+      const parsed = parseCardigannYaml(input.cardigannYml);
+      // D4 Stage 1: a definition that uses a filter this interpreter can't execute is
+      // rejected at validation time (never silently mis-executed).
+      if (parsed.unsupportedFilters.length) {
+        throw new ApiError({
+          code: "VALIDATION_ERROR",
+          message: `Unsupported Cardigann filter${parsed.unsupportedFilters.length > 1 ? "s" : ""} in definition: ${parsed.unsupportedFilters.join(", ")}`,
+        });
+      }
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
       throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid Cardigann YAML: ${(err as Error).message}` });
     }
     const existing = await this.db.select().from(schema.indexerDefinition).where(eq(schema.indexerDefinition.key, input.key)).limit(1);

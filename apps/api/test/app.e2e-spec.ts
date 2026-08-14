@@ -925,7 +925,31 @@ describe("M3: indexer health, Cardigann custom definitions, and statistics", () 
   });
 
   it("creates a Cardigann definition, configures an indexer from it, and searches (HTML scrape)", async () => {
-    const yaml = `name: M3Tests\nsettings:\n  - name: baseUrl\n    type: text\n    default: ${cgUrl}\nsearch:\n  paths:\n    - path: /browse\n      inputs:\n        q: "${'${query.plus}'}"\n      rows: tr.tr\n      title: td.n a\n      link: td.n a@href\n      size: td.s\n      seeders: td.se`;
+    const yaml = `name: M3Tests
+settings:
+  - name: baseUrl
+    type: text
+    default: ${cgUrl}
+search:
+  paths:
+    - path: /browse
+      inputs:
+        q: "{{ .Keywords }}"
+  rows:
+    selector: tr.tr
+  fields:
+    title:
+      selector: td.n a
+    details:
+      selector: td.n a
+      attribute: href
+    download:
+      selector: td.n a
+      attribute: href
+    size:
+      selector: td.s
+    seeders:
+      selector: td.se`;
     const def = await auth(request(http).post("/api/v1/indexers/definitions").send({ key: "m3tests", name: "M3 Tests", protocol: "torrent", cardigannYml: yaml }));
     expect(def.status).toBe(201);
 
