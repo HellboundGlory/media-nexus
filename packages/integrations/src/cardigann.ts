@@ -28,7 +28,7 @@ import type { IndexerContract, SearchParams, HealthResult } from "./contracts";
 import type { Release } from "@medianexus/domain";
 import { parseReleaseTitle } from "@medianexus/domain";
 import type { Fetcher } from "./proxy";
-import { CompiledTemplate, renderTemplate, type TemplateContext, type TplFunc } from "./cardigann-template";
+import { CompiledTemplate, renderTemplate, templateFunctionNames, type TemplateContext, type TplFunc } from "./cardigann-template";
 import {
   applyFilter, isFilterSupported, UnsupportedFilterError,
   type FilterArg, type FilterArgs,
@@ -152,6 +152,8 @@ export interface CardigannLoginBlock {
   /** Verify a logged-in session. */
   test?: LoginTestBlock;
   headers?: Record<string, string[]>;
+  /** Presence of a captcha challenge (unsupported project-wide). */
+  captcha?: boolean;
 }
 
 export interface CardigannDefinition {
@@ -217,6 +219,7 @@ function parseLogin(r: Record<string, unknown>): CardigannLoginBlock {
     if (t.path) { out.test = { path: asString(t.path) ?? "", selector: asString(t.selector) }; }
   }
   if (r.headers && typeof r.headers === "object") out.headers = r.headers as Record<string, string[]>;
+  if (r.captcha) out.captcha = true;
   return out;
 }
 
@@ -1009,6 +1012,66 @@ export class CardigannProvider implements IndexerContract {
 
 function asString(v: unknown): string | undefined {
   return v == null ? undefined : String(v);
+}
+
+// ---------------------------------------------------------------------------
+// Definition support status (roadmap D4, Stage 3 sync job)
+// ---------------------------------------------------------------------------
+
+/** Template functions the interpreter can execute (builtins + the filter pipeline). */
+export const KNOWN_TEMPLATE_FUNCTIONS: ReadonlySet<string> = new Set([
+  "eq", "ne", "and", "or", "join",
+  "append", "prepend", "replace", "re_replace", "regexp", "split", "trim", "tolower", "toupper",
+  "urldecode", "urlencode", "htmldecode", "htmlencode", "querystring", "validfilename", "diacritics",
+  "validate", "dateparse", "timeparse", "timeago", "fuzzytime",
+]);
+
+export interface CardigannStatus {
+  supported: boolean;
+  /** Human-readable reasons when unsupported (empty when supported). */
+  reasons: string[];
+}
+
+/** Every template string in a definition (fields, search paths/inputs, login blocks, …). */
+function collectTemplateStrings(def: CardigannDefinition): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const walk = (v: unknown): void => {
+    if (v === null || v === undefined) return;
+    if (typeof v === "string") {
+      if (v.includes("{{") && !seen.has(v)) { seen.add(v); out.push(v); }
+      return;
+    }
+    if (Array.isArray(v)) { for (const x of v) walk(x); return; }
+    if (typeof v === "object") { for (const k of Object.values(v as Record<string, unknown>)) walk(k); }
+  };
+  walk(def);
+  return out;
+}
+
+/** Template functions a definition calls that this interpreter does not implement. */
+export function cardigannUnknownTemplateFunctions(def: CardigannDefinition): string[] {
+  const unknown = new Set<string>();
+  for (const s of collectTemplateStrings(def)) {
+    const { functions, error } = templateFunctionNames(s);
+    if (error) { unknown.add("malformed template"); continue; }
+    for (const f of functions) if (!KNOWN_TEMPLATE_FUNCTIONS.has(f)) unknown.add(f);
+  }
+  return [...unknown];
+}
+
+/**
+ * Whether a parsed definition can actually be executed by this interpreter. The sync job tags
+ * every upstream definition supported/unsupported with these reasons so broken indexers are
+ * never silently exposed as usable.
+ */
+export function cardigannDefinitionStatus(def: CardigannDefinition): CardigannStatus {
+  const reasons: string[] = [];
+  if (def.unsupportedFilters.length) reasons.push(`unsupported filters: ${def.unsupportedFilters.join(", ")}`);
+  if (def.login?.captcha) reasons.push("captcha (unsupported)");
+  const unknownTpl = cardigannUnknownTemplateFunctions(def);
+  if (unknownTpl.length) reasons.push(`unsupported template functions: ${unknownTpl.join(", ")}`);
+  return { supported: reasons.length === 0, reasons };
 }
 
 export { YAML, z, UnsupportedFilterError, applyFilter, renderTemplate, CompiledTemplate };

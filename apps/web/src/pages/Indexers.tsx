@@ -108,7 +108,7 @@ export default function Indexers() {
               </select></label>
           </div>
           <label><span className="mb-1 block text-xs text-zinc-500">Cardigann definition (YAML)</span>
-            <textarea required rows={7} value={customYaml} onChange={(e) => setCustomYaml(e.target.value)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" placeholder={"name: MyTracker\nsettings:\n  - name: baseUrl\n    type: text\nsearch:\n  paths:\n    - path: /browse\n      inputs:\n        q: ${query.plus}\n      rows: tr.row\n      title: td.name a\n      link: td.name a@href\n      size: td.size\n      seeders: td.seeders"} />
+            <textarea required rows={7} value={customYaml} onChange={(e) => setCustomYaml(e.target.value)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" placeholder={"name: MyTracker\nsettings:\n  - name: baseUrl\n    type: text\nsearch:\n  paths:\n    - path: /browse\n      inputs:\n        q: \"{{ .Keywords }}\"\n  rows:\n    selector: tr.row\n  fields:\n    title:\n      selector: td.name a\n    details:\n      selector: td.name a\n      attribute: href\n    download:\n      selector: td.name a\n      attribute: href\n    size:\n      selector: td.size\n    seeders:\n      selector: td.seeders"} />
           </label>
           <div className="flex items-center gap-2">
             <button disabled={createDefinition.isPending} className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
@@ -129,9 +129,18 @@ export default function Indexers() {
                 <select value={defKey} onChange={(e) => { setDefKey(e.target.value); setSettingsDraft({}); }}
                   className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
                   <option value="">Select…</option>
-                  {defs.data?.map((d) => <option key={d.key} value={d.key}>{d.name}{d.implementation === "cardigann" ? " (custom)" : ""} · {d.protocol}</option>)}
+                  {defs.data?.map((d) => {
+                    const cg = d.implementation === "cardigann" ? d.capabilities?.cardigannStatus : undefined;
+                    const label = cg && !cg.supported ? " ⚠ unsupported" : (d.implementation === "cardigann" && !d.builtIn ? " (custom)" : "");
+                    return <option key={d.key} value={d.key}>{d.name}{label} · {d.protocol}</option>;
+                  })}
                 </select>
               </label>
+              {selectedDef?.implementation === "cardigann" && selectedDef.capabilities?.cardigannStatus && !selectedDef.capabilities.cardigannStatus.supported && (
+                <p className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+                  ⚠ Not usable in this build{selectedDef.capabilities.cardigannStatus.reasons?.length ? `: ${selectedDef.capabilities.cardigannStatus.reasons.join("; ")}` : ""}
+                </p>
+              )}
               <label className="block">
                 <span className="mb-1 block text-xs text-zinc-500">Name</span>
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My indexer" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />

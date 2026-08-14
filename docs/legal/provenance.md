@@ -25,6 +25,7 @@ sources.
 | Planned: Plex watchlist integration | Pattern influence from Seerr's watchlist model (MIT) | Adapted pattern (no source text) | MIT (attribution noted) | Planned — record adaptations here when landed |
 | Cardigann YAML interpreter (`packages/integrations/src/cardigann.ts`) | Format spec (documented schema); own parser/runtime | Reimplemented format | MIT | Active — never port Prowlarr engine code |
 | Golden-corpus test fixtures (`packages/integrations/src/fixtures/cardigann/`) | Copied unchanged from `github.com/Prowlarr/Indexers` `definitions/v11` (12 definitions; YAML data, not application code) | Data corpus used to validate the interpreter in tests | Owner (Hellbound) granted verbal permission to use the repository for all users — no written license at head; logged as the D4 decision. Test-fixture only, not bundled as product content | Active (test-only) |
+| Upstream Cardigann definition sync (`media.definitionSync` job → `indexer_definition` built-ins) | Fetches `definitions/v11/*.yml` from `github.com/Prowlarr/Indexers` at runtime and stores the YAML data | Data integration, not application code | Same owner-granted verbal permission (D4); synced defs are user-visible indexer data, `supported`/`unsupported` tagged, never bundled as app code | Active |
 
 ## Attribution
 

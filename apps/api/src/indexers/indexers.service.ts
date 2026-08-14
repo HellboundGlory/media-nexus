@@ -17,7 +17,7 @@ import { ConfigService } from "../system/config.service";
 import { join, resolve } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { episodeQueryTag } from "@medianexus/domain";
-import { parseCardigannYaml, cardigannSettingsSchema } from "@medianexus/integrations";
+import { parseCardigannYaml, cardigannSettingsSchema, cardigannDefinitionStatus } from "@medianexus/integrations";
 import { DecisionService } from "../decision/decision.service";
 import { ProviderStatusService } from "../providers/provider-status.service";
 import { cardigannSecretFields, decryptFields, decryptSessionValue, encryptFields, encryptSessionValue, getProviderSecret, INDEXER_SETTINGS_SECRET_FIELDS, PROXY_SECRET_FIELDS } from "../secrets/provider-secrets";
@@ -58,28 +58,40 @@ export class IndexersService {
 
   /** Create a custom Cardigann definition (validated YAML) → selectable like built-ins. */
   async createDefinition(input: { key: string; name: string; protocol: "usenet" | "torrent"; cardigannYml: string }) {
+    let parsed: ReturnType<typeof parseCardigannYaml>;
     try {
-      const parsed = parseCardigannYaml(input.cardigannYml);
-      // D4 Stage 1: a definition that uses a filter this interpreter can't execute is
-      // rejected at validation time (never silently mis-executed).
-      if (parsed.unsupportedFilters.length) {
+      parsed = parseCardigannYaml(input.cardigannYml);
+      // D4 Stage 1/3: a definition this interpreter can't actually execute (unimplemented
+      // filter, unknown template function, or a captcha gate) is rejected at validation time
+      // so a broken indexer is never silently exposed as usable.
+      const status = cardigannDefinitionStatus(parsed);
+      if (!status.supported) {
         throw new ApiError({
           code: "VALIDATION_ERROR",
-          message: `Unsupported Cardigann filter${parsed.unsupportedFilters.length > 1 ? "s" : ""} in definition: ${parsed.unsupportedFilters.join(", ")}`,
+          message: `Unsupported Cardigann definition: ${status.reasons.join("; ")}`,
         });
       }
     } catch (err) {
       if (err instanceof ApiError) throw err;
       throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid Cardigann YAML: ${(err as Error).message}` });
     }
+    const capabilities = { search: true, cardigannStatus: cardigannDefinitionStatus(parsed) };
     const existing = await this.db.select().from(schema.indexerDefinition).where(eq(schema.indexerDefinition.key, input.key)).limit(1);
-    const now = new Date().toISOString();
     if (existing[0]) {
+      // Security guard (Plan-agent D4 flag): a user can't overwrite a *built-in* definition
+      // on a key collision — custom definitions must use their own key.
+      if (existing[0].builtIn) {
+        throw new ApiError({
+          code: "CONFLICT",
+          message: `Cannot overwrite built-in indexer definition "${input.key}" — choose a different key for a custom definition`,
+        });
+      }
       await this.db.update(schema.indexerDefinition)
-        .set({ name: input.name, protocol: input.protocol, cardigannYml: input.cardigannYml })
+        .set({ name: input.name, protocol: input.protocol, cardigannYml: input.cardigannYml, capabilities })
         .where(eq(schema.indexerDefinition.key, input.key));
       return { updated: input.key };
     }
+    const now = new Date().toISOString();
     await this.db.insert(schema.indexerDefinition).values({
       id: newEntityId("idef"),
       key: input.key,
@@ -87,7 +99,7 @@ export class IndexersService {
       protocol: input.protocol,
       implementation: "cardigann",
       builtIn: false,
-      capabilities: { search: true },
+      capabilities,
       categoryIds: [],
       cardigannYml: input.cardigannYml,
       createdAt: now,

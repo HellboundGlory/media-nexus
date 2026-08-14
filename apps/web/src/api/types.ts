@@ -139,6 +139,8 @@ export interface IndexerDef {
   name: string;
   protocol: string;
   implementation: string;
+  builtIn: boolean;
+  capabilities?: { cardigannStatus?: { supported: boolean; reasons: string[] } } | null;
 }
 
 export interface IndexerRow {

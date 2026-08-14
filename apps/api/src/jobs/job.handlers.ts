@@ -13,6 +13,7 @@ import { HealthCheckService } from "../health/health-check.service";
 import { HousekeepingService } from "../system/housekeeping.service";
 import { BackupService } from "../system/backup.service";
 import { ImportListsService } from "../import-lists/import-lists.service";
+import { CardigannSyncService } from "../indexers/cardigann-sync.service";
 
 /** Registration of the built-in job handlers (kept small; more land per milestone). */
 @Injectable()
@@ -25,6 +26,7 @@ export class JobHandlers implements OnModuleInit {
     private readonly mediaServers: MediaServersService,
     private readonly metadata: MetadataService,
     private readonly importLists: ImportListsService,
+    private readonly cardigannSync: CardigannSyncService,
     private readonly libraryScan: LibraryScanService,
     private readonly recycleBin: RecycleBinService,
     private readonly healthCheck: HealthCheckService,
@@ -43,6 +45,7 @@ export class JobHandlers implements OnModuleInit {
     this.jobs.register("media.availabilityRefresh", () => this.mediaServers.refreshAll());
     this.jobs.register("media.metadataRefresh", () => this.metadata.refreshMissing(5));
     this.jobs.register("media.importLists", () => this.importLists.runAll());
+    this.jobs.register("media.definitionSync", () => this.cardigannSync.run());
     this.jobs.register("library.scan", () => this.libraryScan.scanAll());
     this.jobs.register("media.recycleBinTrim", () => this.recycleBin.purgeExpired());
   }

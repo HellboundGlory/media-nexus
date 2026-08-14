@@ -361,3 +361,32 @@ function eq(a: TplValue, b: TplValue): boolean {
 export function renderTemplate(tpl: string, ctx: TemplateContext, funcs: Record<string, TplFunc> = {}): string {
   return new CompiledTemplate(tpl, funcs).render(ctx);
 }
+
+/**
+ * Return the template functions referenced by `tpl` (used to validate that a definition only
+ * calls functions this interpreter supports). Also reports a malformed-template error when the
+ * body fails to parse (unbalanced blocks etc.).
+ */
+export function templateFunctionNames(tpl: string): { functions: string[]; error?: string } {
+  let nodes: Node[];
+  try { nodes = parseTemplate(tpl); } catch (e) { return { functions: [], error: (e as Error).message }; }
+  const out = new Set<string>();
+  const walkAtoms = (atoms: Atom[]): void => {
+    for (const a of atoms) {
+      if (a.kind === "ident") out.add(a.name);
+      else if (a.kind === "command") walkAtoms(a.args);
+    }
+  };
+  const walk = (ns: Node[]): void => {
+    for (const n of ns) {
+      if (n.t === "text") continue;
+      if (n.t === "action") { walkAtoms(n.cmd); continue; }
+      if (n.cond) walkAtoms(n.cond);
+      if (n.over) walkAtoms(n.over);
+      walk(n.then);
+      if (n.els) walk(n.els);
+    }
+  };
+  walk(nodes);
+  return { functions: [...out] };
+}
