@@ -89,6 +89,16 @@ export interface MetadataProviderContract {
   getDetails(mediaType: "movie" | "series", externalId: string): Promise<MediaSummary>;
 }
 
+// ---------- Import lists (roadmap P2, gap report C2) ----------
+/** A watchlist source (Trakt list, TMDB list, Plex watchlist, ...) that a recurring sync
+ *  pulls items from. `externalId` is the provider's stable id for the title (e.g. tmdbId
+ *  for TMDB), in the id-space the app's metadata integration understands. Implementations
+ *  are provider-specific; core never sees vendor shapes. */
+export interface ImportListContract {
+  readonly key: string;
+  fetchItems(): Promise<Array<{ mediaType: "movie" | "series"; externalId: string; title?: string }>>;
+}
+
 // ---------- Media server ----------
 export interface ServerUser {
   externalId: string;

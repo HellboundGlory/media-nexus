@@ -111,6 +111,7 @@ export async function seedStatic(db: Db): Promise<void> {
     { key: "media.missingSearch", name: "Missing search", description: "Actively search indexers for monitored missing movies/episodes the passive RSS poll hasn't caught (safety net)", schedule: "0 5 * * *", timeoutMs: 180_000, maxRetries: 2, priority: 60 },
     { key: "media.availabilityRefresh", name: "Availability refresh", description: "Sync availability from configured media servers", schedule: "0 */4 * * *", timeoutMs: 120_000, maxRetries: 2, priority: 100 },
     { key: "media.metadataRefresh", name: "Metadata refresh", description: "Populate series seasons/episodes from TMDB for items missing them (metadata import)", schedule: "0 3 * * *", timeoutMs: 300_000, maxRetries: 2, priority: 150 },
+    { key: "media.importLists", name: "Import lists", description: "Sync configured import lists (watchlist sources) and add any new titles to the library (monitored)", schedule: "0 */6 * * *", timeoutMs: 300_000, maxRetries: 2, priority: 150 },
     { key: "library.scan", name: "Library scan", description: "Reconcile files on disk against the library — picks up files added outside the app and clears ones that vanished", schedule: "0 */6 * * *", timeoutMs: 300_000, maxRetries: 1, priority: 180 },
     { key: "media.recycleBinTrim", name: "Recycle bin trim", description: "Delete recycle-bin entries past media.recycleBinRetentionDays (no-op when the recycle bin isn't configured)", schedule: "0 4 * * *", timeoutMs: 60_000, maxRetries: 1, priority: 200 },
   ];

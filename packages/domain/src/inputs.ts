@@ -156,3 +156,28 @@ export const updateTagSchema = z.object({
   color: z.string().trim().nullish(),
 });
 export type UpdateTag = z.infer<typeof updateTagSchema>;
+
+// ---------- Import lists (roadmap P2, gap report C2) ----------
+// A configured watchlist source + its "don't re-add" exclusions. `config` is provider-
+// specific (first pass: { listId } for a TMDB list).
+export const createImportListSchema = z.object({
+  provider: z.enum(["tmdb"]),
+  name: z.string().min(1),
+  enabled: z.boolean().optional(),
+  config: z.record(z.string(), z.unknown()),
+});
+export type CreateImportList = z.infer<typeof createImportListSchema>;
+
+export const updateImportListSchema = z.object({
+  name: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+});
+export type UpdateImportList = z.infer<typeof updateImportListSchema>;
+
+export const createImportExclusionSchema = z.object({
+  mediaType: z.enum(["movie", "series"]),
+  externalId: z.string().min(1),
+  reason: z.string().optional(),
+});
+export type CreateImportExclusion = z.infer<typeof createImportExclusionSchema>;

@@ -138,6 +138,21 @@ export class TmdbProvider implements MetadataProviderContract {
     return `/${kind}/${suffix}`;
   }
 
+  /** Items in a user-created TMDB list (`/list/{listId}`, paginated via `page`), for
+   *  import lists (roadmap P2, gap C2). */
+  async listItems(listId: string, maxPages = 5): Promise<Array<{ mediaType: "movie" | "series"; tmdbId: number }>> {
+    const out: Array<{ mediaType: "movie" | "series"; tmdbId: number }> = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const data = await this.get<{ items?: Array<{ id: number; media_type?: string }> }>(`/list/${listId}`, { page: String(page) });
+      const items = data.items ?? [];
+      for (const it of items) {
+        if (it && typeof it.id === "number") out.push({ mediaType: it.media_type === "tv" ? ("series" as const) : ("movie" as const), tmdbId: it.id });
+      }
+      if (items.length === 0) break;
+    }
+    return out;
+  }
+
   /** All seasons + episodes for a series. */
   async seriesSeasons(tmdbId: number): Promise<TmdbSeason[]> {
     const detail = await this.get<TmdbSeriesDetail>(`/tv/${tmdbId}`);

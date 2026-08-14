@@ -251,6 +251,34 @@ export const tag = sqliteTable("tag", {
   updatedAt: iso("updated_at"),
 });
 
+// ---------- Import lists (roadmap P2, gap report C2) ----------
+// A generic watchlist-sync subsystem. `import_list` is a configured list source (provider
+// type + credentials/config, e.g. a TMDB list id); a recurring `media.importLists` job
+// pulls its items and adds any not already in the library (monitored). `import_exclusion`
+// is the "don't re-add" set — recorded when a user removes a library title by hand so the
+// next sync doesn't silently re-import it.
+export const importList = sqliteTable("import_list", {
+  id: text("id").primaryKey(),
+  provider: text("provider").notNull(), // "tmdb" | "trakt" | "plex" (first pass: tmdb)
+  name: text("name").notNull(),
+  enabled: bool("enabled", true).notNull().default(true),
+  config: text("config", { mode: "json" }).$type<Record<string, unknown>>().notNull(), // e.g. { listId }
+  lastSyncAt: text("last_synced_at"),
+  lastError: text("last_error"),
+  createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+});
+
+export const importExclusion = sqliteTable("import_exclusion", {
+  id: text("id").primaryKey(),
+  mediaType: text("media_type").notNull(), // movie | series
+  externalId: text("external_id").notNull(), // tmdbId as string (provider-scoped id)
+  reason: text("reason"),
+  createdAt: iso("created_at"),
+}, (t) => [
+  uniqueIndex("import_exclusion_media_ext_idx").on(t.mediaType, t.externalId),
+]);
+
 // ---------- 5. Acquisition ----------
 // Remote path mapping (roadmap P1, gap report B8): translates a download client's
 // self-reported content path (e.g. /downloads/x inside its own container) into the path
@@ -445,6 +473,8 @@ export const schema = {
   healthCheckResult,
   providerStatus,
   tag,
+  importList,
+  importExclusion,
 };
 
 export type Schema = typeof schema;

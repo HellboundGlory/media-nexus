@@ -95,13 +95,21 @@ export class SeriesService {
   }
 
   async remove(id: string) {
-    await this.get(id);
+    const row = await this.get(id);
     // Only the polymorphic tables need a hand-written delete here — season/episode cascade
     // automatically via their DB-level FK to series (roadmap P0.7) once the series row
     // itself is deleted.
     this.db.transaction((tx) => {
       deletePolymorphicRows(tx, "series", id);
       tx.delete(schema.series).where(eq(schema.series.id, id)).run();
+      // C2 import lists: a manually-removed title is excluded from re-import by the next
+      // list sync (idempotent; best-effort, only when it has a stable external id).
+      if (row.tmdbId != null) {
+        tx.insert(schema.importExclusion).values({
+          id: `excl-series-${row.tmdbId}`, mediaType: "series", externalId: String(row.tmdbId),
+          reason: "removed from library", createdAt: new Date().toISOString(),
+        }).onConflictDoNothing().run();
+      }
     });
     this.events.publish(EventTypes.SeriesRemoved, { seriesId: id }, { aggType: "series", aggId: id });
     return { removed: id };

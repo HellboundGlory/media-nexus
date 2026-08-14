@@ -29,6 +29,7 @@ import { CompatModule } from "./compat/compat.module";
 import { RootFoldersModule } from "./root-folders/root-folders.module";
 import { RemotePathMappingsModule } from "./remote-path-mappings/remote-path-mappings.module";
 import { TagsModule } from "./tags/tags.module";
+import { ImportListsModule } from "./import-lists/import-lists.module";
 import { WebUiModule } from "./web-ui/web-ui.module";
 import { RequestIdMiddleware } from "./common/request-id.middleware";
 import { MetricsMiddleware } from "./observability/metrics.middleware";
@@ -63,6 +64,7 @@ import { SecurityHeadersMiddleware } from "./common/security-headers.middleware"
     RootFoldersModule,
     RemotePathMappingsModule,
     TagsModule,
+    ImportListsModule,
     // Must stay last: its catch-all route serves the SPA shell only when nothing
     // above it (native/compat routes) matched.
     WebUiModule,

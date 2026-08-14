@@ -97,10 +97,18 @@ export class MoviesService {
   }
 
   async remove(id: string) {
-    await this.get(id);
+    const row = await this.get(id);
     this.db.transaction((tx) => {
       deletePolymorphicRows(tx, "movie", id);
       tx.delete(schema.movie).where(eq(schema.movie.id, id)).run();
+      // C2 import lists: a manually-removed title is excluded from re-import by the next
+      // list sync (idempotent; best-effort, only when it has a stable external id).
+      if (row.tmdbId != null) {
+        tx.insert(schema.importExclusion).values({
+          id: `excl-movie-${row.tmdbId}`, mediaType: "movie", externalId: String(row.tmdbId),
+          reason: "removed from library", createdAt: new Date().toISOString(),
+        }).onConflictDoNothing().run();
+      }
     });
     this.events.publish(EventTypes.MovieRemoved, { movieId: id }, { aggType: "movie", aggId: id });
     return { removed: id };
