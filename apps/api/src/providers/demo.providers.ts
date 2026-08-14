@@ -8,9 +8,11 @@ import {
   MemoryIndexerProvider,
   MemoryDownloadClientProvider,
   NewznabProvider,
+  NzbgetProvider,
   ProviderRegistry,
   QbittorrentProvider,
   SabnzbdProvider,
+  TransmissionProvider,
   type DownloadClientContract,
   type IndexerContract,
 } from "@medianexus/integrations";
@@ -51,6 +53,13 @@ export type ConfiguredClient = { row: (typeof schema.downloadClient.$inferSelect
  */
 @Injectable()
 export class ProvidersService {
+  /** Download-client instances cached by row id so a provider keeps its session state
+   *  (e.g. qBittorrent's SID cookie, Transmission's session-id) across polls — the
+   *  session-reuse fix (gap report J5 / D3). Rebuilt only when the row's config changes
+   *  (fingerprint mismatch) or on explicit invalidation. */
+  private readonly clientCache = new Map<string, ConfiguredClient>();
+  private readonly clientFingerprints = new Map<string, string>();
+
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
@@ -59,6 +68,23 @@ export class ProvidersService {
     private readonly config: ConfigService,
     private readonly status: ProviderStatusService,
   ) {}
+
+  /** Fingerprint of everything on a download-client row that affects its provider —
+   *  settings, enabled, priority, kind, tags, name. A fingerprint miss means the config
+   *  changed and the provider must be rebuilt (e.g. a new credential or path). */
+  private fingerprintDownloadClient(row: (typeof schema.downloadClient.$inferSelect)): string {
+    return JSON.stringify({
+      settings: row.settings, enabled: row.enabled, priority: row.priority,
+      kind: row.kind, tags: row.tags, name: row.name,
+    });
+  }
+
+  /** Drop the cached provider for a client (on create/update/remove) so the next call
+   *  rebuilds it from fresh config. */
+  invalidateDownloadClient(id: string): void {
+    this.clientCache.delete(id);
+    this.clientFingerprints.delete(id);
+  }
 
   async configuredIndexers(): Promise<ConfiguredIndexer[]> {
     const rows = await this.db.select().from(schema.indexer).where(eq(schema.indexer.enabled, true));
@@ -111,11 +137,27 @@ export class ProvidersService {
     const secret = getProviderSecret();
     const out: ConfiguredClient[] = [];
     for (const row of rows) {
+      // Session-reuse (J5/D3): reuse the cached provider when the row's config is unchanged,
+      // so instance state (qBittorrent SID cookie, Transmission session-id) survives a poll.
+      const fingerprint = this.fingerprintDownloadClient(row);
+      const cached = this.clientCache.get(row.id);
+      if (cached && this.clientFingerprints.get(row.id) === fingerprint) {
+        out.push(cached);
+        continue;
+      }
       // J9: decrypt stored credentials before building a provider (tolerant to plaintext).
       const settings = decryptFields((row.settings ?? {}) as Record<string, unknown>, DOWNLOAD_CLIENT_SECRET_FIELDS[row.implementation] ?? [], secret);
-      if (row.implementation === "sabnzbd") out.push({ row, provider: new SabnzbdProvider(settings as never) });
-      else if (row.implementation === "qbittorrent") out.push({ row, provider: new QbittorrentProvider(settings as never) });
-      else if (row.implementation === "memory") out.push({ row, provider: this.memClient });
+      let provider: DownloadClientContract;
+      if (row.implementation === "sabnzbd") provider = new SabnzbdProvider(settings as never);
+      else if (row.implementation === "qbittorrent") provider = new QbittorrentProvider(settings as never);
+      else if (row.implementation === "transmission") provider = new TransmissionProvider(settings as never);
+      else if (row.implementation === "nzbget") provider = new NzbgetProvider(settings as never);
+      else if (row.implementation === "memory") provider = this.memClient;
+      else continue;
+      const configured: ConfiguredClient = { row, provider };
+      this.clientCache.set(row.id, configured);
+      this.clientFingerprints.set(row.id, fingerprint);
+      out.push(configured);
     }
     return out;
   }

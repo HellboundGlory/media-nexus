@@ -59,6 +59,13 @@ export interface ClientQueueItem {
   errorMessage?: string;
   /** absolute path hint from the client (torrent content_path / nzb path) for import */
   contentPath?: string;
+  /** Torrent seeding signal for the seed-goal policy (qbittorrent `ratio`,
+   *  transmission `uploadRatio`). Undefined for clients that don't report it or
+   *  for usenet. */
+  ratio?: number;
+  /** Torrent seconds spent seeding (qbittorrent `seeding_time`, transmission
+   *  `secondsSeeding`). Undefined when the client doesn't report it (e.g. usenet). */
+  seedTimeSeconds?: number;
 }
 
 export interface DownloadClientContract {

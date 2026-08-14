@@ -3,10 +3,11 @@
  * SABnzbd download client provider (HTTP JSON API) — reimplemented against SABnzbd's
  * documented public API (`api?mode=addurl`, `mode=queue`, `mode=history`).
  * getQueue() merges the active queue (downloading) with completed history slots so
- * the download-monitor can import finished downloads.
+ * the download-monitor can import finished downloads. See DownloadClientBase.
  */
-import type { DownloadClientContract, ClientQueueItem, AddDownloadInput, HealthResult } from "./contracts";
+import type { ClientQueueItem, AddDownloadInput, HealthResult } from "./contracts";
 import type { SabnzbdSettings } from "./schemas";
+import { DownloadClientBase } from "./base";
 
 interface SabSlot {
   nzo_id?: string;
@@ -30,14 +31,9 @@ interface SabResponse {
   history?: { slots?: SabSlot[] };
 }
 
-export class SabnzbdProvider implements DownloadClientContract {
+export class SabnzbdProvider extends DownloadClientBase<SabnzbdSettings> {
   readonly key = "sabnzbd";
   readonly kind = "usenet" as const;
-
-  constructor(
-    private readonly settings: SabnzbdSettings,
-    private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
 
   private url(mode: string, extra: Record<string, string> = {}): string {
     const params = new URLSearchParams({
@@ -46,8 +42,7 @@ export class SabnzbdProvider implements DownloadClientContract {
       output: "json",
       ...extra,
     });
-    const host = this.settings.host.replace(/\/$/, "");
-    return `${host}/api?${params.toString()}`;
+    return `${this.host()}/api?${params.toString()}`;
   }
 
   private async get<T>(params: URL, signal?: AbortSignal): Promise<T> {
@@ -68,7 +63,7 @@ export class SabnzbdProvider implements DownloadClientContract {
       output: "json",
       pp: "3", // smart post-processing
     });
-    const res = (await this.get<SabResponse>(new URL(`${this.host()}/api?${params.toString()}`))) as unknown as SabResponse;
+    const res = await this.get<SabResponse>(new URL(`${this.host()}/api?${params.toString()}`));
     if (res.error) throw new Error(`SABnzbd addurl failed: ${res.error}`);
     const ids = res.nzo_ids ?? [];
     if (ids.length === 0) throw new Error("SABnzbd did not return an nzo id");
@@ -110,18 +105,11 @@ export class SabnzbdProvider implements DownloadClientContract {
     }))).catch(() => undefined);
   }
 
-  async healthcheck(): Promise<HealthResult> {
-    const started = Date.now();
-    try {
+  healthcheck(): Promise<HealthResult> {
+    return this.healthcheckVia(async () => {
       const res = await this.get<SabResponse>(new URL(this.url("queue")));
-      return { ok: res.status !== false, latencyMs: Date.now() - started, message: res.error };
-    } catch (err) {
-      return { ok: false, message: err instanceof Error ? err.message : String(err) };
-    }
-  }
-
-  private host(): string {
-    return this.settings.host.replace(/\/$/, "");
+      return { ok: res.status !== false, message: res.error };
+    });
   }
 }
 

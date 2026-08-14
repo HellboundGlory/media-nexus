@@ -4,6 +4,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
   NewznabProvider, parseNewznabJson, SabnzbdProvider, QbittorrentProvider,
+  TransmissionProvider, NzbgetProvider,
 } from "./index";
 
 function listen(handler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse, url: URL) => void): Promise<{ url: string; server: Server; seen: string[] }> {
@@ -173,5 +174,109 @@ describe("SabnzbdProvider removal", () => {
     const historyCall = seen.find((s) => s.includes("mode=history"))!;
     expect(historyCall).toContain("name=delete");
     expect(historyCall).toContain("del_files=0");
+  });
+});
+
+describe("TransmissionProvider (HTTP)", () => {
+  it("resolves the 409 session-id challenge, adds, reports ratio/seed-time and healthchecks", async () => {
+    const methods: string[] = [];
+    let challenged = false;
+    const { url, server } = await listen((req, res, u) => {
+      if (u.pathname !== "/transmission/rpc") { res.writeHead(404); res.end(); return; }
+      let body = "";
+      req.on("data", (c) => { body += c; });
+      req.on("end", () => {
+        const sid = req.headers["x-transmission-session-id"];
+        if (!challenged) { challenged = true; res.writeHead(409, { "x-transmission-session-id": "SIDXYZ" }); res.end(); return; }
+        expect(sid).toBe("SIDXYZ");
+        const call = JSON.parse(body);
+        methods.push(call.method);
+        if (call.method === "torrent-add") json(res, { result: "success", arguments: { "torrent-added": { hashString: "deadbeef" } } });
+        else if (call.method === "torrent-get") json(res, { result: "success", arguments: { torrents: [{ hashString: "deadbeef", name: "Matrix.1999.1080p", totalSize: 7000000000, percentDone: 1, status: 6, downloadDir: "/dl", ratio: 2.5, secondsSeeding: 3600 }] } });
+        else if (call.method === "session-get") json(res, { result: "success", arguments: { version: "4.0.0" } });
+        else json(res, { result: "no such method", arguments: {} });
+      });
+    });
+    servers.push(server);
+    const client = new TransmissionProvider({ host: url, category: "movies" });
+    const { downloadId } = await client.addRelease({ release: { magnetUrl: "magnet:?xt=urn:btih:deadbeef", title: "Matrix" } as never });
+    expect(downloadId).toBe("deadbeef");
+    expect(methods).toContain("torrent-add");
+    const q = await client.getQueue();
+    expect(q[0].status).toBe("completed");
+    expect(q[0].ratio).toBe(2.5);
+    expect(q[0].seedTimeSeconds).toBe(3600);
+    expect(q[0].contentPath).toBe("/dl/Matrix.1999.1080p");
+    expect((await client.healthcheck()).ok).toBe(true);
+  });
+
+  it("keeps the payload unless deletion is explicitly requested", async () => {
+    const bodies: string[] = [];
+    let challenged = false;
+    const { url, server } = await listen((req, res, u) => {
+      if (u.pathname !== "/transmission/rpc") { res.writeHead(404); res.end(); return; }
+      let body = "";
+      req.on("data", (c) => { body += c; });
+      req.on("end", () => {
+        if (!challenged) { challenged = true; res.writeHead(409, { "x-transmission-session-id": "SIDXYZ" }); res.end(); return; }
+        bodies.push(body);
+        json(res, { result: "success", arguments: {} });
+      });
+    });
+    servers.push(server);
+    const client = new TransmissionProvider({ host: url, category: "movies" });
+    await client.remove("deadbeef");
+    await client.remove("deadbeef", true);
+    expect(bodies[0]).toContain('"delete-local-data":false');
+    expect(bodies[1]).toContain('"delete-local-data":true');
+  });
+});
+
+describe("NzbgetProvider (HTTP)", () => {
+  it("adds via append, reports queue + completed history and healthchecks", async () => {
+    const methods: string[] = [];
+    const { url, server } = await listen((req, res, u) => {
+      if (u.pathname !== "/jsonrpc") { res.writeHead(404); res.end(); return; }
+      let body = "";
+      req.on("data", (c) => { body += c; });
+      req.on("end", () => {
+        const call = JSON.parse(body);
+        methods.push(call.method);
+        if (call.method === "append") json(res, { jsonrpc: "2.0", result: 12345, id: 1 });
+        else if (call.method === "listgroups") json(res, { jsonrpc: "2.0", result: [{ NZBID: 12345, NZBName: "Movie.mkv", Status: "DOWNLOADING", FileSizeLo: 1000, RemainingSizeLo: 500 }], id: 1 });
+        else if (call.method === "history") json(res, { jsonrpc: "2.0", result: [{ NZBID: 12346, NZBName: "Done.mkv", Status: "SUCCESS" }], id: 1 });
+        else if (call.method === "version") json(res, { jsonrpc: "2.0", result: "21.1", id: 1 });
+        else json(res, { jsonrpc: "2.0", result: null, id: 1 });
+      });
+    });
+    servers.push(server);
+    const client = new NzbgetProvider({ host: url, category: "movies", priority: 0 });
+    const { downloadId } = await client.addRelease({ release: { downloadUrl: "https://nzb/file.nzb" } as never });
+    expect(downloadId).toBe("12345");
+    expect(methods).toContain("append");
+    const statuses = (await client.getQueue()).map((i) => i.status);
+    expect(statuses).toContain("downloading");
+    expect(statuses).toContain("completed");
+    expect((await client.healthcheck()).ok).toBe(true);
+  });
+
+  it("keeps files by default, deletes them when requested", async () => {
+    const edits: string[] = [];
+    const { url, server } = await listen((req, res, u) => {
+      if (u.pathname !== "/jsonrpc") { res.writeHead(404); res.end(); return; }
+      let body = "";
+      req.on("data", (c) => { body += c; });
+      req.on("end", () => {
+        const call = JSON.parse(body);
+        if (call.method === "edit") edits.push(call.params[1]);
+        json(res, { jsonrpc: "2.0", result: true, id: 1 });
+      });
+    });
+    servers.push(server);
+    const client = new NzbgetProvider({ host: url, category: "movies", priority: 0 });
+    await client.remove("12346");
+    await client.remove("12346", true);
+    expect(edits[0]).toBe("GroupDelete");
+    expect(edits[1]).toBe("GroupFinalDelete");
   });
 });

@@ -11,6 +11,8 @@ import { redactSettings, REDACTED } from "../common/redact";
 import {
   sabnzbdSettingsSchema,
   qbittorrentSettingsSchema,
+  transmissionSettingsSchema,
+  nzbgetSettingsSchema,
   memoryClientSettingsSchema,
 } from "@medianexus/integrations";
 import { z } from "zod";
@@ -22,6 +24,8 @@ import { DOWNLOAD_CLIENT_SECRET_FIELDS, decryptFields, encryptFields, getProvide
 const settingsSchemas: Record<string, z.ZodType> = {
   sabnzbd: sabnzbdSettingsSchema,
   qbittorrent: qbittorrentSettingsSchema,
+  transmission: transmissionSettingsSchema,
+  nzbget: nzbgetSettingsSchema,
   memory: memoryClientSettingsSchema,
 };
 
@@ -117,6 +121,8 @@ export class DownloadClientsService {
       updatedAt: new Date().toISOString(),
     };
     await this.db.update(schema.downloadClient).set(mergedRow).where(eq(schema.downloadClient.id, id));
+    // Session-reuse (J5/D3): the config changed, so drop the cached provider instance.
+    this.providers.invalidateDownloadClient(id);
     const updated = { ...existing, ...mergedRow };
     return { ...updated, settings: redactSettings(updated.settings as Record<string, unknown>) };
   }
@@ -125,6 +131,7 @@ export class DownloadClientsService {
     await this.get(id);
     await this.db.delete(schema.downloadClient).where(eq(schema.downloadClient.id, id));
     await this.status.clearProvider("downloadClient", id);
+    this.providers.invalidateDownloadClient(id);
     return { removed: id };
   }
 

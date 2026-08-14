@@ -184,7 +184,7 @@ describe("C5 J9-aware download-client update", () => {
       settings: encryptFields({ host: "https://h", username: "u", password: "ORIG-PW" } as Record<string, unknown>, ["password"], SECRET),
       tags: [], createdAt: now(), updatedAt: now(),
     }).run();
-    const svc = new DownloadClientsService(db, {} as never, {} as never, {} as never);
+    const svc = new DownloadClientsService(db, { invalidateDownloadClient: () => {} } as never, {} as never, {} as never);
 
     // new secret -> encrypted at rest
     await svc.update("dc1", { settings: { host: "https://h", password: "NEW-PW" } });

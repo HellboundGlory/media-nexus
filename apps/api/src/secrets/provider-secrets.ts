@@ -96,6 +96,8 @@ export const INDEXER_SETTINGS_SECRET_FIELDS: Record<string, string[]> = {
 export const DOWNLOAD_CLIENT_SECRET_FIELDS: Record<string, string[]> = {
   sabnzbd: ["apiKey"],
   qbittorrent: ["password"],
+  transmission: ["password"],
+  nzbget: ["password"],
   memory: [],
 };
 

@@ -109,6 +109,8 @@ export class AcquisitionService {
         await this.status.recordSuccess("downloadClient", clientId);
         imported += r.imported;
         updated += r.updated;
+        // Seed-goal policy (D3): reap torrents that have met their ratio/seed-time goal.
+        await this.seedGoalSweep(client);
       } catch (err) {
         await this.status.recordFailure("downloadClient", clientId, err);
         this.logger.warn(`client sync failed (${client.row?.id ?? "memory"}): ${(err as Error).message}`);
@@ -139,6 +141,7 @@ export class AcquisitionService {
         try {
           await this.importCompletedEntry(entry, item, client.provider);
           imported++;
+          await this.applyRemoveOnImport(client, item);
         } catch (err) {
           await this.recordImportFailure(entry, err as Error);
         }
@@ -816,6 +819,66 @@ export class AcquisitionService {
       .run();
   }
 
+  /**
+   * Remove-completed-downloads policy (D3): when the client's config has `removeOnImport: true`,
+   * pull the just-imported download out of the client immediately. Best-effort — a failure to
+   * remove is logged, never fatal (the entry is already terminal/imported). Defaults to
+   * `deleteData=false` to preserve the payload (the library file is typically a hardlink).
+   */
+  private async applyRemoveOnImport(client: ConfiguredClient, item: ClientQueueItem): Promise<void> {
+    const settings = (client.row?.settings ?? {}) as Record<string, unknown>;
+    if (settings.removeOnImport !== true) return;
+    if (!item.downloadId) return;
+    try {
+      await client.provider.remove(item.downloadId);
+    } catch (err) {
+      this.logger.warn(`removeOnImport failed for "${item.title}" (${client.row?.id ?? "memory"}): ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Seed-goal policy (D3): for torrent clients with a `seedRatioGoal` and/or `seedTimeMinutes`
+   * configured, reap completed torrents that have satisfied both set goals. Only torrents WE
+   * imported (queue entry status `imported`) are reaped — a completed torrent with no media
+   * import (no mapped library file) is never removed, since that would throw away the only
+   * copy. Removal keeps the payload (`deleteData=false`), stopping the seed once goals are met.
+   * Runs inline from syncAll — no separate job row.
+   */
+  private async seedGoalSweep(client: ConfiguredClient): Promise<number> {
+    const settings = (client.row?.settings ?? {}) as Record<string, unknown>;
+    const clientId = client.row?.id ?? null;
+    const ratioGoal = asNumber(settings.seedRatioGoal);
+    const timeGoalMin = asNumber(settings.seedTimeMinutes);
+    if ((ratioGoal === undefined || ratioGoal <= 0) && (timeGoalMin === undefined || timeGoalMin <= 0)) return 0;
+    if (client.row?.kind !== "torrent" || clientId === null) return 0;
+    const timeGoalSec = timeGoalMin && timeGoalMin > 0 ? timeGoalMin * 60 : undefined;
+
+    const items = await client.provider.getQueue();
+    let removed = 0;
+    for (const item of items) {
+      if (item.status !== "completed" || !item.downloadId) continue;
+      const entry = await this.findEntry(clientId, item.downloadId);
+      if (!entry || entry.status !== "imported") continue; // never reap what we haven't imported
+      // All configured goals must be met (AND, standard seed-criteria semantics); an unset
+      // goal (0 / absent) is treated as already satisfied so setting only one still works.
+      const ratio = item.ratio;
+      const seedSec = item.seedTimeSeconds;
+      const ratioOk = ratioGoal === undefined || ratioGoal <= 0 || (ratio !== undefined && ratio >= ratioGoal);
+      const timeOk = timeGoalSec === undefined || (seedSec !== undefined && seedSec >= timeGoalSec);
+      if (!ratioOk || !timeOk) continue;
+      try {
+        await client.provider.remove(item.downloadId, false);
+        await this.db.update(schema.downloadQueueEntry)
+          .set({ status: "removed", updatedAt: new Date().toISOString() })
+          .where(eq(schema.downloadQueueEntry.id, entry.id));
+        removed++;
+      } catch (err) {
+        this.logger.warn(`seed-goal removal failed for "${item.title}" (${clientId}): ${(err as Error).message}`);
+      }
+    }
+    return removed;
+  }
+
   private emitImport(
     mediaType: string, mediaId: string, title: string, downloadId: string, path: string, mediaFileId: string,
     extra: Record<string, unknown> = {},
@@ -898,6 +961,12 @@ export class AcquisitionService {
 
 function sanitizeEntry(title: string): string {
   return title.replace(/[^A-Za-z0-9 _()[\]-]/g, "").trim() || "download";
+}
+
+/** Tolerant numeric read of a settings value (e.g. seedRatioGoal) — undefined when absent. */
+function asNumber(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /** A minimal "completed" client item used to drive `importCompletedEntry` for a queue

@@ -37,6 +37,25 @@ export const indexerProxySchema = z.object({
 export type IndexerProxy = z.infer<typeof indexerProxySchema>;
 
 // --- Download clients ---
+/** Seed-goal / removal policy persisted in a torrent client's `settings` JSON (roadmap P2,
+ *  gap report D3). `seedRatioGoal` and `seedTimeMinutes` are the minimum ratio and seed time
+ *  a completed torrent must reach before the app reaps it from the client; `removeOnImport`
+ *  removes a download from the client immediately once it is imported. An unset goal is
+ *  treated as already satisfied, so setting only one still works. */
+export const seedGoalFields = z.object({
+  seedRatioGoal: z.number().min(0).optional(),
+  seedTimeMinutes: z.number().int().min(0).optional(),
+  removeOnImport: z.boolean().optional(),
+});
+export type SeedGoalFields = z.infer<typeof seedGoalFields>;
+
+/** Per-client category-to-root-folder routing (gap report D3; distinct from C6's tag-based
+ *  media→client routing). Maps a category label (e.g. `movie`, `series`) to a destination
+ *  directory on the *client* (a save path / download-dir), applied at addRelease time. For
+ *  torrent clients this overrides the generic `savePath`/`downloadDir`. Usenet clients route
+ *  categories to folders server-side, so this is a torrent concern only. */
+export const categoryRoutesSchema = z.record(z.string(), z.string());
+
 export const sabnzbdSettingsSchema = z.object({
   host: z.string().url(),
   apiKey: z.string().min(1),
@@ -52,8 +71,35 @@ export const qbittorrentSettingsSchema = z.object({
   category: z.string().default("movies"),
   savePath: z.string().optional(),
   tag: z.string().default("media-nexus"),
+  ...seedGoalFields.shape,
+  categoryRoutes: categoryRoutesSchema.optional(),
 });
 export type QbittorrentSettings = z.infer<typeof qbittorrentSettingsSchema>;
+
+/** Transmission (RPC v2) — JSON-RPC over `/transmission/rpc` with a lazy session-id
+ *  challenge (409) as auth. `downloadDir` is the destination directory on the client. */
+export const transmissionSettingsSchema = z.object({
+  host: z.string().url(),
+  username: z.string().optional(),
+  password: z.string().optional(),
+  category: z.string().default("movies"),
+  downloadDir: z.string().optional(),
+  ...seedGoalFields.shape,
+  categoryRoutes: categoryRoutesSchema.optional(),
+});
+export type TransmissionSettings = z.infer<typeof transmissionSettingsSchema>;
+
+/** NZBGet — JSON-RPC 2.0 over `/jsonrpc`. `category` and `priority` map onto the NZBGet
+ *  append call; per-category folders are configured on the NZBGet side, so the app only
+ *  passes the category label (no category-to-root routing — see categoryRoutesSchema). */
+export const nzbgetSettingsSchema = z.object({
+  host: z.string().url(),
+  username: z.string().optional(),
+  password: z.string().optional(),
+  category: z.string().default("movies"),
+  priority: z.number().int().default(0),
+});
+export type NzbgetSettings = z.infer<typeof nzbgetSettingsSchema>;
 
 export const notificationWebhookSchema = z.object({
   url: z.string().url(),

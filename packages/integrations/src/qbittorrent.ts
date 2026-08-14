@@ -2,10 +2,12 @@
 /**
  * qBittorrent download client provider (Web API v2) — reimplemented against qBittorrent's
  * documented API (`/api/v2/auth/login`, `/api/v2/torrents/add`, `/api/v2/torrents/info`,
- * `/api/v2/torrents/delete`). Optional login stores the SID cookie for subsequent calls.
+ * `/api/v2/torrents/delete`). Optional login stores the SID cookie for subsequent calls via
+ * the shared DownloadClientBase cookie handling. See DownloadClientBase.
  */
-import type { DownloadClientContract, ClientQueueItem, AddDownloadInput, HealthResult } from "./contracts";
+import type { ClientQueueItem, AddDownloadInput, HealthResult } from "./contracts";
 import type { QbittorrentSettings } from "./schemas";
+import { DownloadClientBase } from "./base";
 
 interface TorrentInfo {
   hash?: string;
@@ -18,41 +20,28 @@ interface TorrentInfo {
   content_path?: string;
   save_path?: string;
   amount_left?: number;
+  ratio?: number;
+  seeding_time?: number; // seconds
 }
 
 const COMPLETED_STATES = new Set(["uploading", "stalledUP", "pausedUP", "queuedUP", "forcedUP", "checkingUP", "moving"]);
 
-export class QbittorrentProvider implements DownloadClientContract {
+export class QbittorrentProvider extends DownloadClientBase<QbittorrentSettings> {
   readonly key = "qbittorrent";
   readonly kind = "torrent" as const;
-  private readonly cookie: string[] = [];
-
-  constructor(
-    private readonly settings: QbittorrentSettings,
-    private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
 
   private async ensureLogin(): Promise<void> {
     if (!this.settings.username && !this.settings.password) return; // auth disabled / bypass
-    if (this.cookie.length) return;
+    if (this.cookies.length) return;
     const body = new URLSearchParams({ username: this.settings.username ?? "", password: this.settings.password ?? "" });
     const res = await this.fetchImpl(`${this.host()}/api/v2/auth/login`, { method: "POST", body, signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`qBittorrent login failed HTTP ${res.status}`);
-    for (const c of res.headers.getSetCookie?.() ?? []) this.cookie.push(c.split(";")[0] ?? c);
-    if (this.cookie.length === 0 && res.headers.get("set-cookie")) {
-      this.cookie.push(res.headers.get("set-cookie")!.split(";")[0]);
-    }
+    this.captureCookies(res);
   }
 
-  private host(): string {
-    return this.settings.host.replace(/\/$/, "");
-  }
-
-  private async request(path: string, init: RequestInit = {}): Promise<Response> {
+  protected override async request(path: string, init: RequestInit = {}): Promise<Response> {
     await this.ensureLogin();
-    const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) };
-    if (this.cookie.length) headers["Cookie"] = this.cookie.join("; ");
-    return this.fetchImpl(`${this.host()}${path}`, { ...init, headers, signal: init.signal ?? AbortSignal.timeout(15_000) });
+    return super.request(path, init);
   }
 
   async addRelease(input: AddDownloadInput): Promise<{ downloadId: string }> {
@@ -64,7 +53,11 @@ export class QbittorrentProvider implements DownloadClientContract {
       category: input.category ?? this.settings.category ?? "movies",
       tags: this.settings.tag ?? "media-nexus",
     });
-    if (this.settings.savePath) body.set("savepath", this.settings.savePath);
+    // Per-client category-to-root-folder routing (D3): a category-specific save path
+    // overrides the generic `savePath`.
+    const route = this.settings.categoryRoutes?.[input.category ?? ""];
+    const savePath = route ?? this.settings.savePath;
+    if (savePath) body.set("savepath", savePath);
     const res = await this.request("/api/v2/torrents/add", { method: "POST", body });
     if (!res.ok) throw new Error(`qBittorrent add failed HTTP ${res.status}`);
     const text = (await res.text()).trim();
@@ -93,6 +86,8 @@ export class QbittorrentProvider implements DownloadClientContract {
         remainingTimeSeconds: t.eta && t.eta > 0 ? t.eta : undefined,
         errorMessage: undefined,
         contentPath: t.content_path,
+        ratio: t.ratio,
+        seedTimeSeconds: t.seeding_time,
       };
     });
   }
@@ -108,14 +103,11 @@ export class QbittorrentProvider implements DownloadClientContract {
     await this.request("/api/v2/torrents/delete", { method: "POST", body });
   }
 
-  async healthcheck(): Promise<HealthResult> {
-    const started = Date.now();
-    try {
+  healthcheck(): Promise<HealthResult> {
+    return this.healthcheckVia(async () => {
       const res = await this.request("/api/v2/app/version");
-      return { ok: res.ok, latencyMs: Date.now() - started, message: res.ok ? undefined : `HTTP ${res.status}` };
-    } catch (err) {
-      return { ok: false, message: err instanceof Error ? err.message : String(err) };
-    }
+      return { ok: res.ok, message: res.ok ? undefined : `HTTP ${res.status}` };
+    });
   }
 
   private async getTorrents(): Promise<TorrentInfo[]> {
