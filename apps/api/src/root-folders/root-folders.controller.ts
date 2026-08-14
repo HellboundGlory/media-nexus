@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Put } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { createRootFolderSchema, type CreateRootFolder } from "@medianexus/domain";
+import { createRootFolderSchema, updateRootFolderSchema, type CreateRootFolder, type UpdateRootFolderBody } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { RootFoldersService } from "./root-folders.service";
 
@@ -26,6 +26,12 @@ export class RootFoldersController {
   @ApiOperation({ summary: "Add a root folder (path must already exist on disk)" })
   create(@Body(new ZodValidationPipe(createRootFolderSchema)) body: CreateRootFolder) {
     return this.rootFolders.create(body);
+  }
+
+  @Put(":id")
+  @ApiOperation({ summary: "Edit a root folder (name and/or default flag)" })
+  update(@Param("id") id: string, @Body(new ZodValidationPipe(updateRootFolderSchema)) body: UpdateRootFolderBody) {
+    return this.rootFolders.update(id, body);
   }
 
   @Delete(":id")

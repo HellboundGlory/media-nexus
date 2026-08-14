@@ -2,7 +2,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
-import { createSeriesSchema, type CreateSeries } from "@medianexus/domain";
+import { createSeriesSchema, updateSeriesSchema, type CreateSeries, type UpdateSeriesBody } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { SeriesService } from "./series.service";
 
@@ -13,7 +13,6 @@ const createEpisodesBody = z.object({
   title: z.string().optional(),
   airDateUtc: z.string().optional(),
 });
-// eslint-disable-next-line no-useless-assignment  -- referenced only inside a NestJS decorator; ESLint 10 doesn't count decorator usage
 const setMonitoredBody = z.object({ monitored: z.boolean() });
 
 const listQuerySchema = z.object({
@@ -49,6 +48,18 @@ export class SeriesController {
   @ApiOperation({ summary: "Add a series to the library" })
   create(@Body(new ZodValidationPipe(createSeriesSchema)) body: CreateSeries) {
     return this.series.create(body);
+  }
+
+  @Put(":id")
+  @ApiOperation({ summary: "Edit a series (partial; null clears qualityProfileId)" })
+  update(@Param("id") id: string, @Body(new ZodValidationPipe(updateSeriesSchema)) body: UpdateSeriesBody) {
+    return this.series.update(id, body);
+  }
+
+  @Put(":id/seasons/:seasonId")
+  @ApiOperation({ summary: "Monitor/unmonitor a season (cascades to its episodes)" })
+  setSeasonMonitored(@Param("id") id: string, @Param("seasonId") seasonId: string, @Body(new ZodValidationPipe(setMonitoredBody)) body: { monitored: boolean }) {
+    return this.series.setSeasonMonitored(id, seasonId, body.monitored);
   }
 
   @Delete(":id")

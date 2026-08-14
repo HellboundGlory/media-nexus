@@ -5,7 +5,7 @@ import { newEntityId, ApiError } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import type { CreateRemotePathMapping } from "@medianexus/domain";
+import type { CreateRemotePathMapping, UpdateRemotePathMappingBody } from "@medianexus/domain";
 
 /**
  * Remote path mapping (roadmap P1, gap report B8): a download client running in its own
@@ -45,6 +45,18 @@ export class RemotePathMappingsService {
     if (!rows[0]) throw ApiError.notFound("remote path mapping", id);
     await this.db.delete(schema.remotePathMapping).where(eq(schema.remotePathMapping.id, id));
     return { removed: id };
+  }
+
+  /** Edit a remote path mapping (roadmap P1, gap report C5): update remote/local path. */
+  async update(id: string, input: UpdateRemotePathMappingBody) {
+    const rows = await this.db.select().from(schema.remotePathMapping).where(eq(schema.remotePathMapping.id, id)).limit(1);
+    if (!rows[0]) throw ApiError.notFound("remote path mapping", id);
+    const merged = {
+      remotePath: input.remotePath ?? rows[0].remotePath,
+      localPath: input.localPath ?? rows[0].localPath,
+    };
+    await this.db.update(schema.remotePathMapping).set(merged).where(eq(schema.remotePathMapping.id, id));
+    return { ...rows[0], ...merged };
   }
 
   /** All mappings for one download client, longest `remotePath` prefix first so a more

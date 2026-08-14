@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-import { Body, Controller, Delete, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import {
-  createIndexerSchema, grabRequestSchema, type CreateIndexer, type GrabRequest,
+  createIndexerSchema, updateIndexerSchema, grabRequestSchema, type CreateIndexer, type GrabRequest, type UpdateIndexerBody,
 } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { IndexersService } from "./indexers.service";
@@ -45,6 +45,12 @@ export class IndexersController {
   @ApiOperation({ summary: "Configure an indexer (newznab/torznab/memory/cardigann)" })
   create(@Body(new ZodValidationPipe(createIndexerSchema)) body: CreateIndexer) {
     return this.indexers.create(body);
+  }
+
+  @Put("indexers/:id")
+  @ApiOperation({ summary: "Edit an indexer (credentials re-encrypted at rest; [REDACTED] means unchanged)" })
+  update(@Param("id") id: string, @Body(new ZodValidationPipe(updateIndexerSchema)) body: UpdateIndexerBody) {
+    return this.indexers.update(id, body);
   }
 
   @Post("indexers/:id/test")

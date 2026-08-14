@@ -6,7 +6,7 @@ import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import type { CreateSeries } from "@medianexus/domain";
+import type { CreateSeries, UpdateSeriesBody } from "@medianexus/domain";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 
@@ -26,6 +26,23 @@ export class SeriesService {
     const rows = await this.db.select().from(schema.series).where(eq(schema.series.id, id)).limit(1);
     if (!rows[0]) throw ApiError.notFound("series", id);
     return rows[0];
+  }
+
+  /** Edit a series (roadmap P1, gap report C5). Partial body; omitted fields untouched,
+   *  `qualityProfileId: null` clears the assignment. Bumps `updatedAt`. */
+  async update(id: string, input: UpdateSeriesBody) {
+    const existing = await this.get(id);
+    const merged = {
+      title: input.title ?? existing.title,
+      monitored: input.monitored ?? existing.monitored,
+      seriesType: input.seriesType ?? existing.seriesType,
+      qualityProfileId: input.qualityProfileId !== undefined ? input.qualityProfileId : existing.qualityProfileId,
+      rootFolderPath: input.rootFolderPath ?? existing.rootFolderPath,
+      tags: input.tags ?? existing.tags,
+    };
+    const updatedAt = new Date().toISOString();
+    await this.db.update(schema.series).set({ ...merged, updatedAt }).where(eq(schema.series.id, id));
+    return { ...existing, ...merged, updatedAt };
   }
 
   async create(input: CreateSeries) {
@@ -136,6 +153,26 @@ export class SeriesService {
     if (!rows[0]) throw ApiError.notFound("episode", episodeId);
     await this.db.update(schema.episode).set({ monitored }).where(eq(schema.episode.id, episodeId));
     return this.db.select().from(schema.episode).where(eq(schema.episode.id, episodeId)).limit(1);
+  }
+
+  /**
+   * Monitor/unmonitor a season (roadmap P1, gap report C5 — season monitoring was the
+   * specific unreachable gap). Crucially this also cascades `monitored` to EVERY episode
+   * in the season: `wantedMissing()`/RSS match on `episode.monitored`, and
+   * `season.monitored` is otherwise never read (gap-report J7 dead-config), so a season
+   * toggle that only touched the season row would change nothing. Matching upstream Sonarr,
+   * where monitoring a season applies to all its episodes.
+   */
+  async setSeasonMonitored(seriesId: string, seasonId: string, monitored: boolean) {
+    await this.get(seriesId);
+    const seasonRows = await this.db.select().from(schema.season)
+      .where(and(eq(schema.season.id, seasonId), eq(schema.season.seriesId, seriesId))).limit(1);
+    if (!seasonRows[0]) throw ApiError.notFound("season", seasonId);
+    this.db.transaction((tx) => {
+      tx.update(schema.season).set({ monitored }).where(eq(schema.season.id, seasonId)).run();
+      tx.update(schema.episode).set({ monitored }).where(eq(schema.episode.seasonId, seasonId)).run();
+    });
+    return (await this.db.select().from(schema.season).where(eq(schema.season.id, seasonId)).limit(1))[0];
   }
 
   /** Want/Missing: monitored episodes without a file yet (all series). */

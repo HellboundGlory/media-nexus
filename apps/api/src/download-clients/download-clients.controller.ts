@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Put } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { createDownloadClientSchema, type CreateDownloadClient } from "@medianexus/domain";
+import { createDownloadClientSchema, updateDownloadClientSchema, type CreateDownloadClient, type UpdateDownloadClientBody } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { DownloadClientsService } from "./download-clients.service";
 
@@ -20,6 +20,12 @@ export class DownloadClientsController {
   @ApiOperation({ summary: "Add a download client (sabnzbd | qbittorrent | memory)" })
   create(@Body(new ZodValidationPipe(createDownloadClientSchema)) body: CreateDownloadClient) {
     return this.clients.create(body);
+  }
+
+  @Put(":id")
+  @ApiOperation({ summary: "Edit a download client (credentials re-encrypted at rest; [REDACTED] means unchanged)" })
+  update(@Param("id") id: string, @Body(new ZodValidationPipe(updateDownloadClientSchema)) body: UpdateDownloadClientBody) {
+    return this.clients.update(id, body);
   }
 
   @Delete(":id")

@@ -5,9 +5,9 @@ import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import type { CreateDownloadClient } from "@medianexus/domain";
+import type { CreateDownloadClient, UpdateDownloadClientBody } from "@medianexus/domain";
 import { ProvidersService } from "../providers/demo.providers";
-import { redactSettings } from "../common/redact";
+import { redactSettings, REDACTED } from "../common/redact";
 import {
   sabnzbdSettingsSchema,
   qbittorrentSettingsSchema,
@@ -17,7 +17,7 @@ import { z } from "zod";
 import { EventTypes } from "@medianexus/events";
 import { EventsService } from "../events/events.service";
 import { ProviderStatusService } from "../providers/provider-status.service";
-import { DOWNLOAD_CLIENT_SECRET_FIELDS, encryptFields, getProviderSecret } from "../secrets/provider-secrets";
+import { DOWNLOAD_CLIENT_SECRET_FIELDS, decryptFields, encryptFields, getProviderSecret } from "../secrets/provider-secrets";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   sabnzbd: sabnzbdSettingsSchema,
@@ -81,6 +81,44 @@ export class DownloadClientsService {
     await this.db.insert(schema.downloadClient).values(row);
     // J9: never return stored ciphertext for credential fields — redact, matching `list()`.
     return { ...row, settings: redactSettings(row.settings) };
+  }
+
+  /** Edit a download client (roadmap P1, gap report C5). Partial body; `settings` is
+   *  J9-aware: stored (encrypted) secrets are decrypted, the client's plaintext values
+   *  merged over them, re-validated against the provider schema, then re-encrypted — so an
+   *  omitted or `[REDACTED]` secret is preserved and a new secret never lands in plaintext.
+   *  Returns the redacted row. */
+  async update(id: string, input: UpdateDownloadClientBody) {
+    const rows = await this.db.select().from(schema.downloadClient).where(eq(schema.downloadClient.id, id)).limit(1);
+    if (!rows[0]) throw ApiError.notFound("download client", id);
+    const existing = rows[0];
+    const secret = getProviderSecret();
+
+    let settings = existing.settings;
+    if (input.settings) {
+      const fields = DOWNLOAD_CLIENT_SECRET_FIELDS[existing.implementation] ?? [];
+      const decoded = decryptFields((existing.settings ?? {}) as Record<string, unknown>, fields, secret);
+      const provided = input.settings as Record<string, unknown>;
+      const merged: Record<string, unknown> = { ...decoded, ...provided };
+      for (const f of fields) if (provided[f] === REDACTED) merged[f] = decoded[f];
+      const schemaCfg = settingsSchemas[existing.implementation];
+      if (!schemaCfg) throw new ApiError({ code: "VALIDATION_ERROR", message: `Unsupported download client implementation "${existing.implementation}"` });
+      const res = schemaCfg.safeParse(merged);
+      if (!res.success) throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid settings for ${existing.implementation}`, details: res.error.issues });
+      settings = encryptFields(res.data as Record<string, unknown>, fields, secret) as Record<string, unknown>;
+    }
+
+    const mergedRow = {
+      name: input.name ?? existing.name,
+      enabled: input.enabled ?? existing.enabled,
+      priority: input.priority ?? existing.priority,
+      tags: input.tags ?? existing.tags,
+      settings,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.db.update(schema.downloadClient).set(mergedRow).where(eq(schema.downloadClient.id, id));
+    const updated = { ...existing, ...mergedRow };
+    return { ...updated, settings: redactSettings(updated.settings as Record<string, unknown>) };
   }
 
   async remove(id: string) {

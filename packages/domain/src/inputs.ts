@@ -81,4 +81,62 @@ export const createRemotePathMappingSchema = z.object({
 });
 export type CreateRemotePathMapping = z.infer<typeof createRemotePathMappingSchema>;
 
+// ---------- Update (edit) schemas (roadmap P1, gap report C5) ----------
+// Partial bodies — every field optional; the service merges onto the existing row.
+// Deliberately defined explicitly (all `optional()`, no `.default()`) rather than as
+// `.partial()` of a create schema, so an omitted field is never silently reset to a
+// create-time default.
+
+export const updateMovieSchema = z.object({
+  title: z.string().min(1).optional(),
+  monitored: z.boolean().optional(),
+  qualityProfileId: z.string().nullish(),
+  rootFolderPath: z.string().optional(),
+  minimumAvailability: minimumAvailabilitySchema.optional(),
+  tags: z.array(z.string()).optional(),
+});
+export type UpdateMovieBody = z.infer<typeof updateMovieSchema>;
+
+export const updateSeriesSchema = z.object({
+  title: z.string().min(1).optional(),
+  monitored: z.boolean().optional(),
+  seriesType: z.enum(["standard", "daily", "anime"]).optional(),
+  qualityProfileId: z.string().nullish(),
+  rootFolderPath: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+});
+export type UpdateSeriesBody = z.infer<typeof updateSeriesSchema>;
+
+export const updateIndexerSchema = z.object({
+  name: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
+  priority: z.number().int().min(1).optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
+  // null clears the proxy config; omitted leaves it unchanged; an object replaces it
+  proxy: z.record(z.string(), z.unknown()).nullish(),
+  tags: z.array(z.string()).optional(),
+});
+export type UpdateIndexerBody = z.infer<typeof updateIndexerSchema>;
+
+export const updateDownloadClientSchema = z.object({
+  name: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
+  priority: z.number().int().min(1).optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
+  tags: z.array(z.string()).optional(),
+});
+export type UpdateDownloadClientBody = z.infer<typeof updateDownloadClientSchema>;
+
+export const updateRootFolderSchema = z.object({
+  name: z.string().optional(),
+  isDefault: z.boolean().optional(),
+});
+export type UpdateRootFolderBody = z.infer<typeof updateRootFolderSchema>;
+
+export const updateRemotePathMappingSchema = z.object({
+  remotePath: z.string().min(1).optional(),
+  localPath: z.string().min(1).optional(),
+});
+export type UpdateRemotePathMappingBody = z.infer<typeof updateRemotePathMappingSchema>;
+
 export const upsertSettingSchema = z.record(z.string(), z.unknown());

@@ -7,7 +7,7 @@ import { combine, deletePolymorphicRows, ensureAvailability, listPaged, titleSea
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import type { CreateMovie, MinimumAvailability } from "@medianexus/domain";
+import type { CreateMovie, MinimumAvailability, UpdateMovieBody } from "@medianexus/domain";
 import { hasMinimumAvailability } from "@medianexus/domain";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
@@ -44,6 +44,23 @@ export class MoviesService {
     const rows = await this.db.select().from(schema.movie).where(eq(schema.movie.id, id)).limit(1);
     if (!rows[0]) throw ApiError.notFound("movie", id);
     return rows[0];
+  }
+
+  /** Edit a movie (roadmap P1, gap report C5). Partial body; omitted fields are untouched,
+   *  `qualityProfileId: null` clears the assignment. Bumps `updatedAt`. */
+  async update(id: string, input: UpdateMovieBody) {
+    const existing = await this.get(id);
+    const merged = {
+      title: input.title ?? existing.title,
+      monitored: input.monitored ?? existing.monitored,
+      qualityProfileId: input.qualityProfileId !== undefined ? input.qualityProfileId : existing.qualityProfileId,
+      rootFolderPath: input.rootFolderPath ?? existing.rootFolderPath,
+      minimumAvailability: input.minimumAvailability ?? existing.minimumAvailability,
+      tags: input.tags ?? existing.tags,
+    };
+    const updatedAt = new Date().toISOString();
+    await this.db.update(schema.movie).set({ ...merged, updatedAt }).where(eq(schema.movie.id, id));
+    return { ...existing, ...merged, updatedAt };
   }
 
   async create(input: CreateMovie) {

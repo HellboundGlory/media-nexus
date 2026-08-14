@@ -7,7 +7,7 @@ import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import { LocalStorageProvider } from "@medianexus/integrations";
-import type { CreateRootFolder } from "@medianexus/domain";
+import type { CreateRootFolder, UpdateRootFolderBody } from "@medianexus/domain";
 
 type RootFolderRow = typeof schema.rootFolder.$inferSelect;
 
@@ -89,6 +89,22 @@ export class RootFoldersService {
       }
     });
     return { removed: id };
+  }
+
+  /** Edit a root folder (roadmap P1, gap report C5): rename and/or change the default flag.
+   *  Setting `isDefault: true` makes this the single default (clearing others, matching
+   *  create()'s invariant). Returns the updated row, re-probed. */
+  async update(id: string, input: UpdateRootFolderBody): Promise<RootFolderView> {
+    const existing = await this.get(id);
+    const name = input.name !== undefined ? (input.name || existing.path) : existing.name;
+    const isDefault = input.isDefault !== undefined ? input.isDefault : existing.isDefault;
+    this.db.transaction((tx) => {
+      if (isDefault && !existing.isDefault) {
+        tx.update(schema.rootFolder).set({ isDefault: false }).run(); // single-default invariant
+      }
+      tx.update(schema.rootFolder).set({ name, isDefault }).where(eq(schema.rootFolder.id, id)).run();
+    });
+    return this.get(id);
   }
 
   private async referencedBy(path: string): Promise<string | null> {

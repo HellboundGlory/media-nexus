@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-import { Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Put, Query } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import {
-  createMovieSchema, type CreateMovie,
+  createMovieSchema, updateMovieSchema,
+  type CreateMovie, type UpdateMovieBody,
 } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { MoviesService, type ListQuery } from "./movies.service";
@@ -36,6 +37,12 @@ export class MoviesController {
   @ApiOperation({ summary: "Add a movie to the library" })
   create(@Body(new ZodValidationPipe(createMovieSchema)) body: CreateMovie) {
     return this.movies.create(body);
+  }
+
+  @Put(":id")
+  @ApiOperation({ summary: "Edit a movie (partial; null clears qualityProfileId)" })
+  update(@Param("id") id: string, @Body(new ZodValidationPipe(updateMovieSchema)) body: UpdateMovieBody) {
+    return this.movies.update(id, body);
   }
 
   @Delete(":id")
