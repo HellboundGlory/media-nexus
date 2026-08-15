@@ -13,6 +13,7 @@ import Clients from "./pages/Clients";
 import SeriesDetail from "./pages/SeriesDetail";
 import Calendar from "./pages/Calendar";
 import System from "./pages/System";
+import Logs from "./pages/Logs";
 import Login from "./pages/Login";
 import Setup from "./pages/Setup";
 import { applyTheme, useAppStore } from "./store/useAppStore";
@@ -101,6 +102,7 @@ export default function App() {
             <Route path="calendar" element={<Calendar />} />
             <Route path="clients" element={<Clients />} />
             <Route path="system" element={<System />} />
+            <Route path="logs" element={<Logs />} />
           </Route>
         </Routes>
       </HashRouter>

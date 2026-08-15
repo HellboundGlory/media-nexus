@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { clsx } from "clsx";
-import { Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, ListTree, ScrollText, LogOut, Download, CalendarDays } from "lucide-react";
+import { Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, ListTree, ScrollText, LogOut, Download, CalendarDays, FileText } from "lucide-react";
 import { useAppStore, applyTheme } from "../store/useAppStore";
 import { api } from "../api/client";
 
@@ -63,6 +63,17 @@ export default function Layout() {
             }
           >
             <ScrollText className="h-4 w-4" /> System
+          </NavLink>
+          <NavLink
+            to="/logs"
+            className={({ isActive }) =>
+              clsx(
+                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium",
+                isActive ? "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200" : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800",
+              )
+            }
+          >
+            <FileText className="h-4 w-4" /> Logs
           </NavLink>
         </nav>
         <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">

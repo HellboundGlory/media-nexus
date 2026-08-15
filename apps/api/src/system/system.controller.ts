@@ -12,6 +12,7 @@ import { SystemStatusService } from "./system-status.service";
 import { ConfigService } from "./config.service";
 import { BackupService } from "./backup.service";
 import { ParseService } from "./parse.service";
+import { LogsService } from "./logs.service";
 
 const upsertSchema = z.record(z.string(), z.unknown());
 
@@ -23,7 +24,15 @@ export class SystemController {
     private readonly configSvc: ConfigService,
     private readonly backupSvc: BackupService,
     private readonly parseSvc: ParseService,
+    private readonly logsSvc: LogsService,
   ) {}
+
+  @Get("logs")
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "Recent in-memory log entries (admin; most-recent-first, redacted). NOT persisted — restarts clear the buffer; docker logs holds the full, unredacted history." })
+  async logs(@Query("limit") limit?: string, @Query("level") level?: string, @Query("search") search?: string) {
+    return this.logsSvc.latest(limit ? Number(limit) : undefined, level || undefined, search || undefined);
+  }
 
   @Get("parse")
   @ApiOperation({ summary: "Parse a raw release title (debug): run the release-title + episode parsers and a best-effort library match" })
