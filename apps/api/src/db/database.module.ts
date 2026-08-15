@@ -32,7 +32,7 @@ export class DatabaseLifecycle implements OnModuleDestroy {
       useFactory: async (): Promise<DbHandle> => {
         const env = parseEnv();
         const handle = createDb(env.DATABASE_URL);
-        if (env.AUTO_MIGRATE) handle.runMigrations();
+        if (env.AUTO_MIGRATE) await handle.runMigrations();
         await seedStatic(handle.db);
         // Gap report J9 — encrypt pre-existing plaintext provider credentials in place.
         // Idempotent + non-destructive: re-runs every boot and no-ops once everything is
