@@ -11,6 +11,7 @@ import { AdminGuard } from "../common/admin.guard";
 import { SystemStatusService } from "./system-status.service";
 import { ConfigService } from "./config.service";
 import { BackupService } from "./backup.service";
+import { ParseService } from "./parse.service";
 
 const upsertSchema = z.record(z.string(), z.unknown());
 
@@ -21,7 +22,15 @@ export class SystemController {
     private readonly statusSvc: SystemStatusService,
     private readonly configSvc: ConfigService,
     private readonly backupSvc: BackupService,
+    private readonly parseSvc: ParseService,
   ) {}
+
+  @Get("parse")
+  @ApiOperation({ summary: "Parse a raw release title (debug): run the release-title + episode parsers and a best-effort library match" })
+  async parse(@Query("title") title: string) {
+    if (!title || !title.trim()) throw new ApiError({ code: "VALIDATION_ERROR", message: "title query param is required" });
+    return this.parseSvc.parse(title.trim());
+  }
 
   @Get("backups")
   @UseGuards(AdminGuard)

@@ -70,6 +70,11 @@ export default function System() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["config"] }),
   });
 
+  const [parseTitle, setParseTitle] = useState("");
+  const parse = useMutation({
+    mutationFn: (title: string) => api.get<any>(`/system/parse?title=${encodeURIComponent(title)}`),
+  });
+
   const endpoints = [
     ["GET", "/api/v1/system/status"], ["GET", "/api/v1/system/config"], ["PUT", "/api/v1/system/config"],
     ["POST", "/api/v1/system/commands/:jobKey"], ["GET", "/api/v1/system/commands/:id"], ["DELETE", "/api/v1/system/commands/:id"],
@@ -357,6 +362,31 @@ export default function System() {
         </form>
         {passwordError && <p className="mt-2 text-xs text-red-600 dark:text-red-500">{passwordError}</p>}
         {changePassword.isSuccess && <p className="mt-2 text-xs text-emerald-600">Password updated.</p>}
+      </section>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <h3 className="mb-1 font-medium">Parse a release title</h3>
+        <p className="mb-3 text-xs text-zinc-500">Debug: run a raw release title through the release-title + episode parsers to see exactly what was extracted and why it might not match your library. Read-only.</p>
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => { e.preventDefault(); if (parseTitle.trim()) parse.mutate(parseTitle.trim()); }}
+        >
+          <input
+            value={parseTitle}
+            onChange={(e) => setParseTitle(e.target.value)}
+            placeholder="Show.Name.S01E02.1080p.WEB-DL.x264-GROUP"
+            className="flex-1 rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700"
+          />
+          <button disabled={parse.isPending || !parseTitle.trim()} className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
+            {parse.isPending ? "Parsing…" : "Parse"}
+          </button>
+        </form>
+        {parse.isError && <p className="mt-2 text-xs text-red-600">{parse.error instanceof Error ? parse.error.message : "Failed to parse"}</p>}
+        {parse.data && (
+          <pre className="mt-3 max-h-96 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs leading-relaxed dark:border-zinc-700 dark:bg-zinc-950">
+            {JSON.stringify(parse.data, null, 2)}
+          </pre>
+        )}
       </section>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
