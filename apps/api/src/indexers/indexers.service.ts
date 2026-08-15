@@ -294,9 +294,15 @@ export class IndexersService {
 
   /** Per-indexer acquisition stats (from history). */
   async statistics() {
+    // SQLite-only `json_extract` vs Postgres `jsonb_extract_path_text` (Stage 2 of the
+    // Postgres support item — `history_entry.data` is a JSON column in both dialects).
+    const indexerIdExpr =
+      this.db.dbDialect === "postgres"
+        ? dsql`jsonb_extract_path_text(${schema.historyEntry.data}, 'indexerId')`
+        : dsql`json_extract(${schema.historyEntry.data}, '$.indexerId')`;
     const grabs = await this.db
       .select({
-        indexerId: dsql`json_extract(${schema.historyEntry.data}, '$.indexerId')`,
+        indexerId: indexerIdExpr,
         createdAt: schema.historyEntry.createdAt,
       })
       .from(schema.historyEntry)

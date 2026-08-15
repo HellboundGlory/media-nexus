@@ -50,7 +50,7 @@ function wrappedEvent(type: string): DomainEvent<any> {
 }
 
 describe("settings-blob backfill — non-destructive, sentinel-gated", () => {
-  it("migrates legacy blob configs into real rows with secrets intact, drops the blob rows, and no-ops on re-run", () => {
+  it("migrates legacy blob configs into real rows with secrets intact, drops the blob rows, and no-ops on re-run", async () => {
     const db = freshDb();
     const now = new Date().toISOString();
 
@@ -63,7 +63,7 @@ describe("settings-blob backfill — non-destructive, sentinel-gated", () => {
       { key: "media.servers", value: [{ name: "Plex#1", implementation: "plex", enabled: true, settings: { host: "http://192.168.1.10:32400", apiKey: SECRET } }], updatedAt: now },
     ] as never).run();
 
-    const result = runSettingsBlobBackfill(db);
+    const result = await runSettingsBlobBackfill(db);
     expect(result.skipped).toBe(false);
     expect(result.notifications).toBe(4);
     expect(result.mediaServers).toBe(1);
@@ -98,17 +98,17 @@ describe("settings-blob backfill — non-destructive, sentinel-gated", () => {
     expect(keys).toContain(SETTINGS_BLOB_MIGRATED_KEY);
 
     // Sentinel gates re-runs.
-    const again = runSettingsBlobBackfill(db);
+    const again = await runSettingsBlobBackfill(db);
     expect(again.skipped).toBe(true);
     expect(db.select().from(schema.notification).all()).toHaveLength(4);
   });
 
-  it("does not resurrect a sink the user deleted after migration", () => {
+  it("does not resurrect a sink the user deleted after migration", async () => {
     const db = freshDb();
     const now = new Date().toISOString();
     db.insert(schema.setting).values({ key: "notifications.discord", value: [{ webhookUrl: "https://d/x" }], updatedAt: now } as never).run();
 
-    runSettingsBlobBackfill(db);
+    await runSettingsBlobBackfill(db);
     expect(db.select().from(schema.notification).all()).toHaveLength(1);
     // user removes it
     const row = db.select().from(schema.notification).all()[0];
@@ -116,7 +116,7 @@ describe("settings-blob backfill — non-destructive, sentinel-gated", () => {
     expect(db.select().from(schema.notification).all()).toHaveLength(0);
 
     // Second boot: sentinel already set, so it does NOT resurrect the deleted row.
-    runSettingsBlobBackfill(db);
+    await runSettingsBlobBackfill(db);
     expect(db.select().from(schema.notification).all()).toHaveLength(0);
   });
 });

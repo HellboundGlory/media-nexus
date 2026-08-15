@@ -39,14 +39,14 @@ export class DatabaseLifecycle implements OnModuleDestroy {
         // already encrypted. Must run after migrations (so the tables exist) and needs the
         // secret from the environment (like auth.service.ts).
         if (env.AUTO_MIGRATE && env.MEDIA_NEXUS_SECRET) {
-          runSecretBackfill(handle.db, env.MEDIA_NEXUS_SECRET);
+          await runSecretBackfill(handle.db, env.MEDIA_NEXUS_SECRET);
         }
         // Roadmap P2 (gap J4/D7): promote legacy settings-blob notification/media-server
         // configs into real rows. Sentinel-gated; runs once after migrations. Does not
         // need the secret (secret fields are carried through unchanged). Must run after
         // runMigrations so the `notification`/`media_server` tables exist.
         if (env.AUTO_MIGRATE) {
-          runSettingsBlobBackfill(handle.db);
+          await runSettingsBlobBackfill(handle.db);
         }
         return handle;
       },

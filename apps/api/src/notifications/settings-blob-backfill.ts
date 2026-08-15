@@ -60,9 +60,9 @@ export interface SettingsBlobBackfillResult {
   skipped: boolean;
 }
 
-export function runSettingsBlobBackfill(db: Db): SettingsBlobBackfillResult {
-  const sentinel = db.select().from(schema.setting).where(eq(schema.setting.key, SETTINGS_BLOB_MIGRATED_KEY)).all();
-  if (sentinel.length) {
+export async function runSettingsBlobBackfill(db: Db): Promise<SettingsBlobBackfillResult> {
+  const sentinelRows = await db.select().from(schema.setting).where(eq(schema.setting.key, SETTINGS_BLOB_MIGRATED_KEY));
+  if (sentinelRows.length) {
     return { notifications: 0, mediaServers: 0, skipped: true };
   }
 
@@ -73,7 +73,7 @@ export function runSettingsBlobBackfill(db: Db): SettingsBlobBackfillResult {
   // validation, matching `secret-backfill.ts`). `inArray` with a possibly-empty target
   // would generate `IN ()` — guard by only querying when there are keys.
   const keys = [...NOTIFICATION_SETTING_KEYS, MEDIA_SERVER_SETTING_KEY];
-  const rows = db.select().from(schema.setting).where(inArray(schema.setting.key, keys)).all();
+  const rows = await db.select().from(schema.setting).where(inArray(schema.setting.key, keys));
   const byKey = new Map(rows.map((r) => [r.key, r.value]));
 
   // --- notifications ---
@@ -85,7 +85,7 @@ export function runSettingsBlobBackfill(db: Db): SettingsBlobBackfillResult {
       const entry = entries[i] ?? {};
       const settings: Record<string, unknown> = {};
       for (const f of fields) if (entry[f] !== undefined) settings[f] = entry[f];
-      db.insert(schema.notification).values({
+      await db.insert(schema.notification).values({
         id: newEntityId("notif"),
         kind,
         name: typeof entry.name === "string" && entry.name ? entry.name : `${kind} ${i + 1}`,
@@ -94,7 +94,7 @@ export function runSettingsBlobBackfill(db: Db): SettingsBlobBackfillResult {
         settings,
         createdAt: now,
         updatedAt: now,
-      }).run();
+      });
       result.notifications++;
     }
   }
@@ -104,7 +104,7 @@ export function runSettingsBlobBackfill(db: Db): SettingsBlobBackfillResult {
   for (let i = 0; i < servers.length; i++) {
     const entry = servers[i] ?? {};
     const settings = (entry.settings && typeof entry.settings === "object" ? entry.settings : {}) as Record<string, unknown>;
-    db.insert(schema.mediaServer).values({
+    await db.insert(schema.mediaServer).values({
       id: newEntityId("msrv"),
       name: typeof entry.name === "string" && entry.name ? entry.name : `Server ${i + 1}`,
       implementation: entry.implementation === "plex" || entry.implementation === "jellyfin" ? entry.implementation : "jellyfin",
@@ -113,14 +113,14 @@ export function runSettingsBlobBackfill(db: Db): SettingsBlobBackfillResult {
       settings,
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
     result.mediaServers++;
   }
 
   // Superseded blob rows are fully migrated — drop them and set the sentinel so we
   // never run again (and never resurrect a since-deleted sink).
-  db.delete(schema.setting).where(inArray(schema.setting.key, keys)).run();
-  db.insert(schema.setting).values({ key: SETTINGS_BLOB_MIGRATED_KEY, value: true, updatedAt: now }).run();
+  await db.delete(schema.setting).where(inArray(schema.setting.key, keys));
+  await db.insert(schema.setting).values({ key: SETTINGS_BLOB_MIGRATED_KEY, value: true, updatedAt: now });
 
   return result;
 }

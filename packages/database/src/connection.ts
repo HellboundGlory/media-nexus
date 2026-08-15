@@ -2,7 +2,7 @@
 import { dirname, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 import Database from "better-sqlite3";
-import { Pool } from "pg";
+import { Pool, types as pgTypes } from "pg";
 import { drizzle as sqliteDrizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { migrate as sqliteMigrate } from "drizzle-orm/better-sqlite3/migrator";
 import { drizzle as pgDrizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -10,14 +10,25 @@ import { migrate as pgMigrate } from "drizzle-orm/node-postgres/migrator";
 import { schema, type Schema } from "./schema";
 import { schema as pgSchema } from "./schema.pg";
 
-/** The app-facing database type — SQLite dialect. apps/api is typed against this.
- *  See the boundary-cast note in `createDb` for how the Postgres path satisfies it. */
-export type Db = BetterSQLite3Database<typeof schema>;
+export type DbDialect = "sqlite" | "postgres";
+
+/**
+ * The app-facing database type — SQLite dialect. apps/api is typed against this.
+ * A `dbDialect` field is tagged onto the live connection object by `createDb` so call
+ * sites that must behave differently per dialect (sync vs async transaction bodies,
+ * SQLite-only `json_extract` vs Postgres `jsonb` extraction) can branch deterministically
+ * on `this.db.dbDialect` without inferring from context. (Chosen name avoids colliding
+ * with Drizzle's own internal `dialect` object that query builders rely on.) See the
+ * boundary-cast note below.
+ */
+export type Db = BetterSQLite3Database<typeof schema> & { dbDialect: DbDialect };
 export type { Schema };
 
 export interface DbHandle {
   db: Db;
   close: () => void;
+  /** Dialect of the live connection, for deterministic per-dialect branching. */
+  dialect: DbDialect;
   /** Apply pending migrations. Awaited by the bootstrap factory — Postgres's migrator is
    *  async (SQLite's runs synchronously, but returning a resolved promise is harmless). */
   runMigrations: () => Promise<void>;
@@ -58,10 +69,22 @@ function isPostgresUrl(url: string): boolean {
  */
 export function createDb(url: string): DbHandle {
   if (isPostgresUrl(url)) {
+    // node-postgres auto-parses json (114) / jsonb (3802) columns into JS objects before
+    // Drizzle ever sees them, which double-decodes the shared SQLite-shaped `json` column
+    // mapper (it JSON.parses on read → throws on an already-parsed object). Drizzle's
+    // node-postgres session installs its own per-query `types.getTypeParser` that falls
+    // through to pg's GLOBAL type parser for everything except its handled OIDs — so a
+    // per-Pool `types` override is bypassed. Override the global json/jsonb parsers to
+    // hand back the raw text, letting the shared SQLite mapper parse exactly once. The
+    // app runs a single DB connection, so this global mutation is confined and safe here.
+    pgTypes.setTypeParser(114, (v: string) => v);
+    pgTypes.setTypeParser(3802, (v: string) => v);
     const pool = new Pool({ connectionString: url });
     const pgDb: NodePgDatabase<typeof pgSchema> = pgDrizzle(pool, { schema: pgSchema });
+    Object.assign(pgDb, { dbDialect: "postgres" as const });
     return {
       db: pgDb as unknown as Db, // single boundary cast (see doc comment above)
+      dialect: "postgres",
       close: () => pool.end(),
       runMigrations: () => pgMigrate(pgDb, { migrationsFolder: PG_MIGRATIONS_DIR }),
       backup: async () => {
@@ -89,9 +112,10 @@ export function createDb(url: string): DbHandle {
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
 
-  const db: Db = sqliteDrizzle(sqlite, { schema });
+  const db = Object.assign(sqliteDrizzle(sqlite, { schema }), { dbDialect: "sqlite" as const });
   return {
     db,
+    dialect: "sqlite",
     close: () => sqlite.close(),
     runMigrations: async () => {
       sqliteMigrate(db, { migrationsFolder: MIGRATIONS_DIR });

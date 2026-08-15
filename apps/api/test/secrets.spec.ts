@@ -171,7 +171,7 @@ describe("notification/media-server settings codec (gap J4/D7)", () => {
 });
 
 describe("secret backfill — non-destructive, idempotent", () => {
-  it("encrypts existing plaintext indexer/client/setting rows in place and no-ops on re-run", () => {
+  it("encrypts existing plaintext indexer/client/setting rows in place and no-ops on re-run", async () => {
     const db = freshDb();
     const now = new Date().toISOString();
 
@@ -190,7 +190,7 @@ describe("secret backfill — non-destructive, idempotent", () => {
       key: "metadata.tmdbApiKey", value: "tmdb-plain", updatedAt: now,
     }).run();
 
-    const result = runSecretBackfill(db, SECRET);
+    const result = await runSecretBackfill(db, SECRET);
     expect(result.indexers).toBe(1);
     expect(result.clients).toBe(1);
     expect(result.settings).toBe(1);
@@ -212,7 +212,7 @@ describe("secret backfill — non-destructive, idempotent", () => {
     expect(tmdb.value).not.toBe("tmdb-plain");
 
     // idempotent: second run changes nothing
-    const again = runSecretBackfill(db, SECRET);
+    const again = await runSecretBackfill(db, SECRET);
     expect(again).toEqual({ indexers: 0, clients: 0, settings: 0 });
   });
 });

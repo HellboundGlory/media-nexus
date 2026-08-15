@@ -34,13 +34,13 @@ export interface SecretBackfillResult {
   settings: number;
 }
 
-export function runSecretBackfill(db: Db, secret: string): SecretBackfillResult {
+export async function runSecretBackfill(db: Db, secret: string): Promise<SecretBackfillResult> {
   const result: SecretBackfillResult = { indexers: 0, clients: 0, settings: 0 };
 
   // --- indexers ---
-  const defRows = db.select().from(schema.indexerDefinition).all();
+  const defRows = await db.select().from(schema.indexerDefinition);
   const defByKey = new Map(defRows.map((d) => [d.key, d.cardigannYml ? parseCardigannYaml(d.cardigannYml) : undefined]));
-  const indexerRows = db.select().from(schema.indexer).all();
+  const indexerRows = await db.select().from(schema.indexer);
   for (const row of indexerRows) {
     const fields =
       row.implementation === "cardigann"
@@ -51,38 +51,35 @@ export function runSecretBackfill(db: Db, secret: string): SecretBackfillResult 
     const settingsChanged = JSON.stringify(settings) !== JSON.stringify(row.settings);
     const proxyChanged = JSON.stringify(proxy) !== JSON.stringify(row.proxy);
     if (settingsChanged || proxyChanged) {
-      db.update(schema.indexer)
+      await db.update(schema.indexer)
         .set({ settings: settings as never, ...(proxyChanged ? { proxy: proxy as never } : {}) })
-        .where(dsql`${schema.indexer.id} = ${row.id}`)
-        .run();
+        .where(dsql`${schema.indexer.id} = ${row.id}`);
       result.indexers++;
     }
   }
 
   // --- download clients ---
-  const clientRows = db.select().from(schema.downloadClient).all();
+  const clientRows = await db.select().from(schema.downloadClient);
   for (const row of clientRows) {
     const fields = DOWNLOAD_CLIENT_SECRET_FIELDS[row.implementation] ?? [];
     const settings = encryptFields((row.settings ?? {}) as Record<string, unknown>, fields, secret);
     if (JSON.stringify(settings) !== JSON.stringify(row.settings)) {
-      db.update(schema.downloadClient)
+      await db.update(schema.downloadClient)
         .set({ settings: settings as never })
-        .where(dsql`${schema.downloadClient.id} = ${row.id}`)
-        .run();
+        .where(dsql`${schema.downloadClient.id} = ${row.id}`);
       result.clients++;
     }
   }
 
   // --- settings blob ---
   const keys = [...SETTING_SECRET_KEYS];
-  const settingRows = db.select().from(schema.setting).where(dsql`${schema.setting.key} IN (${dsql.join(keys.map((k) => dsql`${k}`), dsql`, `)})`).all();
+  const settingRows = await db.select().from(schema.setting).where(dsql`${schema.setting.key} IN (${dsql.join(keys.map((k) => dsql`${k}`), dsql`, `)})`);
   for (const row of settingRows) {
     const encrypted = encryptSettingValue(row.key, row.value, secret);
     if (JSON.stringify(encrypted) !== JSON.stringify(row.value)) {
-      db.update(schema.setting)
+      await db.update(schema.setting)
         .set({ value: encrypted })
-        .where(dsql`${schema.setting.key} = ${row.key}`)
-        .run();
+        .where(dsql`${schema.setting.key} = ${row.key}`);
       result.settings++;
     }
   }
