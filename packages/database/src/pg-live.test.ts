@@ -114,10 +114,13 @@ describe.skipIf(!process.env.PG_TEST_URL)("live PostgreSQL (best-effort, guarded
 
     await expect(
       h.db.transaction(async (tx) => {
-        // Two writes: an UPDATE (would persist if not atomic) then a failing insert.
+        // Two writes: an UPDATE (would persist if not atomic) then a failing insert. Reuses
+        // `probeId` (already present, inserted above) so the primary-key violation is
+        // deterministic on a clean database — a distinct id here would never conflict and the
+        // transaction would just succeed, silently defeating the rollback assertion below.
         await tx.update(schema.movie).set({ title: "Rollback Movie - CHANGED", updatedAt: now }).where(eq(schema.movie.id, probeId));
         await tx.insert(schema.movie).values({
-          id: "pg-tx-rollback-upd-dup",
+          id: probeId,
           title: "Dup",
           overview: "",
           status: "announced",
