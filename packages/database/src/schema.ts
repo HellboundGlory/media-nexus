@@ -151,6 +151,7 @@ export const series = sqliteTable("series", {
   genres: json<string[]>("genres"),
   images: json<Record<string, string>[]>("images"),
   tags: json<string[]>("tags"),
+  alternateTitles: json<string[]>("alternate_titles"),
   addedAt: iso("added_at"),
   updatedAt: iso("updated_at"),
 }, (t) => [uniqueIndex("series_tvdb_idx").on(t.tvdbId), uniqueIndex("series_tmdb_idx").on(t.tmdbId)]);

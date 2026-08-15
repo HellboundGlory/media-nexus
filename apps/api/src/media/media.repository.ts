@@ -303,6 +303,7 @@ function toSeriesItem(row: typeof schema.series.$inferSelect): SeriesMediaItem {
     imdbId: row.imdbId,
     seriesType: row.seriesType as SeriesType,
     network: row.network,
+    alternateTitles: row.alternateTitles ?? [],
   };
 }
 

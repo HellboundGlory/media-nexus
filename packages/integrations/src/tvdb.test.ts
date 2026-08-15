@@ -95,4 +95,16 @@ describe("TvdbProvider", () => {
     expect(eps).toHaveLength(1);
     expect(logins).toBe(2); // re-login on 401
   });
+
+  it("returns deduped series aliases from /series/{id}/extended", async () => {
+    let path = "";
+    const url = await listen((u, res) => {
+      path = u.pathname;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: { aliases: [{ language: "en", name: "AOT" }, { language: "de", name: "SNK" }, { language: "ja", name: "aot" }] } }));
+    });
+    const p = new TvdbProvider({ baseUrl: url });
+    expect(await p.seriesAliases(267440)).toEqual(["AOT", "SNK"]); // deduped case-insensitively
+    expect(path).toBe("/series/267440/extended");
+  });
 });

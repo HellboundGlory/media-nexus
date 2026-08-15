@@ -55,6 +55,9 @@ export interface SeriesMediaItem extends MediaItemBase {
   imdbId: string | null;
   seriesType: SeriesType;
   network: string | null;
+  /** Alternate titles / abbreviations (TVDB aliases), e.g. "AOT" for Attack on Titan —
+   *  matched alongside the primary title so scene/acronym release titles resolve. */
+  alternateTitles: string[];
 }
 
 export type MediaItem = MovieMediaItem | SeriesMediaItem;

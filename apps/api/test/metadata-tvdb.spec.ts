@@ -47,6 +47,7 @@ const fakeTvdbOk = {
       { id: 102, seasonNumber: 1, number: 2, absoluteNumber: 6, aired: "2020-01-08" },
     ];
   },
+  seriesAliases: async () => ["AOT", "SNK"],
 };
 
 async function seedSeries(seriesId: string, ids: { tvdbId: number; tmdbId: number }): Promise<void> {
@@ -86,6 +87,14 @@ describe("refreshSeries() TheTVDB numbering backfill", () => {
     expect(e2.sceneEpisodeNumber).toBe(5);
   });
 
+  it("backs up alternate titles (TVDB aliases) onto the series row", async () => {
+    await seedSeries("alias", { tvdbId: 9, tmdbId: 99901 });
+    await service({}).refreshSeries("alias");
+
+    const s = (await db.select().from(schema.series).where(eq(schema.series.id, "alias")))[0];
+    expect(s.alternateTitles).toEqual(["AOT", "SNK"]);
+  });
+
   it("still succeeds with TMDB fields intact when TVDB is unavailable (backfill no-ops)", async () => {
     await seedSeries("graceful", { tvdbId: 8, tmdbId: 54321 });
     const failingTvdb = { episodes: async () => { throw new Error("worker unreachable"); } };
@@ -95,6 +104,7 @@ describe("refreshSeries() TheTVDB numbering backfill", () => {
     expect(result.title).toBe("Test Show");
     const series = (await db.select().from(schema.series).where(eq(schema.series.id, "graceful")))[0];
     expect(series.overview).toBe("overview-set-by-tmdb"); // TMDB portion applied despite TVDB failure
+    expect(series.alternateTitles ?? []).toEqual([]); // gracefully left empty
     const e1 = (await db.select().from(schema.episode).where(eq(schema.episode.id, "ep_graceful_1_1")))[0];
     expect(e1.absoluteNumber).toBeNull(); // gracefully left null
     expect(e1.sceneSeasonNumber).toBeNull();

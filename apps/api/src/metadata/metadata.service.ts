@@ -118,6 +118,7 @@ export class MetadataService {
     // `sceneEpisodeNumber` from TVDB. Strictly additive and non-fatal — a TVDB failure must
     // never fail the TMDB portion of the refresh (which already succeeded above).
     await this.backfillTvdbNumbering(series[0]);
+    await this.backfillTvdbAliases(series[0]);
 
     return { updated: true, title: d.title, seasons: seasonCount, episodes: episodeCount };
   }
@@ -182,6 +183,23 @@ export class MetadataService {
       if (updated > 0) this.logger.log(`TVDB numbering backfill "${series.title}": updated ${updated} episode(s)`);
     } catch (err) {
       this.logger.warn(`TVDB numbering backfill skipped for "${series.title}": ${(err as Error).message}`);
+    }
+  }
+
+  /** Best-effort TheTVDB alias backfill: store the series' alternate titles /
+   *  abbreviations (from TVDB `aliases`, e.g. AOT/SNK for Attack on Titan) so releases
+   *  named with a scene/acronym title can match. Graceful — a TVDB failure is a warn, never
+   *  a failure of the refresh. Keeps a previously-set value if TVDB now has no aliases. */
+  private async backfillTvdbAliases(series: typeof schema.series.$inferSelect): Promise<void> {
+    if (!series.tvdbId) return;
+    const tvdb = await this.tvdbProvider();
+    try {
+      const aliases = await tvdb.seriesAliases(series.tvdbId);
+      if (aliases.length > 0) {
+        await this.db.update(schema.series).set({ alternateTitles: aliases }).where(eq(schema.series.id, series.id));
+      }
+    } catch (err) {
+      this.logger.warn(`TheTVDB aliases backfill skipped for "${series.title}": ${(err as Error).message}`);
     }
   }
 

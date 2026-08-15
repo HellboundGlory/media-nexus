@@ -89,6 +89,23 @@ export class TvdbProvider {
     return out;
   }
 
+  /** Alternate titles / abbreviations for a series (TVDB `aliases`), deduped. Used for
+   *  scene/acronym title matching (roadmap P2, gap D8) — e.g. AOT/SNK for Attack on Titan. */
+  async seriesAliases(tvdbId: number): Promise<string[]> {
+    const j = await this.get<{ data?: { aliases?: Array<{ language?: string; name?: string }> } }>(`/series/${tvdbId}/extended`);
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const a of j?.data?.aliases ?? []) {
+      const name = a?.name?.trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+    return out;
+  }
+
   private async get<T>(path: string): Promise<T> {
     if (this.apiKey) {
       if (!this.token || Date.now() >= this.tokenValidUntil) await this.login();

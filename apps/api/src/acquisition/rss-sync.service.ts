@@ -73,9 +73,9 @@ export class RssSyncService {
     // an unmonitored title match and auto-grab.
     const movieCandidates = await this.movies.wantedMissing(5000);
     const wantedEpisodes = await this.series.wantedMissing(5000);
-    const seriesById = new Map<string, { title: string; seriesType: SeriesType }>();
+    const seriesById = new Map<string, { title: string; seriesType: SeriesType; alternateTitles: string[] }>();
     for (const ep of wantedEpisodes) {
-      if (!seriesById.has(ep.seriesId)) seriesById.set(ep.seriesId, { title: ep.seriesTitle, seriesType: ep.seriesType as SeriesType });
+      if (!seriesById.has(ep.seriesId)) seriesById.set(ep.seriesId, { title: ep.seriesTitle, seriesType: ep.seriesType as SeriesType, alternateTitles: ep.seriesAlternateTitles ?? [] });
     }
 
     // Group matches by target: an uncapped poll can return several encodes of the same
@@ -137,12 +137,12 @@ export class RssSyncService {
   private matchRelease(
     release: Release,
     movieCandidates: WantedMovie[],
-    seriesById: Map<string, { title: string; seriesType: SeriesType }>,
+    seriesById: Map<string, { title: string; seriesType: SeriesType; alternateTitles: string[] }>,
     wantedEpisodes: Awaited<ReturnType<SeriesService["wantedMissing"]>>,
   ): { mediaType: "movie" | "series"; mediaId: string } | null {
     const parsed = parseEpisodeRelease(release.title);
     if (parsed.season !== undefined) {
-      const hits = [...seriesById.entries()].filter(([, s]) => titleMatches(parsed.seriesTitle, s.title));
+      const hits = [...seriesById.entries()].filter(([, s]) => this.matchesSeriesTitle(parsed.seriesTitle, s));
       if (hits.length !== 1) return null;
       const [seriesId] = hits[0];
       const inSeason = wantedEpisodes.filter((e) => e.seriesId === seriesId && e.seasonNumber === parsed.season);
@@ -164,13 +164,13 @@ export class RssSyncService {
    *  candidate series title, mirroring the S&E branch's wrong-title guard. */
   private matchDailyOrAnime(
     parsed: ReturnType<typeof parseEpisodeRelease>,
-    seriesById: Map<string, { title: string; seriesType: SeriesType }>,
+    seriesById: Map<string, { title: string; seriesType: SeriesType; alternateTitles: string[] }>,
     wantedEpisodes: Awaited<ReturnType<SeriesService["wantedMissing"]>>,
   ): { mediaType: "series"; mediaId: string } | null {
     if (parsed.dailyDate === undefined && parsed.absoluteNumber === undefined) return null;
     let matchedSeriesId: string | null = null;
     for (const [seriesId, s] of seriesById) {
-      if (parsed.seriesTitle && !titleMatches(parsed.seriesTitle, s.title)) continue;
+      if (parsed.seriesTitle && !this.matchesSeriesTitle(parsed.seriesTitle, s)) continue;
       const eps = wantedEpisodes.filter((e) => e.seriesId === seriesId);
       let hit = false;
       if (s.seriesType === "daily" && parsed.dailyDate) {
@@ -194,6 +194,16 @@ export class RssSyncService {
     const t = new Date(`${day}T00:00:00.000Z`).getTime();
     const base = new Date(`${date}T00:00:00.000Z`).getTime();
     return Number.isNaN(t) || Number.isNaN(base) ? false : Math.abs(t - base) <= 86400000;
+  }
+
+  /** Whether a release name (the series-title portion of a parsed title) matches a candidate
+   *  series by its primary title OR any alternate title / abbreviation (TVDB aliases, e.g.
+   *  "AOT" for Attack on Titan). A match on any one counts; the caller keeps the existing
+   *  exact-one-candidate ambiguity discipline on top. */
+  private matchesSeriesTitle(releaseHead: string | undefined, s: { title: string; alternateTitles: string[] }): boolean {
+    if (!releaseHead) return false;
+    if (titleMatches(releaseHead, s.title)) return true;
+    return s.alternateTitles.some((a) => !!a && titleMatches(releaseHead, a));
   }
 
   private async pruneSeenReleases(): Promise<void> {

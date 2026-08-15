@@ -84,12 +84,12 @@ const wantedMovie: WantedMovie = {
   minimumAvailability: "announced", monitored: true, hasFile: false,
 };
 
-function wantedEpisode(over: Partial<{ id: string; episodeNumber: number; seasonNumber: number; seriesType: string; airDateUtc: string | null; absoluteNumber: number | null; seriesId: string; seriesTitle: string }> = {}) {
+function wantedEpisode(over: Partial<{ id: string; episodeNumber: number; seasonNumber: number; seriesType: string; airDateUtc: string | null; absoluteNumber: number | null; seriesId: string; seriesTitle: string; seriesAlternateTitles: string[] }> = {}) {
   return {
     id: "ep1", seriesId: "s1", seasonId: "sea2", episodeNumber: 1, absoluteNumber: null,
     title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false,
     sceneSeasonNumber: null, sceneEpisodeNumber: null, seasonNumber: 2, seriesTitle: "Show",
-    seriesType: "standard",
+    seriesType: "standard", seriesAlternateTitles: [],
     ...over,
   };
 }
@@ -233,6 +233,26 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
     const result = await rss.runFeedPoll();
     expect(result.matched).toBe(1);
     expect(grabbed).toEqual(["r-anime"]);
+  });
+
+  it("matches a release titled with the series' alternate title / abbreviation (e.g. AOT)", async () => {
+    const db = await freshDb();
+    const grabbed: string[] = [];
+    const indexers = {
+      pollRecent: async () => [release({ id: "r-aot", title: "AOT.S04E01.1080p.WEB-DL" })],
+      grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
+    } as unknown as IndexersService;
+    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const series = {
+      wantedMissing: async () => [
+        { ...wantedEpisode(), seriesId: "sAOT", seriesTitle: "Attack on Titan", seriesType: "standard", seriesAlternateTitles: ["AOT", "SNK"], seasonNumber: 4, episodeNumber: 1 },
+      ],
+    } as unknown as SeriesService;
+    const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => episodeCtx));
+
+    const result = await rss.runFeedPoll();
+    expect(result.matched).toBe(1);
+    expect(grabbed).toEqual(["r-aot"]); // primary title fuzzy-fails, alternate "AOT" matches
   });
 
   it("does not match an anime release when the wanted episode lacks an absoluteNumber (graceful)", async () => {

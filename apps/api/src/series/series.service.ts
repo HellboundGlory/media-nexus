@@ -189,7 +189,7 @@ export class SeriesService {
       .select({
         episode: schema.episode,
         seasonNumber: schema.season.seasonNumber,
-        series: { id: schema.series.id, title: schema.series.title, seriesType: schema.series.seriesType },
+        series: { id: schema.series.id, title: schema.series.title, seriesType: schema.series.seriesType, alternateTitles: schema.series.alternateTitles },
       })
       .from(schema.episode)
       .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
@@ -197,7 +197,7 @@ export class SeriesService {
       .where(and(eq(schema.episode.monitored, true), eq(schema.episode.hasFile, false)))
       .orderBy(asc(schema.episode.airDateUtc))
       .limit(limit);
-    return rows.map((r) => ({ ...r.episode, seasonNumber: r.seasonNumber, seriesTitle: r.series.title, seriesType: r.series.seriesType }));
+    return rows.map((r) => ({ ...r.episode, seasonNumber: r.seasonNumber, seriesTitle: r.series.title, seriesType: r.series.seriesType, seriesAlternateTitles: r.series.alternateTitles ?? [] }));
   }
 
   /** Calendar: upcoming episodes with air dates in [start, end] (default next 14 days). */
