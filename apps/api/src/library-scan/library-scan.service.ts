@@ -13,7 +13,7 @@ import {
 } from "@medianexus/domain";
 import { LocalStorageProvider, findAllVideos } from "@medianexus/integrations";
 import { MediaRepository } from "../media/media.repository";
-import { ensureAvailabilitySync, getQualityProfile, type Tx } from "../media/library.helpers";
+import { ensureAvailabilitySync, ensureAvailabilityTx, getQualityProfile, type Tx } from "../media/library.helpers";
 import { movieFolderName, seriesFolderName } from "../media/naming.helpers";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
@@ -141,19 +141,37 @@ export class LibraryScanService implements OnModuleInit {
 
     // One transaction for the whole title: the stale-row deletes, the new-file insert, the
     // hasFile flip and the availability update either all land or none do.
-    this.db.transaction((tx) => {
-      for (const f of stale) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
-      if (newFile) {
-        tx.insert(schema.mediaFile).values({
-          id: newFile.mediaFileId, mediaType: "movie", mediaId: movie.id, episodeIds: [],
-          relativePath: newFile.relativePath, size: newFile.size, quality: newFile.quality, dateAdded: now,
-        }).run();
-      }
-      if (hasFile !== movie.hasFile) {
-        tx.update(schema.movie).set({ hasFile, updatedAt: now }).where(eq(schema.movie.id, movie.id)).run();
-      }
-      if (filesAdded > 0 || filesRemoved > 0) this.markAvailabilitySync(tx, "movie", movie.id, now);
-    });
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        for (const f of stale) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id));
+        if (newFile) {
+          await tx.insert(schema.mediaFile).values({
+            id: newFile.mediaFileId, mediaType: "movie", mediaId: movie.id, episodeIds: [],
+            relativePath: newFile.relativePath, size: newFile.size, quality: newFile.quality, dateAdded: now,
+          });
+        }
+        if (hasFile !== movie.hasFile) {
+          await tx.update(schema.movie).set({ hasFile, updatedAt: now }).where(eq(schema.movie.id, movie.id));
+        }
+        if (filesAdded > 0 || filesRemoved > 0) await this.markAvailability(tx, "movie", movie.id, now);
+      });
+    } else {
+      this.db.transaction((tx) => {
+        for (const f of stale) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
+        if (newFile) {
+          tx.insert(schema.mediaFile).values({
+            id: newFile.mediaFileId, mediaType: "movie", mediaId: movie.id, episodeIds: [],
+            relativePath: newFile.relativePath, size: newFile.size, quality: newFile.quality, dateAdded: now,
+          }).run();
+        }
+        if (hasFile !== movie.hasFile) {
+          tx.update(schema.movie).set({ hasFile, updatedAt: now }).where(eq(schema.movie.id, movie.id)).run();
+        }
+        if (filesAdded > 0 || filesRemoved > 0) this.markAvailabilitySync(tx, "movie", movie.id, now);
+      });
+    }
     return { filesFound: files.length, filesAdded, filesRemoved };
   }
 
@@ -238,27 +256,54 @@ export class LibraryScanService implements OnModuleInit {
       // One transaction per season, matching the granularity the reconciliation loop
       // already treats each season at: a failure scanning a later season must not roll
       // back an earlier season's already-applied changes.
-      this.db.transaction((tx) => {
-        for (const f of staleThisSeason) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
-        for (const f of supersededOld) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
-        for (const a of approved) {
-          tx.insert(schema.mediaFile).values({
-            id: newEntityId("mf"), mediaType: "series", mediaId: seriesId, episodeIds: a.episodeIds,
-            relativePath: relative(root, a.path), size: a.size, quality: a.quality, dateAdded: new Date().toISOString(),
-          }).run();
-        }
-        for (const ep of seasonEpisodes) {
-          const hasFile = coveredEpisodeIds.has(ep.id);
-          if (hasFile !== ep.hasFile) {
-            tx.update(schema.episode).set({ hasFile }).where(eq(schema.episode.id, ep.id)).run();
+      if (this.db.dbDialect === "postgres") {
+        // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+        // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+        await this.db.transaction(async (tx) => {
+          for (const f of staleThisSeason) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id));
+          for (const f of supersededOld) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id));
+          for (const a of approved) {
+            await tx.insert(schema.mediaFile).values({
+              id: newEntityId("mf"), mediaType: "series", mediaId: seriesId, episodeIds: a.episodeIds,
+              relativePath: relative(root, a.path), size: a.size, quality: a.quality, dateAdded: new Date().toISOString(),
+            });
           }
-        }
-      });
+          for (const ep of seasonEpisodes) {
+            const hasFile = coveredEpisodeIds.has(ep.id);
+            if (hasFile !== ep.hasFile) {
+              await tx.update(schema.episode).set({ hasFile }).where(eq(schema.episode.id, ep.id));
+            }
+          }
+        });
+      } else {
+        this.db.transaction((tx) => {
+          for (const f of staleThisSeason) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
+          for (const f of supersededOld) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
+          for (const a of approved) {
+            tx.insert(schema.mediaFile).values({
+              id: newEntityId("mf"), mediaType: "series", mediaId: seriesId, episodeIds: a.episodeIds,
+              relativePath: relative(root, a.path), size: a.size, quality: a.quality, dateAdded: new Date().toISOString(),
+            }).run();
+          }
+          for (const ep of seasonEpisodes) {
+            const hasFile = coveredEpisodeIds.has(ep.id);
+            if (hasFile !== ep.hasFile) {
+              tx.update(schema.episode).set({ hasFile }).where(eq(schema.episode.id, ep.id)).run();
+            }
+          }
+        });
+      }
     }
 
     if (filesAdded > 0 || filesRemoved > 0) {
       const now = new Date().toISOString();
-      this.db.transaction((tx) => this.markAvailabilitySync(tx, "series", seriesId, now));
+      if (this.db.dbDialect === "postgres") {
+        // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+        // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+        await this.db.transaction(async (tx) => this.markAvailability(tx, "series", seriesId, now));
+      } else {
+        this.db.transaction((tx) => this.markAvailabilitySync(tx, "series", seriesId, now));
+      }
     }
     return { filesFound, filesAdded, filesRemoved };
   }
@@ -275,6 +320,23 @@ export class LibraryScanService implements OnModuleInit {
   private seriesAvailabilitySync(tx: Tx, seriesId: string): "available" | "partially_available" {
     const eps = tx.select({ hasFile: schema.episode.hasFile, monitored: schema.episode.monitored })
       .from(schema.episode).where(eq(schema.episode.seriesId, seriesId)).all();
+    const missing = eps.some((e) => e.monitored && !e.hasFile);
+    return missing ? "partially_available" : "available";
+  }
+
+  /** Async counterpart of `markAvailabilitySync`, for use inside a Postgres transaction
+   *  callback (roadmap P2 item 12 Stage 2 — Postgres transaction bodies are async). */
+  private async markAvailability(tx: Tx, mediaType: MediaType, mediaId: string, now: string): Promise<void> {
+    const status = mediaType === "movie" ? "available" : await this.seriesAvailability(tx, mediaId);
+    await ensureAvailabilityTx(tx, mediaType, mediaId);
+    await tx.update(schema.mediaAvailability)
+      .set({ status, lastAvailabilitySyncAt: now })
+      .where(and(eq(schema.mediaAvailability.mediaType, mediaType), eq(schema.mediaAvailability.mediaId, mediaId)));
+  }
+
+  private async seriesAvailability(tx: Tx, seriesId: string): Promise<"available" | "partially_available"> {
+    const eps = await tx.select({ hasFile: schema.episode.hasFile, monitored: schema.episode.monitored })
+      .from(schema.episode).where(eq(schema.episode.seriesId, seriesId));
     const missing = eps.some((e) => e.monitored && !e.hasFile);
     return missing ? "partially_available" : "available";
   }

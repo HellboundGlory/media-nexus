@@ -57,6 +57,19 @@ export class HealthCheckService {
 
   private async persist(results: HealthCheckResult[]): Promise<void> {
     const now = new Date().toISOString();
+    // better-sqlite3's native transaction wrapper requires a synchronous callback, while
+    // node-postgres's requires an async one — the two signatures are irreconcilable, so the
+    // Postgres path gets its own async body (roadmap P2 item 12 Stage 2; see ADR-004).
+    if (this.db.dbDialect === "postgres") {
+      await this.db.transaction(async (tx) => {
+        for (const r of results) {
+          await tx.insert(schema.healthCheckResult)
+            .values({ id: `health_${r.key}`, key: r.key, ok: r.ok, level: r.level, message: r.message, checkedAt: now })
+            .onConflictDoUpdate({ target: schema.healthCheckResult.key, set: { ok: r.ok, level: r.level, message: r.message, checkedAt: now } });
+        }
+      });
+      return;
+    }
     this.db.transaction((tx) => {
       for (const r of results) {
         tx.insert(schema.healthCheckResult)

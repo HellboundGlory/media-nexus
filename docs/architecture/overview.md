@@ -147,7 +147,10 @@ media-nexus/
 
 > **Status accuracy:** the scaffold is verified **native** (build, test, run) and the Docker image is verified end-to-end
 > (build, boot, `/health/live` + `/health/ready`, SPA, API-key auth) — both locally and via CI's publish-on-tag build.
-> PostgreSQL is a planned driver (M1.1); SQLite is the live default.
+> Both storage dialects are implemented and tested (roadmap M1.1/M1.2): SQLite (`better-sqlite3`) is the live default for
+> dev/small self-host, chosen from `DATABASE_URL`'s scheme; PostgreSQL (`pg`, `postgres(ql)://`) is fully wired for
+> production. The web/web-facing persist path works end-to-end on both (see ADR-004 for the boundary cast, dual sync/async
+> transaction bodies, and the SQLite-only backup seam).
 
 ## 6. Decision summary (details in `technology-decisions.md`)
 

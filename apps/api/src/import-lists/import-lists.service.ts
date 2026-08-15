@@ -28,8 +28,8 @@ export class ImportListsService {
   ) {}
 
   // ---------- list CRUD ----------
-  list() {
-    return this.db.select().from(schema.importList).orderBy(asc(schema.importList.name)).all();
+  async list() {
+    return await this.db.select().from(schema.importList).orderBy(asc(schema.importList.name));
   }
 
   async create(input: CreateImportList) {
@@ -38,7 +38,7 @@ export class ImportListsService {
       id: newEntityId("ilist"), provider: input.provider, name: input.name,
       enabled: input.enabled ?? true, config: input.config, createdAt: now, updatedAt: now,
     };
-    await this.db.insert(schema.importList).values(row).run();
+    await this.db.insert(schema.importList).values(row);
     return row;
   }
 
@@ -51,33 +51,33 @@ export class ImportListsService {
       config: input.config ?? rows[0].config,
       updatedAt: new Date().toISOString(),
     };
-    await this.db.update(schema.importList).set(merged).where(eq(schema.importList.id, id)).run();
+    await this.db.update(schema.importList).set(merged).where(eq(schema.importList.id, id));
     return { ...rows[0], ...merged };
   }
 
   async remove(id: string) {
     const rows = await this.db.select().from(schema.importList).where(eq(schema.importList.id, id)).limit(1);
     if (!rows[0]) throw ApiError.notFound("import list", id);
-    await this.db.delete(schema.importList).where(eq(schema.importList.id, id)).run();
+    await this.db.delete(schema.importList).where(eq(schema.importList.id, id));
     return { removed: id };
   }
 
   // ---------- exclusions ----------
-  listExclusions() {
-    return this.db.select().from(schema.importExclusion).orderBy(desc(schema.importExclusion.createdAt)).all();
+  async listExclusions() {
+    return await this.db.select().from(schema.importExclusion).orderBy(desc(schema.importExclusion.createdAt));
   }
 
   async addExclusion(input: CreateImportExclusion) {
     await this.db.insert(schema.importExclusion)
       .values({ id: newEntityId("excl"), mediaType: input.mediaType, externalId: input.externalId, reason: input.reason ?? null, createdAt: new Date().toISOString() })
-      .onConflictDoNothing().run();
+      .onConflictDoNothing();
     return { added: true, mediaType: input.mediaType, externalId: input.externalId };
   }
 
   async removeExclusion(id: string) {
     const rows = await this.db.select().from(schema.importExclusion).where(eq(schema.importExclusion.id, id)).limit(1);
     if (!rows[0]) throw ApiError.notFound("exclusion", id);
-    await this.db.delete(schema.importExclusion).where(eq(schema.importExclusion.id, id)).run();
+    await this.db.delete(schema.importExclusion).where(eq(schema.importExclusion.id, id));
     return { removed: id };
   }
 
@@ -111,7 +111,7 @@ export class ImportListsService {
     const now = new Date().toISOString();
     await this.db.update(schema.importList)
       .set({ lastSyncAt: now, lastError: null, updatedAt: now })
-      .where(eq(schema.importList.id, id)).run();
+      .where(eq(schema.importList.id, id));
     return { added, skipped };
   }
 
@@ -130,7 +130,7 @@ export class ImportListsService {
         failed++;
         await this.db.update(schema.importList)
           .set({ lastError: (err as Error).message, lastSyncAt: now, updatedAt: now })
-          .where(eq(schema.importList.id, list.id)).run();
+          .where(eq(schema.importList.id, list.id));
       }
     }
     return { lists: lists.length, added, failed };

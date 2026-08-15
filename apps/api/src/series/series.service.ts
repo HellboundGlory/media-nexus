@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable } from "@nestjs/common";
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
-import { deletePolymorphicRows, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
+import { deletePolymorphicRows, deletePolymorphicRowsAsync, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
@@ -99,18 +99,33 @@ export class SeriesService {
     // Only the polymorphic tables need a hand-written delete here — season/episode cascade
     // automatically via their DB-level FK to series (roadmap P0.7) once the series row
     // itself is deleted.
-    this.db.transaction((tx) => {
-      deletePolymorphicRows(tx, "series", id);
-      tx.delete(schema.series).where(eq(schema.series.id, id)).run();
-      // C2 import lists: a manually-removed title is excluded from re-import by the next
-      // list sync (idempotent; best-effort, only when it has a stable external id).
-      if (row.tmdbId != null) {
-        tx.insert(schema.importExclusion).values({
-          id: `excl-series-${row.tmdbId}`, mediaType: "series", externalId: String(row.tmdbId),
-          reason: "removed from library", createdAt: new Date().toISOString(),
-        }).onConflictDoNothing().run();
-      }
-    });
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        await deletePolymorphicRowsAsync(tx, "series", id);
+        await tx.delete(schema.series).where(eq(schema.series.id, id));
+        if (row.tmdbId != null) {
+          await tx.insert(schema.importExclusion).values({
+            id: `excl-series-${row.tmdbId}`, mediaType: "series", externalId: String(row.tmdbId),
+            reason: "removed from library", createdAt: new Date().toISOString(),
+          }).onConflictDoNothing();
+        }
+      });
+    } else {
+      this.db.transaction((tx) => {
+        deletePolymorphicRows(tx, "series", id);
+        tx.delete(schema.series).where(eq(schema.series.id, id)).run();
+        // C2 import lists: a manually-removed title is excluded from re-import by the next
+        // list sync (idempotent; best-effort, only when it has a stable external id).
+        if (row.tmdbId != null) {
+          tx.insert(schema.importExclusion).values({
+            id: `excl-series-${row.tmdbId}`, mediaType: "series", externalId: String(row.tmdbId),
+            reason: "removed from library", createdAt: new Date().toISOString(),
+          }).onConflictDoNothing().run();
+        }
+      });
+    }
     this.events.publish(EventTypes.SeriesRemoved, { seriesId: id }, { aggType: "series", aggId: id });
     return { removed: id };
   }
@@ -176,10 +191,19 @@ export class SeriesService {
     const seasonRows = await this.db.select().from(schema.season)
       .where(and(eq(schema.season.id, seasonId), eq(schema.season.seriesId, seriesId))).limit(1);
     if (!seasonRows[0]) throw ApiError.notFound("season", seasonId);
-    this.db.transaction((tx) => {
-      tx.update(schema.season).set({ monitored }).where(eq(schema.season.id, seasonId)).run();
-      tx.update(schema.episode).set({ monitored }).where(eq(schema.episode.seasonId, seasonId)).run();
-    });
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        await tx.update(schema.season).set({ monitored }).where(eq(schema.season.id, seasonId));
+        await tx.update(schema.episode).set({ monitored }).where(eq(schema.episode.seasonId, seasonId));
+      });
+    } else {
+      this.db.transaction((tx) => {
+        tx.update(schema.season).set({ monitored }).where(eq(schema.season.id, seasonId)).run();
+        tx.update(schema.episode).set({ monitored }).where(eq(schema.episode.seasonId, seasonId)).run();
+      });
+    }
     return (await this.db.select().from(schema.season).where(eq(schema.season.id, seasonId)).limit(1))[0];
   }
 

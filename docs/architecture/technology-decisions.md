@@ -49,12 +49,36 @@ compatibility, Docker-first, strong typing, strong testing, long-term maintainab
   a migration system. We want one schema, one migration pipeline, no codegen magic.
 - **Alternatives:** TypeORM (what Seerr uses; heavier runtime, Entity-decorator coupling, weaker typing); Prisma (excellent
   DX but generator/proprietary engine adds toolchain weight and Docker size); raw SQL (loses type safety).
-- **Decision:** **Drizzle ORM** — schema defined in TS with precise types, `drizzle-kit` migrations (SQLite + Postgres from
-  the same schema), `better-sqlite3` for local, `pg` for production.
-- **Consequences (accurate status):** SQLite is fully wired now (migrations, tests, Docker default). **PostgreSQL is a
-  targeted follow-up (roadmap M1.1), not yet implemented** — the schema is dialect-portable and the client factory already
-  detects `postgres://` URLs and fails with a clear message so no one silently gets a broken deployment. − younger ecosystem than
-  TypeORM; SQL is more explicit than Prisma (acceptable: we own our query layer).
+- **Decision:** **Drizzle ORM** — two schema declarations (a SQLite dialect backed by `better-sqlite3` for local, and a
+  pair-wise Postgres twin backed by `pg`) plus `drizzle-kit` migrations per dialect. The runtime dialect is chosen from the
+  `DATABASE_URL` scheme at boot (`sqlite:`/`file:`/`:memory:`/bare path vs `postgres(ql)://`).
+- **Consequences (accurate status — both dialects are implemented and tested, roadmap M1.1/M1.2):**
+  - **Boundary cast, not "mechanical portability".** apps/api's ~49 service files are written against the SQLite-typed
+    `Db` (`BetterSQLite3Database`), because the two drivers expose irreconcilable type systems (`PgTable` vs `SQLiteTable`,
+    async vs sync). A Postgres handle is assigned to that type via a single documented cast confined to
+    `connection.ts`'s `createDb()` — no `as any` anywhere in apps/api. `Db` also carries a `dbDialect` field
+    ("sqlite"|"postgres") tagged in `createDb` so call sites can branch deterministically.
+  - **Dual sync/async transaction bodies.** Drizzle's better-sqlite3 `db.transaction()` requires a *synchronously-returning*
+    callback (its native wrapper wraps raw BEGIN/COMMIT around a sync call and does not await), while node-postgres's
+    requires an async callback returning a Promise. These are irreconcilable in one shared callback, so every transactional
+    site has a runtime dialect branch: the original sync body (`.run()/.all()`, byte-for-byte unchanged) for SQLite plus an
+    `await`-based async twin for Postgres. Sync transaction slides (e.g. `deletePolymorphicRows`, `ensureAvailabilitySync`,
+    each service's `markAvailabilitySync`) have corresponding async twins (`...Tx`/`...Async`) used only inside Postgres
+    transaction bodies.
+  - **JSONB type-parser fix.** `pg` auto-parses `json`/`jsonb` columns into JS objects before Drizzle sees them, and Drizzle's
+    node-postgres session installs its own per-query `getTypeParser` that falls through to pg's **global** parser (a per-Pool
+    `types` override is bypassed). To stop the shared SQLite-shaped `json` mapper from double-decoding (`JSON.parse` on an
+    already-parsed object), `createDb` overrides pg's global json/jsonb parsers (OIDs 114/3802) to return raw text. The app
+    runs a single DB connection, so the global mutation is confined and safe.
+  - **Two SQLite-only seams remain, documented:** (1) the online-backup API (`DbHandle.backup`) is SQLite-only — on Postgres
+    it rejects with "use pg_dump", and `BackupService.run()` degrades to `{skipped}` rather than hard-failing; pg_dump
+    automation is out of scope. (2) Two startup backfill passes (`runSecretBackfill`, `runSettingsBlobBackfill`) are written
+    in the portable async form and run in both dialects; raw `sqlite_master` introspection used by the import helper is
+    SQLite-backup-only. Timestamps are stored as ISO-8601 text in both dialects (a documented tradeoff — no native
+    `timestamp`/`timestamptz`).
+  - **Operational difference:** a fresh SQLite boot self-migrates automatically (`AUTO_MIGRATE`); both dialects run
+    migrations + static seed + the two backfills on boot the same way. − younger ecosystem than TypeORM; SQL is more explicit
+    than Prisma (acceptable: we own our query layer).
 
 ## ADR-005 — Jobs: database-backed queue with in-process workers (now), Redis/BullMQ as the documented scale-out path
 

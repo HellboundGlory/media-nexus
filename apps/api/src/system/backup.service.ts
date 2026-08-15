@@ -46,6 +46,13 @@ export class BackupService {
     const backupPath = cfg["system.backupPath"];
     if (!backupPath) return { skipped: true, reason: "system.backupPath is not configured" };
 
+    // Postgres has no single-file online-backup API (SQLite-only; see createDb). A scheduled
+    // backup job on a Postgres install must degrade gracefully instead of hard-failing the
+    // whole job — pg_dump automation is intentionally out of scope (roadmap P2 item 12).
+    if (this.handle.dialect === "postgres") {
+      return { skipped: true, reason: "Backup is SQLite-only; use pg_dump for a Postgres database" };
+    }
+
     mkdirSync(backupPath, { recursive: true });
     const name = `${FILE_PREFIX}${new Date().toISOString().replace(/[:.]/g, "-")}${FILE_SUFFIX}`;
     const destPath = join(backupPath, name);

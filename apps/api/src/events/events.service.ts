@@ -70,7 +70,7 @@ export class EventsService {
   async pruneOutbox(olderThanDays = 14): Promise<number> {
     if (!this.db) return 0;
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 3600 * 1000).toISOString();
-    const res = await this.db.delete(schema.eventOutbox).where(lt(schema.eventOutbox.occurredAt, cutoff)).run();
+    const res = await this.db.delete(schema.eventOutbox).where(lt(schema.eventOutbox.occurredAt, cutoff));
     return res.changes;
   }
 

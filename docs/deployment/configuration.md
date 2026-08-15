@@ -9,7 +9,7 @@ All configuration flows through environment variables (secrets via `_FILE` suffi
 |---|---|---|
 | `NODE_ENV` | `development` | runtime mode |
 | `PORT` | `7373` | API listen port |
-| `DATABASE_URL` | `file:./data/media-nexus.db` | Drizzle connection string. SQLite fully supported now; `postgres://…` detected but raises a clear error until PG driver lands (M1.1) |
+| `DATABASE_URL` | `file:./data/media-nexus.db` | Drizzle connection string. Dialect chosen by scheme: `sqlite:`/`file:`/`:memory:`/bare path → SQLite (`better-sqlite3`); `postgres://…`/`postgresql://…` → PostgreSQL (`pg`). Both dialects are implemented (roadmap M1.1/M1.2). |
 | `MEDIA_NEXUS_SECRET` | *(required, generate `openssl rand -hex 32`)* | encryption key for stored credentials |
 | `MEDIA_NEXUS_SECRET_FILE` | — | path to read `MEDIA_NEXUS_SECRET` from (Docker secrets) |
 | `MEDIA_NEXUS_BOOTSTRAP_KEY` | *(generated if unset)* | pins the first-run system API key instead of generating one (e.g. for CI/tests) |

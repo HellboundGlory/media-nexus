@@ -520,31 +520,61 @@ export class IndexersService {
       data.completedPath = placeholder;
     }
 
-    this.db.transaction((tx) => {
-      tx.insert(schema.downloadQueueEntry).values({
-        id: queueId,
-        mediaType: input.mediaType,
-        mediaId: input.mediaId,
-        downloadClientId: client.row?.id ?? null,
-        downloadId,
-        title: release!.title,
-        status: "downloading",
-        progress: 5,
-        size: release!.size,
-        remainingTime: null,
-        data,
-        addedAt: now,
-        updatedAt: now,
-      }).run();
-      tx.insert(schema.historyEntry).values({
-        id: newEntityId("hist"),
-        mediaType: input.mediaType,
-        mediaId: input.mediaId,
-        action: "grabbed",
-        data,
-        createdAt: now,
-      }).run();
-    });
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        await tx.insert(schema.downloadQueueEntry).values({
+          id: queueId,
+          mediaType: input.mediaType,
+          mediaId: input.mediaId,
+          downloadClientId: client.row?.id ?? null,
+          downloadId,
+          title: release!.title,
+          status: "downloading",
+          progress: 5,
+          size: release!.size,
+          remainingTime: null,
+          data,
+          addedAt: now,
+          updatedAt: now,
+        });
+        await tx.insert(schema.historyEntry).values({
+          id: newEntityId("hist"),
+          mediaType: input.mediaType,
+          mediaId: input.mediaId,
+          action: "grabbed",
+          data,
+          createdAt: now,
+        });
+      });
+    } else {
+      this.db.transaction((tx) => {
+        tx.insert(schema.downloadQueueEntry).values({
+          id: queueId,
+          mediaType: input.mediaType,
+          mediaId: input.mediaId,
+          downloadClientId: client.row?.id ?? null,
+          downloadId,
+          title: release!.title,
+          status: "downloading",
+          progress: 5,
+          size: release!.size,
+          remainingTime: null,
+          data,
+          addedAt: now,
+          updatedAt: now,
+        }).run();
+        tx.insert(schema.historyEntry).values({
+          id: newEntityId("hist"),
+          mediaType: input.mediaType,
+          mediaId: input.mediaId,
+          action: "grabbed",
+          data,
+          createdAt: now,
+        }).run();
+      });
+    }
     const agg = { aggType: input.mediaType, aggId: input.mediaId };
     this.events.publish(EventTypes.ReleaseGrabbed, { releaseId: release.id, title: release.title, downloadId, mediaType: input.mediaType, mediaId: input.mediaId }, agg);
     this.events.publish(EventTypes.DownloadStarted, { downloadId, title: release.title }, agg);

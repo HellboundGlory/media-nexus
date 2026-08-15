@@ -5,6 +5,7 @@ import { ApiError } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
+import type { Tx } from "../media/library.helpers";
 import type { CreateTag, UpdateTag } from "@medianexus/domain";
 
 /** The tag-bearing entity tables whose `tags` arrays reference tag ids (gap report C6):
@@ -19,8 +20,8 @@ const TAG_BEARING_TABLES = [schema.movie, schema.series, schema.indexer, schema.
 export class TagsService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  list() {
-    return this.db.select().from(schema.tag).orderBy(asc(schema.tag.label)).all();
+  async list() {
+    return this.db.select().from(schema.tag).orderBy(asc(schema.tag.label));
   }
 
   async create(input: CreateTag) {
@@ -28,7 +29,7 @@ export class TagsService {
     if (existing[0]) throw new ApiError({ code: "CONFLICT", message: `Tag "${input.id}" already exists` });
     const now = new Date().toISOString();
     const row = { id: input.id, label: input.label ?? input.id, color: input.color ?? null, createdAt: now, updatedAt: now };
-    await this.db.insert(schema.tag).values(row).run();
+    await this.db.insert(schema.tag).values(row);
     return row;
   }
 
@@ -40,7 +41,7 @@ export class TagsService {
       color: input.color !== undefined ? input.color : rows[0].color,
       updatedAt: new Date().toISOString(),
     };
-    await this.db.update(schema.tag).set(merged).where(eq(schema.tag.id, id)).run();
+    await this.db.update(schema.tag).set(merged).where(eq(schema.tag.id, id));
     return { ...rows[0], ...merged };
   }
 
@@ -49,18 +50,38 @@ export class TagsService {
   async remove(id: string): Promise<{ removed: string }> {
     const rows = await this.db.select().from(schema.tag).where(eq(schema.tag.id, id)).limit(1);
     if (!rows[0]) throw ApiError.notFound("tag", id);
-    this.db.transaction((tx) => {
-      tx.delete(schema.tag).where(eq(schema.tag.id, id)).run();
-      for (const table of TAG_BEARING_TABLES) {
-        for (const row of tx.select().from(table).all()) {
-          const tags = (row as { tags?: string[] | null }).tags ?? [];
-          if (tags.includes(id)) {
-            tx.update(table).set({ tags: tags.filter((t) => t !== id) })
-              .where(eq((table as { id: unknown }).id as never, row.id)).run();
-          }
+    const strip = (table: (typeof TAG_BEARING_TABLES)[number], tagId: string, tx: Tx) => {
+      for (const row of tx.select().from(table).all()) {
+        const tags = (row as { tags?: string[] | null }).tags ?? [];
+        if (tags.includes(tagId)) {
+          tx.update(table).set({ tags: tags.filter((t) => t !== tagId) })
+            .where(eq((table as { id: unknown }).id as never, row.id)).run();
         }
       }
-    });
+    };
+    const stripAsync = async (table: (typeof TAG_BEARING_TABLES)[number], tagId: string, tx: Tx) => {
+      const all = await tx.select().from(table);
+      for (const row of all) {
+        const tags = (row as { tags?: string[] | null }).tags ?? [];
+        if (tags.includes(tagId)) {
+          await tx.update(table).set({ tags: tags.filter((t) => t !== tagId) })
+            .where(eq((table as { id: unknown }).id as never, row.id));
+        }
+      }
+    };
+    // better-sqlite3's native transaction wrapper needs a synchronous callback; node-postgres's
+    // needs an async one — two irreconcilable signatures, so Postgres gets its own async body.
+    if (this.db.dbDialect === "postgres") {
+      await this.db.transaction(async (tx) => {
+        await tx.delete(schema.tag).where(eq(schema.tag.id, id));
+        for (const table of TAG_BEARING_TABLES) await stripAsync(table, id, tx);
+      });
+    } else {
+      this.db.transaction((tx) => {
+        tx.delete(schema.tag).where(eq(schema.tag.id, id)).run();
+        for (const table of TAG_BEARING_TABLES) strip(table, id, tx);
+      });
+    }
     return { removed: id };
   }
 }

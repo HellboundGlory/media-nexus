@@ -62,6 +62,21 @@ export class BlocklistService {
     }).run();
   }
 
+  /** Async counterpart of `addSync`, for use inside a Postgres `db.transaction(async (tx)
+   *  => ...)` callback (roadmap P2 item 12 Stage 2 — Postgres transaction bodies are async). */
+  async addSyncAsync(tx: Tx, input: BlocklistCandidate & { reason: string }): Promise<void> {
+    await tx.insert(schema.blocklistEntry).values({
+      id: newEntityId("bl"),
+      mediaType: input.mediaType,
+      mediaId: input.mediaId,
+      indexerId: input.indexerId ?? null,
+      title: input.title,
+      torrentInfohash: input.torrentInfohash ?? null,
+      reason: input.reason,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
   /** Consulted by both IndexersService.grab() and RssSyncService before a release is
    *  chosen/grabbed — one shared implementation, not two copies. */
   async isBlocklisted(candidate: { mediaType: string; mediaId: string; title: string; indexerId?: string | null }): Promise<boolean> {

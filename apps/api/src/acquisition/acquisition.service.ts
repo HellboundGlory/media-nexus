@@ -20,7 +20,7 @@ import {
   decideImportFile, type KnownEpisode, type ImportRejection, type Quality, type SeriesType,
 } from "@medianexus/domain";
 import { MediaRepository } from "../media/media.repository";
-import { ensureAvailabilitySync, getQualityProfile, type Tx } from "../media/library.helpers";
+import { ensureAvailabilitySync, ensureAvailabilityTx, getQualityProfile, type Tx } from "../media/library.helpers";
 import { movieFolderName, seriesFolderName, movieFileName, episodeFileName } from "../media/naming.helpers";
 import { BlocklistService } from "../blocklist/blocklist.service";
 import { RootFoldersService } from "../root-folders/root-folders.service";
@@ -272,29 +272,56 @@ export class AcquisitionService {
     const data = (entry.data ?? {}) as Record<string, unknown>;
     const now = new Date().toISOString();
 
-    this.db.transaction((tx) => {
-      tx.update(schema.downloadQueueEntry)
-        .set({ status: "download_failed", errorMessage: reason, data: { ...data, consecutiveFailures: 0 }, updatedAt: now })
-        .where(eq(schema.downloadQueueEntry.id, entry.id))
-        .run();
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        await tx.update(schema.downloadQueueEntry)
+          .set({ status: "download_failed", errorMessage: reason, data: { ...data, consecutiveFailures: 0 }, updatedAt: now })
+          .where(eq(schema.downloadQueueEntry.id, entry.id));
 
-      tx.insert(schema.historyEntry).values({
-        id: newEntityId("hist"),
-        mediaType: entry.mediaType,
-        mediaId: entry.mediaId,
-        action: "download_failed",
-        data: { title: entry.title, downloadId: entry.downloadId, error: reason },
-        createdAt: now,
-      }).run();
+        await tx.insert(schema.historyEntry).values({
+          id: newEntityId("hist"),
+          mediaType: entry.mediaType,
+          mediaId: entry.mediaId,
+          action: "download_failed",
+          data: { title: entry.title, downloadId: entry.downloadId, error: reason },
+          createdAt: now,
+        });
 
-      this.blocklist.addSync(tx, {
-        mediaType: entry.mediaType as "movie" | "series",
-        mediaId: entry.mediaId,
-        title: entry.title,
-        indexerId: (data as { indexerId?: string }).indexerId ?? null,
-        reason,
+        await this.blocklist.addSyncAsync(tx, {
+          mediaType: entry.mediaType as "movie" | "series",
+          mediaId: entry.mediaId,
+          title: entry.title,
+          indexerId: (data as { indexerId?: string }).indexerId ?? null,
+          reason,
+        });
       });
-    });
+    } else {
+      this.db.transaction((tx) => {
+        tx.update(schema.downloadQueueEntry)
+          .set({ status: "download_failed", errorMessage: reason, data: { ...data, consecutiveFailures: 0 }, updatedAt: now })
+          .where(eq(schema.downloadQueueEntry.id, entry.id))
+          .run();
+
+        tx.insert(schema.historyEntry).values({
+          id: newEntityId("hist"),
+          mediaType: entry.mediaType,
+          mediaId: entry.mediaId,
+          action: "download_failed",
+          data: { title: entry.title, downloadId: entry.downloadId, error: reason },
+          createdAt: now,
+        }).run();
+
+        this.blocklist.addSync(tx, {
+          mediaType: entry.mediaType as "movie" | "series",
+          mediaId: entry.mediaId,
+          title: entry.title,
+          indexerId: (data as { indexerId?: string }).indexerId ?? null,
+          reason,
+        });
+      });
+    }
 
     this.logger.warn(`download failed for "${entry.title}": ${reason}`);
 
@@ -353,21 +380,40 @@ export class AcquisitionService {
         continue;
       }
 
-      this.db.transaction((tx) => {
-        const { missingSince: _drop, ...rest } = data;
-        tx.update(schema.downloadQueueEntry)
-          .set({ status: "removed", data: rest, updatedAt: now })
-          .where(eq(schema.downloadQueueEntry.id, entry.id))
-          .run();
-        tx.insert(schema.historyEntry).values({
-          id: newEntityId("hist"),
-          mediaType: entry.mediaType,
-          mediaId: entry.mediaId,
-          action: "removed",
-          data: { title: entry.title, downloadId: entry.downloadId },
-          createdAt: now,
-        }).run();
-      });
+      if (this.db.dbDialect === "postgres") {
+        // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+        // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+        await this.db.transaction(async (tx) => {
+          const { missingSince: _drop, ...rest } = data;
+          await tx.update(schema.downloadQueueEntry)
+            .set({ status: "removed", data: rest, updatedAt: now })
+            .where(eq(schema.downloadQueueEntry.id, entry.id));
+          await tx.insert(schema.historyEntry).values({
+            id: newEntityId("hist"),
+            mediaType: entry.mediaType,
+            mediaId: entry.mediaId,
+            action: "removed",
+            data: { title: entry.title, downloadId: entry.downloadId },
+            createdAt: now,
+          });
+        });
+      } else {
+        this.db.transaction((tx) => {
+          const { missingSince: _drop, ...rest } = data;
+          tx.update(schema.downloadQueueEntry)
+            .set({ status: "removed", data: rest, updatedAt: now })
+            .where(eq(schema.downloadQueueEntry.id, entry.id))
+            .run();
+          tx.insert(schema.historyEntry).values({
+            id: newEntityId("hist"),
+            mediaType: entry.mediaType,
+            mediaId: entry.mediaId,
+            action: "removed",
+            data: { title: entry.title, downloadId: entry.downloadId },
+            createdAt: now,
+          }).run();
+        });
+      }
     }
   }
 
@@ -386,39 +432,76 @@ export class AcquisitionService {
     const exhausted = attempts >= MAX_IMPORT_ATTEMPTS;
     const now = new Date().toISOString();
 
-    this.db.transaction((tx) => {
-      tx.update(schema.downloadQueueEntry)
-        .set({
-          status: exhausted ? "failed" : entry.status,
-          errorMessage: err.message,
-          data: { ...data, importAttempts: attempts, lastImportError: err.message },
-          updatedAt: now,
-        })
-        .where(eq(schema.downloadQueueEntry.id, entry.id))
-        .run();
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        await tx.update(schema.downloadQueueEntry)
+          .set({
+            status: exhausted ? "failed" : entry.status,
+            errorMessage: err.message,
+            data: { ...data, importAttempts: attempts, lastImportError: err.message },
+            updatedAt: now,
+          })
+          .where(eq(schema.downloadQueueEntry.id, entry.id));
 
-      if (exhausted) {
-        tx.insert(schema.historyEntry).values({
-          id: newEntityId("hist"),
-          mediaType: entry.mediaType,
-          mediaId: entry.mediaId,
-          action: "import_failed",
-          data: { title: entry.title, downloadId: entry.downloadId, error: err.message, attempts },
-          createdAt: now,
-        }).run();
-        // Release-level failure (we downloaded it and it wasn't usable N times running) —
-        // blocklist it so RSS sync and manual grab both stop offering it again. Deliberately
-        // NOT done for client/indexer-outage failures (DownloadClientFailed/IndexerFailed) —
-        // those mean "try again later," not "never again."
-        this.blocklist.addSync(tx, {
-          mediaType: entry.mediaType as "movie" | "series",
-          mediaId: entry.mediaId,
-          title: entry.title,
-          indexerId: (data as { indexerId?: string }).indexerId ?? null,
-          reason: `import failed after ${attempts} attempts: ${err.message}`,
-        });
-      }
-    });
+        if (exhausted) {
+          await tx.insert(schema.historyEntry).values({
+            id: newEntityId("hist"),
+            mediaType: entry.mediaType,
+            mediaId: entry.mediaId,
+            action: "import_failed",
+            data: { title: entry.title, downloadId: entry.downloadId, error: err.message, attempts },
+            createdAt: now,
+          });
+          // Release-level failure (we downloaded it and it wasn't usable N times running) —
+          // blocklist it so RSS sync and manual grab both stop offering it again. Deliberately
+          // NOT done for client/indexer-outage failures (DownloadClientFailed/IndexerFailed) —
+          // those mean "try again later," not "never again."
+          await this.blocklist.addSyncAsync(tx, {
+            mediaType: entry.mediaType as "movie" | "series",
+            mediaId: entry.mediaId,
+            title: entry.title,
+            indexerId: (data as { indexerId?: string }).indexerId ?? null,
+            reason: `import failed after ${attempts} attempts: ${err.message}`,
+          });
+        }
+      });
+    } else {
+      this.db.transaction((tx) => {
+        tx.update(schema.downloadQueueEntry)
+          .set({
+            status: exhausted ? "failed" : entry.status,
+            errorMessage: err.message,
+            data: { ...data, importAttempts: attempts, lastImportError: err.message },
+            updatedAt: now,
+          })
+          .where(eq(schema.downloadQueueEntry.id, entry.id))
+          .run();
+
+        if (exhausted) {
+          tx.insert(schema.historyEntry).values({
+            id: newEntityId("hist"),
+            mediaType: entry.mediaType,
+            mediaId: entry.mediaId,
+            action: "import_failed",
+            data: { title: entry.title, downloadId: entry.downloadId, error: err.message, attempts },
+            createdAt: now,
+          }).run();
+          // Release-level failure (we downloaded it and it wasn't usable N times running) —
+          // blocklist it so RSS sync and manual grab both stop offering it again. Deliberately
+          // NOT done for client/indexer-outage failures (DownloadClientFailed/IndexerFailed) —
+          // those mean "try again later," not "never again."
+          this.blocklist.addSync(tx, {
+            mediaType: entry.mediaType as "movie" | "series",
+            mediaId: entry.mediaId,
+            title: entry.title,
+            indexerId: (data as { indexerId?: string }).indexerId ?? null,
+            reason: `import failed after ${attempts} attempts: ${err.message}`,
+          });
+        }
+      });
+    }
 
     this.logger.warn(
       `import failed for "${entry.title}" (attempt ${attempts}/${MAX_IMPORT_ATTEMPTS}${exhausted ? ", giving up" : ""}): ${err.message}`,
@@ -541,16 +624,31 @@ export class AcquisitionService {
     const mediaFileId = newEntityId("mf");
     const relativePath = relative(root, targetFile);
 
-    this.db.transaction((tx) => {
-      tx.insert(schema.mediaFile).values({
-        id: mediaFileId, mediaType: "movie", mediaId: movie[0].id, episodeIds: [],
-        relativePath, size, quality, dateAdded: now,
-      }).run();
-      tx.update(schema.movie).set({ hasFile: true, updatedAt: now }).where(eq(schema.movie.id, movie[0].id)).run();
-      this.markAvailabilitySync(tx, "movie", movie[0].id, now);
-      this.insertHistorySync(tx, "movie", movie[0].id, now, { title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked });
-      this.markEntryImportedSync(tx, entry, now);
-    });
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        await tx.insert(schema.mediaFile).values({
+          id: mediaFileId, mediaType: "movie", mediaId: movie[0].id, episodeIds: [],
+          relativePath, size, quality, dateAdded: now,
+        });
+        await tx.update(schema.movie).set({ hasFile: true, updatedAt: now }).where(eq(schema.movie.id, movie[0].id));
+        await this.markAvailability(tx, "movie", movie[0].id, now);
+        await this.insertHistory(tx, "movie", movie[0].id, now, { title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked });
+        await this.markEntryImported(tx, entry, now);
+      });
+    } else {
+      this.db.transaction((tx) => {
+        tx.insert(schema.mediaFile).values({
+          id: mediaFileId, mediaType: "movie", mediaId: movie[0].id, episodeIds: [],
+          relativePath, size, quality, dateAdded: now,
+        }).run();
+        tx.update(schema.movie).set({ hasFile: true, updatedAt: now }).where(eq(schema.movie.id, movie[0].id)).run();
+        this.markAvailabilitySync(tx, "movie", movie[0].id, now);
+        this.insertHistorySync(tx, "movie", movie[0].id, now, { title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked });
+        this.markEntryImportedSync(tx, entry, now);
+      });
+    }
     this.emitImport("movie", movie[0].id, movie[0].title, item.downloadId, targetFile, mediaFileId);
     return { imported: [{ mediaFileId, path: targetFile, size, hardlinked, episodeIds: [] }], rejected: [] };
   }
@@ -680,27 +778,53 @@ export class AcquisitionService {
     // set of new media_file rows, episode.hasFile flips, superseded-file deletes,
     // availability update, history entry and queue-entry status change all land, or none do.
     const imported: ImportedFile[] = appliedIO.map((io) => ({ mediaFileId: io.mediaFileId, path: io.path, size: io.size, hardlinked: io.hardlinked, episodeIds: io.episodeIds }));
-    this.db.transaction((tx) => {
-      for (const io of appliedIO) {
-        tx.insert(schema.mediaFile).values({
-          id: io.mediaFileId, mediaType: "series", mediaId: series[0].id, episodeIds: io.episodeIds,
-          relativePath: io.relativePath, size: io.size, quality: releaseQuality, dateAdded: now,
-        }).run();
-        for (const epId of io.episodeIds) {
-          tx.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, epId)).run();
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        for (const io of appliedIO) {
+          await tx.insert(schema.mediaFile).values({
+            id: io.mediaFileId, mediaType: "series", mediaId: series[0].id, episodeIds: io.episodeIds,
+            relativePath: io.relativePath, size: io.size, quality: releaseQuality, dateAdded: now,
+          });
+          for (const epId of io.episodeIds) {
+            await tx.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, epId));
+          }
         }
-      }
-      for (const f of toDeleteOld) {
-        tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
-      }
-      this.markAvailabilitySync(tx, "series", series[0].id, now);
-      this.insertHistorySync(tx, "series", series[0].id, now, {
-        title: releaseTitle, downloadId: item.downloadId, season,
-        imported: imported.map((f) => ({ mediaFileId: f.mediaFileId, path: f.path, episodes: f.episodeIds.map((id) => epNumberById.get(id)) })),
-        rejected,
+        for (const f of toDeleteOld) {
+          await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id));
+        }
+        await this.markAvailability(tx, "series", series[0].id, now);
+        await this.insertHistory(tx, "series", series[0].id, now, {
+          title: releaseTitle, downloadId: item.downloadId, season,
+          imported: imported.map((f) => ({ mediaFileId: f.mediaFileId, path: f.path, episodes: f.episodeIds.map((id) => epNumberById.get(id)) })),
+          rejected,
+        });
+        await this.markEntryImported(tx, entry, now);
       });
-      this.markEntryImportedSync(tx, entry, now);
-    });
+    } else {
+      this.db.transaction((tx) => {
+        for (const io of appliedIO) {
+          tx.insert(schema.mediaFile).values({
+            id: io.mediaFileId, mediaType: "series", mediaId: series[0].id, episodeIds: io.episodeIds,
+            relativePath: io.relativePath, size: io.size, quality: releaseQuality, dateAdded: now,
+          }).run();
+          for (const epId of io.episodeIds) {
+            tx.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, epId)).run();
+          }
+        }
+        for (const f of toDeleteOld) {
+          tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
+        }
+        this.markAvailabilitySync(tx, "series", series[0].id, now);
+        this.insertHistorySync(tx, "series", series[0].id, now, {
+          title: releaseTitle, downloadId: item.downloadId, season,
+          imported: imported.map((f) => ({ mediaFileId: f.mediaFileId, path: f.path, episodes: f.episodeIds.map((id) => epNumberById.get(id)) })),
+          rejected,
+        });
+        this.markEntryImportedSync(tx, entry, now);
+      });
+    }
 
     // Phase 3 (async, best-effort): physical deletion of superseded files, only after the
     // DB transaction that stopped referencing them has committed — if this step fails or
@@ -774,17 +898,33 @@ export class AcquisitionService {
 
     const mediaFileId = newEntityId("mf");
     const relativePath = relative(root, targetFile);
-    this.db.transaction((tx) => {
-      tx.insert(schema.mediaFile).values({
-        id: mediaFileId, mediaType: "series", mediaId: series.id, episodeIds: [],
-        relativePath, size, quality, dateAdded: now,
-      }).run();
-      this.markAvailabilitySync(tx, "series", series.id, now);
-      this.insertHistorySync(tx, "series", series.id, now, {
-        title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked, episodeMatched: false,
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        await tx.insert(schema.mediaFile).values({
+          id: mediaFileId, mediaType: "series", mediaId: series.id, episodeIds: [],
+          relativePath, size, quality, dateAdded: now,
+        });
+        await this.markAvailability(tx, "series", series.id, now);
+        await this.insertHistory(tx, "series", series.id, now, {
+          title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked, episodeMatched: false,
+        });
+        await this.markEntryImported(tx, entry, now);
       });
-      this.markEntryImportedSync(tx, entry, now);
-    });
+    } else {
+      this.db.transaction((tx) => {
+        tx.insert(schema.mediaFile).values({
+          id: mediaFileId, mediaType: "series", mediaId: series.id, episodeIds: [],
+          relativePath, size, quality, dateAdded: now,
+        }).run();
+        this.markAvailabilitySync(tx, "series", series.id, now);
+        this.insertHistorySync(tx, "series", series.id, now, {
+          title: entry.title, downloadId: item.downloadId, path: targetFile, size, mediaFileId, hardlinked, episodeMatched: false,
+        });
+        this.markEntryImportedSync(tx, entry, now);
+      });
+    }
     this.emitImport("series", series.id, series.title, item.downloadId, targetFile, mediaFileId);
     return { imported: [{ mediaFileId, path: targetFile, size, hardlinked, episodeIds: [] }], rejected: [] };
   }
@@ -843,6 +983,44 @@ export class AcquisitionService {
       .set({ status: "imported", progress: 100, errorMessage: null, updatedAt: now })
       .where(eq(schema.downloadQueueEntry.id, entry.id))
       .run();
+  }
+
+  /** Async counterpart of `markAvailabilitySync`, for use inside a Postgres transaction
+   *  callback (roadmap P2 item 12 Stage 2 — Postgres transaction bodies are async). */
+  private async markAvailability(tx: Tx, mediaType: "movie" | "series", mediaId: string, now: string): Promise<void> {
+    const status = mediaType === "movie" ? "available" : await this.seriesAvailability(tx, mediaId);
+    await ensureAvailabilityTx(tx, mediaType, mediaId);
+    await tx.update(schema.mediaAvailability)
+      .set({ status, lastAvailabilitySyncAt: now })
+      .where(and(
+        eq(schema.mediaAvailability.mediaType, mediaType),
+        eq(schema.mediaAvailability.mediaId, mediaId),
+      ));
+  }
+
+  /** Async counterpart of `seriesAvailabilitySync`, for use inside a Postgres transaction. */
+  private async seriesAvailability(tx: Tx, seriesId: string): Promise<"available" | "partially_available"> {
+    const missing = await tx.select({ n: count() }).from(schema.episode)
+      .where(and(
+        eq(schema.episode.seriesId, seriesId),
+        eq(schema.episode.monitored, true),
+        eq(schema.episode.hasFile, false),
+      ));
+    return Number(missing[0]?.n ?? 0) === 0 ? "available" : "partially_available";
+  }
+
+  /** Async counterpart of `insertHistorySync`, for use inside a Postgres transaction. */
+  private async insertHistory(tx: Tx, mediaType: string, mediaId: string, now: string, data: Record<string, unknown>): Promise<void> {
+    await tx.insert(schema.historyEntry).values({
+      id: newEntityId("hist"), mediaType, mediaId, action: "import_completed", data, createdAt: now,
+    });
+  }
+
+  /** Async counterpart of `markEntryImportedSync`, for use inside a Postgres transaction. */
+  private async markEntryImported(tx: Tx, entry: QueueEntryRow, now: string): Promise<void> {
+    await tx.update(schema.downloadQueueEntry)
+      .set({ status: "imported", progress: 100, errorMessage: null, updatedAt: now })
+      .where(eq(schema.downloadQueueEntry.id, entry.id));
   }
 
   /**

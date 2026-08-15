@@ -45,17 +45,33 @@ export class ActivityService {
     }
 
     const now = new Date().toISOString();
-    await this.db.transaction((tx) => {
-      tx.delete(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, id)).run();
-      tx.insert(schema.historyEntry).values({
-        id: newEntityId("hist"),
-        mediaType: entry.mediaType,
-        mediaId: entry.mediaId,
-        action: "removed",
-        data: { title: entry.title, downloadId: entry.downloadId },
-        createdAt: now,
-      }).run();
-    });
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        await tx.delete(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, id));
+        await tx.insert(schema.historyEntry).values({
+          id: newEntityId("hist"),
+          mediaType: entry.mediaType,
+          mediaId: entry.mediaId,
+          action: "removed",
+          data: { title: entry.title, downloadId: entry.downloadId },
+          createdAt: now,
+        });
+      });
+    } else {
+      this.db.transaction((tx) => {
+        tx.delete(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, id)).run();
+        tx.insert(schema.historyEntry).values({
+          id: newEntityId("hist"),
+          mediaType: entry.mediaType,
+          mediaId: entry.mediaId,
+          action: "removed",
+          data: { title: entry.title, downloadId: entry.downloadId },
+          createdAt: now,
+        }).run();
+      });
+    }
 
     return { removed: id };
   }
@@ -81,17 +97,33 @@ export class ActivityService {
         }
       }
       const now = new Date().toISOString();
-      this.db.transaction((tx) => {
-        tx.delete(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, id)).run();
-        tx.insert(schema.historyEntry).values({
-          id: newEntityId("hist"),
-          mediaType: entry.mediaType,
-          mediaId: entry.mediaId,
-          action: "removed",
-          data: { title: entry.title, downloadId: entry.downloadId },
-          createdAt: now,
-        }).run();
-      });
+      if (this.db.dbDialect === "postgres") {
+        // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+        // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+        await this.db.transaction(async (tx) => {
+          await tx.delete(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, id));
+          await tx.insert(schema.historyEntry).values({
+            id: newEntityId("hist"),
+            mediaType: entry.mediaType,
+            mediaId: entry.mediaId,
+            action: "removed",
+            data: { title: entry.title, downloadId: entry.downloadId },
+            createdAt: now,
+          });
+        });
+      } else {
+        this.db.transaction((tx) => {
+          tx.delete(schema.downloadQueueEntry).where(eq(schema.downloadQueueEntry.id, id)).run();
+          tx.insert(schema.historyEntry).values({
+            id: newEntityId("hist"),
+            mediaType: entry.mediaType,
+            mediaId: entry.mediaId,
+            action: "removed",
+            data: { title: entry.title, downloadId: entry.downloadId },
+            createdAt: now,
+          }).run();
+        });
+      }
       removed++;
     }
     return { removed };
@@ -100,7 +132,7 @@ export class ActivityService {
   /** Bulk-delete history entries (roadmap C4). Returns how many rows were removed. */
   async bulkRemoveHistory(ids: string[]): Promise<{ removed: number }> {
     if (ids.length === 0) return { removed: 0 };
-    const res = this.db.delete(schema.historyEntry).where(inArray(schema.historyEntry.id, ids)).run();
+    const res = await this.db.delete(schema.historyEntry).where(inArray(schema.historyEntry.id, ids));
     return { removed: res.changes };
   }
 }

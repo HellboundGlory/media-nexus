@@ -69,10 +69,19 @@ export class RootFoldersService {
       isDefault: makeDefault,
       createdAt: now,
     };
-    this.db.transaction((tx) => {
-      if (makeDefault) tx.update(schema.rootFolder).set({ isDefault: false }).run();
-      tx.insert(schema.rootFolder).values(row).run();
-    });
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        if (makeDefault) await tx.update(schema.rootFolder).set({ isDefault: false });
+        await tx.insert(schema.rootFolder).values(row);
+      });
+    } else {
+      this.db.transaction((tx) => {
+        if (makeDefault) tx.update(schema.rootFolder).set({ isDefault: false }).run();
+        tx.insert(schema.rootFolder).values(row).run();
+      });
+    }
     return row;
   }
 
@@ -81,13 +90,25 @@ export class RootFoldersService {
     const inUse = await this.referencedBy(row.path);
     if (inUse) throw new ApiError({ code: "CONFLICT", message: `Root folder is in use by ${inUse}` });
 
-    this.db.transaction((tx) => {
-      tx.delete(schema.rootFolder).where(eq(schema.rootFolder.id, id)).run();
-      if (row.isDefault) {
-        const next = tx.select().from(schema.rootFolder).orderBy(asc(schema.rootFolder.createdAt)).all()[0];
-        if (next) tx.update(schema.rootFolder).set({ isDefault: true }).where(eq(schema.rootFolder.id, next.id)).run();
-      }
-    });
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        await tx.delete(schema.rootFolder).where(eq(schema.rootFolder.id, id));
+        if (row.isDefault) {
+          const next = (await tx.select().from(schema.rootFolder).orderBy(asc(schema.rootFolder.createdAt)).limit(1))[0];
+          if (next) await tx.update(schema.rootFolder).set({ isDefault: true }).where(eq(schema.rootFolder.id, next.id));
+        }
+      });
+    } else {
+      this.db.transaction((tx) => {
+        tx.delete(schema.rootFolder).where(eq(schema.rootFolder.id, id)).run();
+        if (row.isDefault) {
+          const next = tx.select().from(schema.rootFolder).orderBy(asc(schema.rootFolder.createdAt)).all()[0];
+          if (next) tx.update(schema.rootFolder).set({ isDefault: true }).where(eq(schema.rootFolder.id, next.id)).run();
+        }
+      });
+    }
     return { removed: id };
   }
 
@@ -98,12 +119,23 @@ export class RootFoldersService {
     const existing = await this.get(id);
     const name = input.name !== undefined ? (input.name || existing.path) : existing.name;
     const isDefault = input.isDefault !== undefined ? input.isDefault : existing.isDefault;
-    this.db.transaction((tx) => {
-      if (isDefault && !existing.isDefault) {
-        tx.update(schema.rootFolder).set({ isDefault: false }).run(); // single-default invariant
-      }
-      tx.update(schema.rootFolder).set({ name, isDefault }).where(eq(schema.rootFolder.id, id)).run();
-    });
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        if (isDefault && !existing.isDefault) {
+          await tx.update(schema.rootFolder).set({ isDefault: false }); // single-default invariant
+        }
+        await tx.update(schema.rootFolder).set({ name, isDefault }).where(eq(schema.rootFolder.id, id));
+      });
+    } else {
+      this.db.transaction((tx) => {
+        if (isDefault && !existing.isDefault) {
+          tx.update(schema.rootFolder).set({ isDefault: false }).run(); // single-default invariant
+        }
+        tx.update(schema.rootFolder).set({ name, isDefault }).where(eq(schema.rootFolder.id, id)).run();
+      });
+    }
     return this.get(id);
   }
 

@@ -3,7 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { and, asc, eq } from "drizzle-orm";
 import { newEntityId } from "@medianexus/shared";
 import { ApiError } from "@medianexus/shared";
-import { combine, deletePolymorphicRows, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
+import { combine, deletePolymorphicRows, deletePolymorphicRowsAsync, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
@@ -98,18 +98,33 @@ export class MoviesService {
 
   async remove(id: string) {
     const row = await this.get(id);
-    this.db.transaction((tx) => {
-      deletePolymorphicRows(tx, "movie", id);
-      tx.delete(schema.movie).where(eq(schema.movie.id, id)).run();
-      // C2 import lists: a manually-removed title is excluded from re-import by the next
-      // list sync (idempotent; best-effort, only when it has a stable external id).
-      if (row.tmdbId != null) {
-        tx.insert(schema.importExclusion).values({
-          id: `excl-movie-${row.tmdbId}`, mediaType: "movie", externalId: String(row.tmdbId),
-          reason: "removed from library", createdAt: new Date().toISOString(),
-        }).onConflictDoNothing().run();
-      }
-    });
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        await deletePolymorphicRowsAsync(tx, "movie", id);
+        await tx.delete(schema.movie).where(eq(schema.movie.id, id));
+        if (row.tmdbId != null) {
+          await tx.insert(schema.importExclusion).values({
+            id: `excl-movie-${row.tmdbId}`, mediaType: "movie", externalId: String(row.tmdbId),
+            reason: "removed from library", createdAt: new Date().toISOString(),
+          }).onConflictDoNothing();
+        }
+      });
+    } else {
+      this.db.transaction((tx) => {
+        deletePolymorphicRows(tx, "movie", id);
+        tx.delete(schema.movie).where(eq(schema.movie.id, id)).run();
+        // C2 import lists: a manually-removed title is excluded from re-import by the next
+        // list sync (idempotent; best-effort, only when it has a stable external id).
+        if (row.tmdbId != null) {
+          tx.insert(schema.importExclusion).values({
+            id: `excl-movie-${row.tmdbId}`, mediaType: "movie", externalId: String(row.tmdbId),
+            reason: "removed from library", createdAt: new Date().toISOString(),
+          }).onConflictDoNothing().run();
+        }
+      });
+    }
     this.events.publish(EventTypes.MovieRemoved, { movieId: id }, { aggType: "movie", aggId: id });
     return { removed: id };
   }

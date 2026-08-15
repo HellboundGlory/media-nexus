@@ -11,7 +11,7 @@ docker compose ps      # health check turns green (start_period)
 | Service | Port | Notes |
 |---|---|---|
 | `app` | `${WEB_PORT:-8080}` → container `7373` | single container: NestJS API serves the built web UI directly (static assets + SPA fallback) and swagger at `/api/docs` |
-| *(planned)* `postgres` | n/a | PostgreSQL wired when the PG driver lands (roadmap M1.1); today the default is SQLite on a volume |
+| *(optional)* `postgres` | n/a | Not included in compose by default — the default remains SQLite on a volume. Postgres is fully supported by the driver (roadmap M1.1/M1.2): to use it, run your own `postgres` service/instance and point `DATABASE_URL` at it (see below). |
 
 This is **one container, one port** — there is no separate `web`/nginx container and no reverse proxy. The first
 time you open it, you'll be walked through creating a single admin login (see [docs/security.md](../security.md)) —
@@ -21,8 +21,13 @@ public internet.
 ## Volumes / persistence
 
 - `./data/db:/data/db` — SQLite database (default). All app config/settings live here (the `setting` table), not in a
-  separate config directory. Postgres is not wired into compose yet (roadmap M1.1); once it lands, point
-  `DATABASE_URL` at it instead of using this volume.
+  separate config directory.
+- **Using Postgres instead:** point `DATABASE_URL` at your Postgres instance (e.g.
+  `postgres://user:password@host:5432/medianexus`). The app connects, self-migrates, seeds, and runs its startup
+  backfills against Postgres on boot exactly as it does for SQLite. When you switch dialects, the `data/db` volume is
+  simply unused; you'd migrate your data with `pg_dump`/restore or the import tool first (see
+  [upgrade-and-migration.md](upgrade-and-migration.md)). Note the online backup feature is SQLite-only — on Postgres,
+  the `system.backup` job degrades to `{skipped}`; use `pg_dump` for backups.
 - `./data/media:/data/media` — media library (mount the host library here)
 - `./data/downloads:/data/downloads` — downloads staging (must be same filesystem as media for hardlinks)
 

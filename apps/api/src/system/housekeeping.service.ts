@@ -54,12 +54,38 @@ export class HousekeepingService {
     const orphanCondition = (mediaTypeCol: SQLiteColumn, mediaIdCol: SQLiteColumn, mediaType: "movie" | "series", ids: string[]) =>
       ids.length ? and(eq(mediaTypeCol, mediaType), notInArray(mediaIdCol, ids)) : eq(mediaTypeCol, mediaType);
 
-    return this.db.transaction((tx) => {
-      // Deliberately written out per table (not genericized over a union table type) —
-      // matches the style of deletePolymorphicRows() in media/library.helpers.ts.
-      const sweep = (mediaTypeCol: SQLiteColumn, mediaIdCol: SQLiteColumn, del: (cond: ReturnType<typeof orphanCondition>) => number): number =>
-        del(orphanCondition(mediaTypeCol, mediaIdCol, "movie", movieIds)) + del(orphanCondition(mediaTypeCol, mediaIdCol, "series", seriesIds));
+    // better-sqlite3's native transaction wrapper needs a synchronous callback; node-postgres's
+    // needs an async one — two irreconcilable signatures, so Postgres gets its own async body
+    // (roadmap P2 item 12 Stage 2; see ADR-004).
+    if (this.db.dbDialect === "postgres") {
+      const sweepAsync = async (mediaTypeCol: SQLiteColumn, mediaIdCol: SQLiteColumn, del: (cond: ReturnType<typeof orphanCondition>) => Promise<number>): Promise<number> =>
+        (await del(orphanCondition(mediaTypeCol, mediaIdCol, "movie", movieIds))) + (await del(orphanCondition(mediaTypeCol, mediaIdCol, "series", seriesIds)));
+      return await this.db.transaction(async (tx) => {
+        const orphansRemoved = {
+          mediaFile: await sweepAsync(schema.mediaFile.mediaType, schema.mediaFile.mediaId, async (cond) => (await tx.delete(schema.mediaFile).where(cond)).changes),
+          downloadQueueEntry: await sweepAsync(schema.downloadQueueEntry.mediaType, schema.downloadQueueEntry.mediaId, async (cond) => (await tx.delete(schema.downloadQueueEntry).where(cond)).changes),
+          historyEntry: await sweepAsync(schema.historyEntry.mediaType, schema.historyEntry.mediaId, async (cond) => (await tx.delete(schema.historyEntry).where(cond)).changes),
+          mediaAvailability: await sweepAsync(schema.mediaAvailability.mediaType, schema.mediaAvailability.mediaId, async (cond) => (await tx.delete(schema.mediaAvailability).where(cond)).changes),
+          blocklistEntry: await sweepAsync(schema.blocklistEntry.mediaType, schema.blocklistEntry.mediaId, async (cond) => (await tx.delete(schema.blocklistEntry).where(cond)).changes),
+        };
+        const jobRunsTrimmed = (await tx.delete(schema.jobRun)
+          .where(and(inArray(schema.jobRun.status, TERMINAL_JOB_STATUSES), lt(schema.jobRun.createdAt, jobRunCutoff)))).changes;
+        const auditLogTrimmed = (await tx.delete(schema.auditLog)
+          .where(lt(schema.auditLog.createdAt, auditLogCutoff))).changes;
+        const queueEntriesTrimmed = (await tx.delete(schema.downloadQueueEntry)
+          .where(and(inArray(schema.downloadQueueEntry.status, [...TERMINAL_QUEUE_STATUSES]), lt(schema.downloadQueueEntry.updatedAt, queueCutoff)))).changes;
+        const blocklistTrimmed = (await tx.delete(schema.blocklistEntry)
+          .where(lt(schema.blocklistEntry.createdAt, blocklistCutoff))).changes;
+        return { orphansRemoved, jobRunsTrimmed, auditLogTrimmed, queueEntriesTrimmed, blocklistTrimmed };
+      });
+    }
 
+    // Deliberately written out per table (not genericized over a union table type) —
+    // matches the style of deletePolymorphicRows() in media/library.helpers.ts.
+    const sweep = (mediaTypeCol: SQLiteColumn, mediaIdCol: SQLiteColumn, del: (cond: ReturnType<typeof orphanCondition>) => number): number =>
+      del(orphanCondition(mediaTypeCol, mediaIdCol, "movie", movieIds)) + del(orphanCondition(mediaTypeCol, mediaIdCol, "series", seriesIds));
+
+    return this.db.transaction((tx) => {
       const orphansRemoved = {
         mediaFile: sweep(schema.mediaFile.mediaType, schema.mediaFile.mediaId, (cond) => tx.delete(schema.mediaFile).where(cond).run().changes),
         downloadQueueEntry: sweep(schema.downloadQueueEntry.mediaType, schema.downloadQueueEntry.mediaId, (cond) => tx.delete(schema.downloadQueueEntry).where(cond).run().changes),

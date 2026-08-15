@@ -131,6 +131,37 @@ export function ensureAvailabilitySync(tx: Tx, mediaType: MediaType, mediaId: st
   }).run();
 }
 
+/** Async counterpart of `ensureAvailabilitySync`, for use inside a Postgres
+ *  `db.transaction(async (tx) => ...)` callback (roadmap P2 item 12 Stage 2 — the two
+ *  transaction drivers have irreconcilable callback signatures, so Postgres transactions
+ *  need `await`-based bodies). Same upsert semantics. */
+export async function ensureAvailabilityTx(tx: Tx, mediaType: MediaType, mediaId: string): Promise<void> {
+  const existing = await tx.select({ id: schema.mediaAvailability.id })
+    .from(schema.mediaAvailability)
+    .where(and(
+      sql`${schema.mediaAvailability.mediaType} = ${mediaType}`,
+      sql`${schema.mediaAvailability.mediaId} = ${mediaId}`,
+    ))
+    .limit(1);
+  if (existing.length) return;
+  await tx.insert(schema.mediaAvailability).values({
+    id: newEntityId("av"),
+    mediaType,
+    mediaId,
+    status: "unknown",
+  });
+}
+
+/** Async counterpart of `deletePolymorphicRows`, for use inside a Postgres transaction
+ *  callback. Same application-level cascade semantics; `await`-based (see ADR-004 Stage 2). */
+export async function deletePolymorphicRowsAsync(tx: Tx, mediaType: MediaType, mediaId: string): Promise<void> {
+  await tx.delete(schema.mediaFile).where(and(eq(schema.mediaFile.mediaType, mediaType), eq(schema.mediaFile.mediaId, mediaId)));
+  await tx.delete(schema.downloadQueueEntry).where(and(eq(schema.downloadQueueEntry.mediaType, mediaType), eq(schema.downloadQueueEntry.mediaId, mediaId)));
+  await tx.delete(schema.historyEntry).where(and(eq(schema.historyEntry.mediaType, mediaType), eq(schema.historyEntry.mediaId, mediaId)));
+  await tx.delete(schema.mediaAvailability).where(and(eq(schema.mediaAvailability.mediaType, mediaType), eq(schema.mediaAvailability.mediaId, mediaId)));
+  await tx.delete(schema.blocklistEntry).where(and(eq(schema.blocklistEntry.mediaType, mediaType), eq(schema.blocklistEntry.mediaId, mediaId)));
+}
+
 /** Look up a quality profile in the shape the domain layer (`qualityAllowed`/
  *  `meetsCutoff`/decision engine) consumes. Shared by `DecisionService` (P0.3) and the
  *  import engine (P0.5) — one implementation of "resolve a title's assigned profile". */
