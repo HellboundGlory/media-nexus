@@ -132,4 +132,30 @@ describe("MetricsService — DB-sourced gauges (J8)", () => {
     expect(text).toContain('library_size_total{media_type="movie"} 1');
     expect(text).toContain('library_size_total{media_type="series"} 1');
   });
+
+  it("reports the duration of the most RECENTLY finished run, not the slowest ever (J8 review fix)", async () => {
+    const db = freshDb();
+    const base = Date.now();
+    const insert = (id: string, startedOffset: number, finishedOffset: number) =>
+      db.insert(schema.jobRun).values({
+        id, jobKey: "media.rssSync", status: "succeeded", trigger: "scheduled", attempt: 1,
+        progress: 100, message: null, error: null, payload: {}, result: {},
+        correlationId: null, dueAt: null,
+        startedAt: new Date(base + startedOffset).toISOString(),
+        finishedAt: new Date(base + finishedOffset).toISOString(),
+        createdAt: new Date(base + startedOffset).toISOString(),
+      } as never).run();
+
+    await insert("old-slow", 0, 60_000);      // older run: 60s duration
+    await insert("new-fast", 100_000, 102_000); // newer run: 2s duration
+
+    const m = new MetricsService();
+    m.setDb(db);
+    const text = await m.render();
+
+    // The last run finished later (fast, 2s) — the gauge must report THAT duration,
+    // not the older 60s slow run. This discriminates correct (recent) vs buggy (max).
+    expect(text).toContain('job_last_run_duration_seconds{job="media.rssSync"} 2.000');
+    expect(text).not.toContain('job_last_run_duration_seconds{job="media.rssSync"} 60.000');
+  });
 });

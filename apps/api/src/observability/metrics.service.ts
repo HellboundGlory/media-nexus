@@ -105,28 +105,30 @@ export class MetricsService {
       startedAt: schema.jobRun.startedAt,
       finishedAt: schema.jobRun.finishedAt,
     }).from(schema.jobRun);
-    // Most recent finished row per jobKey (two passes: latest finish overall for staleness,
-    // latest with both timestamps for duration).
-    const latestFinish = new Map<string, { finishedAt: number; status: string }>();
-    const latestDuration = new Map<string, number>();
+    // Most recently finished row per jobKey — both the duration and the staleness gauges
+    // are derived from THIS same row (the one with the greatest finishedAt), so
+    // `job_last_run_duration_seconds` really describes the last run, not the slowest run
+    // the job has ever had. duration is only set when that winning row has a startedAt.
+    const latestRun = new Map<string, { finishedAt: number; status: string; durationMs?: number }>();
     for (const row of jobRows) {
       if (!row.finishedAt) continue;
       const fin = new Date(row.finishedAt).getTime();
-      const cur = latestFinish.get(row.jobKey);
-      if (!cur || fin > cur.finishedAt) latestFinish.set(row.jobKey, { finishedAt: fin, status: row.status });
-      if (row.startedAt) {
-        const dur = fin - new Date(row.startedAt).getTime();
-        const prevDur = latestDuration.get(row.jobKey);
-        if (prevDur === undefined || dur > prevDur) latestDuration.set(row.jobKey, dur);
-      }
+      const cur = latestRun.get(row.jobKey);
+      if (cur && fin <= cur.finishedAt) continue; // not newer than the current winner
+      latestRun.set(row.jobKey, {
+        finishedAt: fin,
+        status: row.status,
+        durationMs: row.startedAt ? fin - new Date(row.startedAt).getTime() : undefined,
+      });
     }
     lines.push("# TYPE job_last_run_duration_seconds gauge");
-    for (const [jobKey, ms] of latestDuration) {
-      lines.push(`job_last_run_duration_seconds{job="${jobKey}"} ${(ms / 1000).toFixed(3)}`);
+    for (const [jobKey, run] of latestRun) {
+      if (run.durationMs === undefined) continue;
+      lines.push(`job_last_run_duration_seconds{job="${jobKey}"} ${(run.durationMs / 1000).toFixed(3)}`);
     }
     lines.push("# TYPE job_seconds_since_last_finish gauge");
     const now = Date.now();
-    for (const [jobKey, { finishedAt, status }] of latestFinish) {
+    for (const [jobKey, { finishedAt, status }] of latestRun) {
       lines.push(`job_seconds_since_last_finish{job="${jobKey}",status="${status}"} ${Math.max(0, (now - finishedAt) / 1000).toFixed(1)}`);
     }
 
