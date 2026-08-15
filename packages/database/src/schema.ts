@@ -435,6 +435,23 @@ export const auditLog = sqliteTable("audit_log", {
   createdAt: iso("created_at"),
 }, (t) => [index("audit_created_idx").on(t.createdAt), index("audit_entity_idx").on(t.entityType, t.entityId)]);
 
+// Durable event outbox (roadmap P2, gap H6): persists every domain event so audit + SSE
+// replay survive crashes/restarts. `seq` is the monotonic order key (rowid autoincrement);
+// `id` carries the DomainEvent's stable uuid used as the SSE `Last-Event-ID` cursor.
+export const eventOutbox = sqliteTable("event_outbox", {
+  seq: integer("seq").primaryKey({ autoIncrement: true }),
+  id: text("id").notNull(),
+  type: text("type").notNull(),
+  version: integer("version").notNull(),
+  occurredAt: text("occurred_at").notNull(),
+  correlationId: text("correlation_id").notNull(),
+  aggregate: json<Record<string, unknown>>("aggregate").notNull(),
+  payload: json("payload").notNull(),
+}, (t) => [
+  uniqueIndex("event_outbox_id_idx").on(t.id),
+  index("event_outbox_occurred_idx").on(t.occurredAt),
+]);
+
 // Health check registry (roadmap P1, gap report B9): persisted results of the
 // system.healthCheck job's run, one row per check key, upserted on every run so results
 // survive between runs and can be read without re-running (GET /api/v1/system/health).
@@ -499,6 +516,7 @@ export const schema = {
   jobDefinition,
   jobRun,
   auditLog,
+  eventOutbox,
   healthCheckResult,
   providerStatus,
   tag,
