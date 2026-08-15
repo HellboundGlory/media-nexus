@@ -5,36 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1786791485534,
-      "tag": "0000_worried_king_bedlam",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1786802760713,
-      "tag": "0001_goofy_killmonger",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1786808180617,
-      "tag": "0002_slow_serpent_society",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1786812995348,
-      "tag": "0003_high_madrox",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1786814108237,
-      "tag": "0004_remarkable_expediter",
+      "when": 1786817718541,
+      "tag": "0000_great_stephen_strange",
       "breakpoints": true
     }
   ]

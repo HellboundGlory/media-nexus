@@ -30,6 +30,16 @@ CREATE TABLE "audit_log" (
 	"created_at" text NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "auto_tag" (
+	"id" text PRIMARY KEY NOT NULL,
+	"name" text NOT NULL,
+	"remove_tags_automatically" boolean DEFAULT false NOT NULL,
+	"tags" jsonb DEFAULT '[]' NOT NULL,
+	"specifications" jsonb DEFAULT '[]' NOT NULL,
+	"created_at" text NOT NULL,
+	"updated_at" text NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "blocklist_entry" (
 	"id" text PRIMARY KEY NOT NULL,
 	"media_type" text NOT NULL,
@@ -91,6 +101,7 @@ CREATE TABLE "episode" (
 	"air_date_utc" text,
 	"monitored" boolean DEFAULT true NOT NULL,
 	"has_file" boolean DEFAULT false NOT NULL,
+	"media_file_id" text,
 	"scene_season_number" integer,
 	"scene_episode_number" integer
 );
@@ -268,7 +279,8 @@ CREATE TABLE "movie" (
 	"tags" jsonb DEFAULT '[]' NOT NULL,
 	"has_file" boolean DEFAULT false NOT NULL,
 	"added_at" text NOT NULL,
-	"updated_at" text NOT NULL
+	"updated_at" text NOT NULL,
+	"last_refreshed_at" text
 );
 --> statement-breakpoint
 CREATE TABLE "notification" (
@@ -322,6 +334,17 @@ CREATE TABLE "quality_profile" (
 	CONSTRAINT "quality_profile_name_unique" UNIQUE("name")
 );
 --> statement-breakpoint
+CREATE TABLE "release_profile" (
+	"id" text PRIMARY KEY NOT NULL,
+	"name" text NOT NULL,
+	"enabled" boolean DEFAULT true NOT NULL,
+	"required" jsonb DEFAULT '[]' NOT NULL,
+	"ignored" jsonb DEFAULT '[]' NOT NULL,
+	"tags" jsonb DEFAULT '[]' NOT NULL,
+	"created_at" text NOT NULL,
+	"updated_at" text NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "remote_path_mapping" (
 	"id" text PRIMARY KEY NOT NULL,
 	"download_client_id" text NOT NULL,
@@ -371,7 +394,8 @@ CREATE TABLE "series" (
 	"tags" jsonb DEFAULT '[]' NOT NULL,
 	"alternate_titles" jsonb DEFAULT '[]' NOT NULL,
 	"added_at" text NOT NULL,
-	"updated_at" text NOT NULL
+	"updated_at" text NOT NULL,
+	"last_refreshed_at" text
 );
 --> statement-breakpoint
 CREATE TABLE "setting" (
@@ -391,6 +415,7 @@ CREATE TABLE "tag" (
 ALTER TABLE "download_queue_entry" ADD CONSTRAINT "download_queue_entry_download_client_id_download_client_id_fk" FOREIGN KEY ("download_client_id") REFERENCES "public"."download_client"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "episode" ADD CONSTRAINT "episode_series_id_series_id_fk" FOREIGN KEY ("series_id") REFERENCES "public"."series"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "episode" ADD CONSTRAINT "episode_season_id_season_id_fk" FOREIGN KEY ("season_id") REFERENCES "public"."season"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "episode" ADD CONSTRAINT "episode_media_file_id_media_file_id_fk" FOREIGN KEY ("media_file_id") REFERENCES "public"."media_file"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "movie" ADD CONSTRAINT "movie_quality_profile_id_quality_profile_id_fk" FOREIGN KEY ("quality_profile_id") REFERENCES "public"."quality_profile"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "remote_path_mapping" ADD CONSTRAINT "remote_path_mapping_download_client_id_download_client_id_fk" FOREIGN KEY ("download_client_id") REFERENCES "public"."download_client"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "season" ADD CONSTRAINT "season_series_id_series_id_fk" FOREIGN KEY ("series_id") REFERENCES "public"."series"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -402,6 +427,7 @@ CREATE INDEX "audit_entity_idx" ON "audit_log" USING btree ("entity_type","entit
 CREATE INDEX "queue_media_idx" ON "download_queue_entry" USING btree ("media_type","media_id");--> statement-breakpoint
 CREATE INDEX "episode_series_idx" ON "episode" USING btree ("series_id");--> statement-breakpoint
 CREATE INDEX "episode_season_idx" ON "episode" USING btree ("season_id");--> statement-breakpoint
+CREATE INDEX "episode_media_file_idx" ON "episode" USING btree ("media_file_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "event_outbox_id_idx" ON "event_outbox" USING btree ("id");--> statement-breakpoint
 CREATE INDEX "event_outbox_occurred_idx" ON "event_outbox" USING btree ("occurred_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "health_check_result_key_idx" ON "health_check_result" USING btree ("key");--> statement-breakpoint

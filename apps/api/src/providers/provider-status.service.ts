@@ -67,7 +67,7 @@ export class ProviderStatusService {
       lastError: null,
       lastFailureAt: null,
       lastSuccessAt: null,
-      rateLimit: null,
+      rateLimit: {},
       updatedAt: now,
     };
     await this.db.insert(schema.providerStatus).values(row)

@@ -1,1 +1,0 @@
-ALTER TABLE `api_key` ADD `encrypted_key` text;

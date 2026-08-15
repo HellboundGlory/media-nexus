@@ -86,7 +86,7 @@ describe("MetricsService — DB-sourced gauges (J8)", () => {
     await db.insert(schema.providerStatus).values({
       id: "ps1", providerType: "indexer", providerId: "idx1", consecutiveFailures: 3,
       escalationLevel: 1, disabledUntil: null, autoDisabled: true, lastError: "boom",
-      lastFailureAt: now, lastSuccessAt: null, rateLimit: null, updatedAt: now,
+      lastFailureAt: now, lastSuccessAt: null, rateLimit: {}, updatedAt: now,
     }).run();
 
     // Job execution: a succeeded and a failed run for the same jobKey + another jobKey.

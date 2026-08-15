@@ -1,1 +1,0 @@
-ALTER TABLE `job_definition` ADD `last_executed_at` text;
