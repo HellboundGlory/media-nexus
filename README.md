@@ -68,7 +68,8 @@ See [docs/development/setup.md](docs/development/setup.md) for the full walkthro
   on grab/import/indexer-failure/download-client-failure events, per-event subscriptions + test endpoint; **Server-Sent
   Events** at `/api/v1/events` with UI live-refresh; **Prometheus `/metrics`**; **audit trail** endpoint + UI (movie/series
   add/remove, manual job runs); System page: Notifications, Audit.
-- **Foundations (M0).** NestJS API + Vite/React web monorepo, unified Drizzle schema (SQLite; PG planned), native
+- **Foundations (M0).** NestJS API + Vite/React web monorepo, unified Drizzle schema (dual-dialect: SQLite +
+  PostgreSQL, the runtime dialect chosen from the `DATABASE_URL` scheme at boot — see `docs/architecture/technology-decisions.md` ADR-004), native
   `/api/v1`, single-admin session login for the browser plus `X-Api-Key` auth for external/compat clients, DB-backed
   jobs + domain event bus.
 - **Compatibility (M6).** Real adapters under `/api/sonarr/v3`, `/api/radarr/v3`, `/api/prowlarr/v1`:

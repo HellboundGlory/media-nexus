@@ -44,8 +44,12 @@ This is the security guide + hardening baseline. **This is an engineering docume
   (`packages/shared/src/session.ts`). Changing the password bumps `passwordVersion`, which invalidates every
   previously-issued cookie — the only way sessions are revoked early; otherwise they expire after 30 days.
 - `MEDIA_NEXUS_SECRET` (encryption key) from env or `MEDIA_NEXUS_SECRET_FILE` (Docker secrets). Used for API-key
-  encryption and session signing; indexer/download-client/notification credentials are **not yet encrypted at
-  rest** (stored as plain JSON in `settings`) — see the hardening checklist below.
+  encryption and session signing; provider credentials — indexer/download-client/notification/media-server configs —
+  are **encrypted at rest** (AES-256-GCM, keyed from `MEDIA_NEXUS_SECRET`): a central codec
+  (`apps/api/src/secrets/provider-secrets.ts`) encrypts their secret leaf fields on write and decrypts them at read
+  boundaries (consumers always see plaintext), and an idempotent, non-destructive startup backfill
+  (`secret-backfill.ts`, runs after `runMigrations()`) encrypts any pre-existing plaintext rows in place and no-ops
+  on re-run (gap-report finding J9, shipped 2026-08-14) — see the hardening checklist below.
 - **Native API responses redact credentials**: `redactDeep()`/`redactSettings()` mask field names matching
   `api.?key | apikey | token | secret | password | pass | credential | user | username | chatid` in
   `/indexers`, `/download-clients`, `/system/config` and `/media-servers` responses (compat surfaces that need the
@@ -85,7 +89,7 @@ This is the security guide + hardening baseline. **This is an engineering docume
 - [x] Revealable API key without rotation (`GET /api/v1/auth/key`, AES-256-GCM at rest)
 - [x] Real login/session auth for the browser (`POST /api/v1/auth/login`, signed httpOnly cookie, rate-limited)
 - [ ] Scope enforcement beyond `*` (all keys/sessions remain full-access)
-- [ ] Encrypt indexer/download-client/notification credentials at rest (currently plain JSON in `settings`)
+- [x] Encrypt indexer/download-client/notification credentials at rest (AES-256-GCM, MEDIA_NEXUS_SECRET)
 - [ ] Secrets manager integration (e.g., Vault) for `MEDIA_NEXUS_SECRET`
 - [ ] Third-party dependency auditing (`npm audit` / Dependabot) as part of CI
 - [ ] 2FA / "skip auth for local addresses" (real Sonarr/Radarr features, deliberately out of scope for now)

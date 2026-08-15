@@ -245,7 +245,7 @@ no lockout window) with a Copy/Regenerate UI in System settings — the "refresh
 is now **done**; scope enforcement beyond `*` remains unbuilt (single-tier auth has no narrower scopes yet). Playwright
 browser E2E exists (`apps/web/e2e`, run locally via `npm run test:e2e`) but is no longer a CI job — it was flaky/
 non-blocking there and got removed rather than kept as noise; everything else is CI-gated (lint/typecheck/test) or
-locally verified. Remaining follow-ups: Postgres support, load-smoke/performance pass, Docker-container verification
+locally verified. Remaining follow-ups: load-smoke/performance pass, Docker-container verification
 in this dev environment. (JWT/Plex login sessions are no longer planned — auth is deliberately single-tier API-key
 now, see ADR-010; a future Plex integration is scoped as watchlist sync, not login.)
 
