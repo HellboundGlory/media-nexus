@@ -7,14 +7,14 @@ import { sonarrImporter } from "./upstream/sonarr";
 import { radarrImporter } from "./upstream/radarr";
 import { prowlarrImporter } from "./upstream/prowlarr";
 
-export const importers: Record<ImportKind, Importer> = {
+const importers: Record<ImportKind, Importer> = {
   sonarr: sonarrImporter,
   radarr: radarrImporter,
   prowlarr: prowlarrImporter,
 };
 
 /** Read access over an upstream sqlite file (better-sqlite3). */
-export function openSource(path: string): SourceDb {
+function openSource(path: string): SourceDb {
   const db = new Database(path, { readonly: true });
   const tables = () => (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map((r) => r.name);
   return {
@@ -28,7 +28,7 @@ export function openSource(path: string): SourceDb {
 }
 
 /** Determine the importer for a source DB; `kind` can be forced. */
-export function pickImporter(tables: string[], kind?: string): Importer | null {
+function pickImporter(tables: string[], kind?: string): Importer | null {
   if (kind && importers[kind as ImportKind]) return importers[kind as ImportKind];
   const detected = detectKind(tables);
   if (detected === "unknown") return null;

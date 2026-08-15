@@ -15,14 +15,14 @@ export interface NotificationSummary {
   detail?: string;
 }
 
-export function summarize(event: DomainEvent<any>): { title: string; body: string; meta: Record<string, unknown> } {
+function summarize(event: DomainEvent<any>): { title: string; body: string; meta: Record<string, unknown> } {
   const p = (event.payload ?? {}) as Record<string, unknown>;
   const title = humanTitle(event.type);
   const body = `[${event.type}] ${JSON.stringify(p)}`;
   return { title, body, meta: { eventType: event.type, correlationId: event.correlationId, aggregate: event.aggregate } };
 }
 
-export function humanTitle(type: string): string {
+function humanTitle(type: string): string {
   const map: Record<string, string> = {
     "acquisition.release.grabbed": "Release grabbed",
     "acquisition.import.completed": "Import completed",
@@ -93,5 +93,3 @@ export async function deliverToEmail(
   log("email delivered", messageId);
   return { kind: "email", ok: true, detail: messageId ?? "sent" };
 }
-
-export const NOTIFY_SINK_NAMES = ["webhook", "discord", "telegram", "email"] as const;

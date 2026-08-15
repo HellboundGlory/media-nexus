@@ -29,7 +29,7 @@ const settingsSchemas: Record<string, z.ZodType> = {
   memory: memoryClientSettingsSchema,
 };
 
-export const DOWNLOAD_CLIENT_IMPLEMENTATIONS = Object.keys(settingsSchemas);
+const DOWNLOAD_CLIENT_IMPLEMENTATIONS = Object.keys(settingsSchemas);
 
 @Injectable()
 export class DownloadClientsService {

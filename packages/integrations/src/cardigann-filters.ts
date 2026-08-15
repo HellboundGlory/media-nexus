@@ -32,13 +32,12 @@ function a(args: FilterArgs, i: number): string {
 }
 
 /** Filters the value pipeline applies (excluding row filters, which live in the provider). */
-export const VALUE_FILTER_NAMES = [
+const VALUE_FILTER_NAMES = [
   "querystring", "timeparse", "dateparse", "regexp", "re_replace", "split", "replace",
   "trim", "prepend", "append", "tolower", "toupper", "urldecode", "urlencode",
   "htmldecode", "htmlencode", "timeago", "reltime", "fuzzytime", "validfilename",
   "diacritics", "jsonjoinarray", "hexdump", "strdump", "validate",
 ] as const;
-export type ValueFilterName = (typeof VALUE_FILTER_NAMES)[number];
 
 const UNSUPPORTED = new Set<string>(["reltime", "strdump", "jsonjoinarray", "hexdump"]);
 
@@ -179,7 +178,7 @@ function validateFilter(value: string, args: FilterArg[]): string {
  *  - `\p{Is<Script>}` (Go) -> `\p{Script=<Script>}` (JS, needs `u`)
  *  - everything else passes through; enabled by construction by the caller with `g` for re_replace.
  */
-export function translateGoRegex(pattern: string): { source: string; flags: string } {
+function translateGoRegex(pattern: string): { source: string; flags: string } {
   let src = pattern;
   let flags = "";
   if (/\(\?i\)/.test(src)) { src = src.replace(/\(\?i\)/g, ""); flags += "i"; }
@@ -300,7 +299,7 @@ function unitMs(u: string): number | undefined {
 }
 
 /** Parse "X <unit> ago" / "X<unit>" style relative times → epoch ms, else null. */
-export function parseRelativeAgo(value: string): number | null {
+function parseRelativeAgo(value: string): number | null {
   const s = value.trim().toLowerCase();
   const re = /^(\d+(?:[.,]\d+)?)\s*(s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?|w|weeks?|months?|months|years?|year)\s*(ago)?$/;
   const m = re.exec(s);
@@ -328,7 +327,7 @@ function mergeTime(baseMs: number, hh: string, mm: string, ap: string | undefine
 }
 
 /** Fuzzy relative-time parser (Cardigann `fuzzytime`) — handles common tracker formats. */
-export function parseFuzzyTime(value: string): number | null {
+function parseFuzzyTime(value: string): number | null {
   // relative ago already handled
   const ago = parseRelativeAgo(value);
   if (ago !== null && /ago/.test(value)) return ago;

@@ -50,7 +50,7 @@ export function isEncrypted(value: string, secret: string | undefined): boolean 
 }
 
 /** Encrypt a scalar if it is a non-empty plaintext string; idempotent. Non-strings unchanged. Returns the input when no secret. */
-export function encryptSecretValue(value: unknown, secret: string | undefined): unknown {
+function encryptSecretValue(value: unknown, secret: string | undefined): unknown {
   if (!secret || typeof value !== "string" || value.length === 0) return value;
   return isEncrypted(value, secret) ? value : encryptSecret(value, secret);
 }
@@ -203,7 +203,7 @@ export function encryptSettingValue(key: string, value: unknown, secret: string 
 }
 
 /** Inverse of {@link encryptSettingValue} — tolerant decrypt, so plaintext passes through. */
-export function decryptSettingValue(key: string, value: unknown, secret: string | undefined): unknown {
+function decryptSettingValue(key: string, value: unknown, secret: string | undefined): unknown {
   switch (key) {
     case "metadata.tmdbApiKey":
       return decryptSecretValue(value, secret);

@@ -16,11 +16,6 @@ export type TplValue = unknown;
 /** A function usable inside a template action. */
 export type TplFunc = (...args: TplValue[]) => TplValue;
 
-/** The value a dotted path resolves against at any point. */
-export interface TplScope {
-  value: TplValue;
-}
-
 type Node =
   | { t: "text"; s: string }
   | { t: "action"; cmd: Atom[] }
@@ -155,7 +150,7 @@ function parseCommand(toks: string[]): Atom[] {
 }
 
 /** Parse a full template body into a node tree. */
-export function parseTemplate(tpl: string): Node[] {
+function parseTemplate(tpl: string): Node[] {
   const toks = tokenize(tpl);
   const root: Node[] = [];
   // Each frame describes an open {{ if }} / {{ range }} block. `prevItems` is the array

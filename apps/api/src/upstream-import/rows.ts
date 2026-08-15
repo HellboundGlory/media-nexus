@@ -31,7 +31,6 @@ export function jsonc<T = unknown>(row: Row, name: string, def: T): T {
   if (typeof v === "object") return v as T;
   try { return JSON.parse(String(v)) as T; } catch { return def; }
 }
-export const pad = (n: number, w = 2) => String(n).padStart(w, "0");
 
 /** Detect which upstream kind a DB is by the tables it has. */
 export function detectKind(tables: string[]): "sonarr" | "radarr" | "prowlarr" | "unknown" {

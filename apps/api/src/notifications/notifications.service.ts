@@ -32,8 +32,8 @@ import {
 export interface NotificationSinkResult extends NotificationSummary {
   target?: string;
 }
-export type NotifyKind = "webhook" | "discord" | "telegram" | "email";
-export const WATCHED = new Set([
+type NotifyKind = "webhook" | "discord" | "telegram" | "email";
+const WATCHED = new Set([
   "acquisition.release.grabbed",
   "acquisition.import.completed",
   "acquisition.import.failed",

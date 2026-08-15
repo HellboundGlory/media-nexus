@@ -19,7 +19,7 @@ import { sanitizeForPath, buildMovieFilename, buildEpisodeFilename, type Quality
  *  `@medianexus/domain` directly for new code. Was a Latin-only whitelist strip that
  *  collapsed any non-Latin title to "" (gap report B7) — now delegates to the
  *  transliterate-then-strip-illegal-chars implementation. */
-export function sanitizeTitle(title: string): string {
+function sanitizeTitle(title: string): string {
   return sanitizeForPath(title);
 }
 

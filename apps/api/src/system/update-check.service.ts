@@ -15,7 +15,7 @@ const VERSION_TAG = /^\d+\.\d+\.\d+$/;
 
 /** A completed update check (cache is warm). latestVersion/releaseUrl are null when the repo has
  * no release-version tags yet ("nothing to report") — that is a successful state, not an error. */
-export interface UpdateCheckResult {
+interface UpdateCheckResult {
   currentVersion: string;
   latestVersion: string | null;
   updateAvailable: boolean;
@@ -24,7 +24,7 @@ export interface UpdateCheckResult {
 }
 
 /** The endpoint's "not checked yet" shape — used until the first successful run() completes. */
-export interface UpdateCheckNotChecked {
+interface UpdateCheckNotChecked {
   checked: false;
   currentVersion: string;
   latestVersion: null;

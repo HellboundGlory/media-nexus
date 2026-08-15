@@ -18,7 +18,7 @@ export interface CardigannUpstreamSource {
 }
 
 /** Default source: the live Prowlarr/Indexers `definitions/v11` directory on GitHub. */
-export class GithubCardigannSource implements CardigannUpstreamSource {
+class GithubCardigannSource implements CardigannUpstreamSource {
   constructor(private readonly listUrl = "https://api.github.com/repos/Prowlarr/Indexers/contents/definitions/v11") {}
   async list(): Promise<UpstreamCardigannFile[]> {
     const res = await fetch(this.listUrl, { headers: { "User-Agent": "media-nexus" } });

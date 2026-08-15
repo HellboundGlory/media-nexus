@@ -99,7 +99,7 @@ export async function importIndexers(
 }
 
 /** Map an upstream History EventType int to a unified action. */
-export function mapHistoryAction(et: number | undefined): string {
+function mapHistoryAction(et: number | undefined): string {
   switch (et) {
     case 1: return "grabbed";
     case 2: case 3: case 13: return "import_completed";

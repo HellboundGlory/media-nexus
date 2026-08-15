@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-export type MinimumAvailability = "announced" | "in_cinemas" | "released" | "deleted";
+type MinimumAvailability = "announced" | "in_cinemas" | "released" | "deleted";
 
 export interface Movie {
   id: string;
@@ -34,13 +34,6 @@ export interface Series {
   addedAt: string;
 }
 
-export interface Season {
-  id: string;
-  seriesId: string;
-  seasonNumber: number;
-  monitored: boolean;
-}
-
 export interface Episode {
   id: string;
   seriesId: string;
@@ -53,15 +46,15 @@ export interface Episode {
   hasFile: boolean;
 }
 
-export interface WantedEpisode extends Episode {
+interface WantedEpisode extends Episode {
   seasonNumber: number;
   seriesTitle: string;
 }
-export interface WantedEpisodeRow extends WantedEpisode {
+interface WantedEpisodeRow extends WantedEpisode {
   mediaType: "series";
 }
 
-export interface WantedMovieRow {
+interface WantedMovieRow {
   mediaType: "movie";
   id: string;
   title: string;
@@ -111,7 +104,7 @@ export interface SystemStatus {
   database: { vendor: string };
 }
 
-export interface UpdateCheckResult {
+interface UpdateCheckResult {
   checked: true;
   currentVersion: string;
   latestVersion: string | null;
@@ -120,7 +113,7 @@ export interface UpdateCheckResult {
   checkedAt: string;
 }
 
-export interface UpdateCheckNotChecked {
+interface UpdateCheckNotChecked {
   checked: false;
   currentVersion: string;
   latestVersion: null;
@@ -246,7 +239,7 @@ export interface JobDefinition {
   nextRunAt?: string;
 }
 
-export interface HealthCheckResult {
+interface HealthCheckResult {
   key: string;
   ok: boolean;
   level: "ok" | "warning" | "error";

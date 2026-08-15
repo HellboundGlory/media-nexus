@@ -14,13 +14,6 @@ export interface CookiePair {
   value: string;
 }
 
-export class NoCookiesError extends Error {
-  constructor() {
-    super("no cookies in session");
-    this.name = "NoCookiesError";
-  }
-}
-
 export class CookieJar {
   private cookies: CookiePair[] = [];
 

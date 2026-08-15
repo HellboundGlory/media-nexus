@@ -42,7 +42,7 @@ import { RecycleBinService } from "../media/recycle-bin.service";
 export const TERMINAL_QUEUE_STATUSES = new Set(["imported", "removed", "failed", "download_failed"]);
 
 /** How many times an import may fail before the queue entry is parked as failed. */
-export const MAX_IMPORT_ATTEMPTS = 3;
+const MAX_IMPORT_ATTEMPTS = 3;
 
 /** A single "failed"/missing poll can be transient (a client mid-retry, a snapshot glitch),
  *  so both the download-failure and removed-from-client paths require this many consecutive

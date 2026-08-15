@@ -26,7 +26,7 @@ export interface PagedResult<T> {
   pageSize: number;
 }
 
-export const MAX_PAGE_SIZE = 100;
+const MAX_PAGE_SIZE = 100;
 
 export function normalizePaging(q: LibraryListQuery): { page: number; pageSize: number; offset: number } {
   const page = Math.max(1, q.page ?? 1);

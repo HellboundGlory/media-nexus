@@ -33,9 +33,9 @@ import {
   getProviderSecret,
 } from "../secrets/provider-secrets";
 
-export const MEMORY_INDEXER = Symbol("MEMORY_INDEXER");
+const MEMORY_INDEXER = Symbol("MEMORY_INDEXER");
 export const MEMORY_DOWNLOAD_CLIENT = Symbol("MEMORY_DOWNLOAD_CLIENT");
-export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
+const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
 
 /**
  * Provider instances + registry. The in-memory indexer/download-client providers are

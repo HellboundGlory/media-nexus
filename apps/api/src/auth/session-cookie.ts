@@ -5,7 +5,7 @@ import type { Request } from "express";
 // cookie name/value pair, and the `cookie` package's v2 type exports need a
 // moduleResolution setting ("bundler"/"node16") this project doesn't use elsewhere —
 // not worth changing tsconfig resolution mode project-wide for this.
-export const SESSION_COOKIE_NAME = "mn_session";
+const SESSION_COOKIE_NAME = "mn_session";
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // 30 days, matches signSession's expiry
 
 function serializeCookie(name: string, value: string, maxAgeSeconds: number): string {
