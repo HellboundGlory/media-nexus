@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { createDb, schema } from "@medianexus/database";
-import { runImport } from "../src/import/importer";
+import { runImport } from "../src/upstream-import/importer";
 
 let dir: string;
 const targets: { handle: ReturnType<typeof createDb> }[] = [];

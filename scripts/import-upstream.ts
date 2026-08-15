@@ -28,7 +28,7 @@ async function main(): Promise<void> {
   const handle = createDb(targetUrl);
   handle.runMigrations();
 
-  const { runImport } = await import("../apps/api/src/import/importer");
+  const { runImport } = await import("../apps/api/src/upstream-import/importer");
   const report = await runImport(sourcePath, handle.db, { onLog: (m) => console.log(m) });
   console.log("\nImport report:", JSON.stringify(report, null, 2));
   if (report.errors.length) { console.error("\nErrors:"); for (const e of report.errors) console.error(" -", e); }

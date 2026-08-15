@@ -19,7 +19,7 @@ import { LibraryScanService } from "../src/library-scan/library-scan.service";
 import { MediaRepository } from "../src/media/media.repository";
 import { EventsService } from "../src/events/events.service";
 import { movieFolderName, seriesFolderName } from "../src/media/naming.helpers";
-import { runImport } from "../src/import/importer";
+import { runImport } from "../src/upstream-import/importer";
 
 const dir = mkdtempSync(join(tmpdir(), "mn-scan-"));
 const handles: { close: () => void }[] = [];

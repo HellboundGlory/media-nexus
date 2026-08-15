@@ -29,7 +29,7 @@ const EMPTY_RESULT: ScanResult = { filesFound: 0, filesAdded: 0, filesRemoved: 0
 /**
  * Disk scan (roadmap P0.6, gap report B3): before this, the app only knew about files it
  * imported itself. Point it at an existing library — including one brought across by the
- * upstream DB importer (`apps/api/src/import/upstream/`), which copies series/episode/movie
+ * upstream DB importer (`apps/api/src/upstream-import/upstream/`), which copies series/episode/movie
  * rows but writes zero `media_file` rows — and every title read as missing forever.
  *
  * Scoped deliberately (see the P0.5 handoff this follows): reconciles files for
