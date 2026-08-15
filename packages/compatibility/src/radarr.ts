@@ -9,6 +9,7 @@ export interface RadarrNativeSource {
   listMovies(): Promise<CompatMovie[]>;
   getMovie(id: string): Promise<CompatMovie | null>;
   addMovie(input: Record<string, unknown>): Promise<CompatMovie>;
+  updateMovie(id: string, input: Record<string, unknown>): Promise<CompatMovie | null>;
   removeMovie(id: string): Promise<void>;
   qualityProfiles(): Promise<CompatQualityProfile[]>;
   runCommand(name: string, body: Record<string, unknown>): Promise<{ id: string; name: string }>;
@@ -39,6 +40,13 @@ function routes(s: RadarrNativeSource): CompatRoute[] {
     method: "POST", path: "/movie",
     handler: async (ctx: CompatContext) => json(await s.addMovie(ctx.body as Record<string, unknown>), 201),
   };
+  const update: CompatRoute = {
+    method: "PUT", path: "/movie/:id",
+    handler: async (ctx: CompatContext) => {
+      const row = await s.updateMovie(ctx.params.id, ctx.body as Record<string, unknown>);
+      return row ? json(row) : json({ message: "Not Found" }, 404);
+    },
+  };
   const del: CompatRoute = {
     method: "DELETE", path: "/movie/:id",
     handler: async (ctx: CompatContext) => { await s.removeMovie(ctx.params.id); return json(null, 200); },
@@ -55,7 +63,7 @@ function routes(s: RadarrNativeSource): CompatRoute[] {
       return json(await s.runCommand(body.name, body), 201);
     },
   };
-  return [status, list, get, add, del, qp, command];
+  return [status, list, get, add, update, del, qp, command];
 }
 
 export function buildRadarrV3Surface(s: RadarrNativeSource) {

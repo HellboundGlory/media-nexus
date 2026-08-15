@@ -17,7 +17,7 @@ import {
 import type { SonarrNativeSource } from "@medianexus/compatibility";
 import type { RadarrNativeSource } from "@medianexus/compatibility";
 import type { ProwlarrNativeSource } from "@medianexus/compatibility";
-import { qualityMeta } from "@medianexus/domain";
+import { qualityMeta, type MinimumAvailability } from "@medianexus/domain";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
@@ -41,6 +41,46 @@ function toCompatQualityProfile(p: typeof schema.qualityProfile.$inferSelect): C
     items: p.items.map((id) => ({ quality: { id, name: qualityMeta(id)?.title ?? "Unknown" }, allowed: true })),
     minFormatScore: p.minFormatScore ?? 0,
     cutoffFormatScore: p.cutoffFormatScore ?? 0,
+  };
+}
+
+/** Radarr wire MinimumAvailability -> ours. Radarr serializes its enum names camelCase
+ *  (announced / inCinemas / released); ours uses snake_case (`in_cinemas`). Unmapped values
+ *  (releasedDigital / inTheaters / physical — which we don't model) yield undefined so the
+ *  caller falls back to its default rather than guessing. */
+const RADARR_MIN_AVAILABILITY: Record<string, MinimumAvailability> = {
+  announced: "announced",
+  inCinemas: "in_cinemas",
+  released: "released",
+};
+function fromRadarrAvailability(v: unknown): MinimumAvailability | undefined {
+  return typeof v === "string" ? RADARR_MIN_AVAILABILITY[v] : undefined;
+}
+
+/** Pass through only string tag values. Sonarr/Radarr send integer tag ids that reference
+ *  *their* tag registry, which has no mapping to our string tag keys (schema `tags` is
+ *  json<string[]> of our own tag ids), so int ids can't round-trip here and are dropped;
+ *  string tags — our native representation — pass through untouched. */
+function stringTags(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === "string");
+}
+
+function toCompatSeries(row: typeof schema.series.$inferSelect, seasons?: { seasonNumber: number; monitored: boolean }[]): CompatSeries {
+  return {
+    id: row.id, title: row.title, tvdbId: row.tvdbId, seriesType: row.seriesType || "standard",
+    year: row.firstAirYear, path: row.rootFolderPath || "", monitored: row.monitored,
+    qualityProfileId: row.qualityProfileId, status: row.status, overview: row.overview, added: row.addedAt,
+    ...(seasons ? { seasons } : {}),
+  };
+}
+
+function toCompatMovie(m: typeof schema.movie.$inferSelect): CompatMovie {
+  return {
+    id: m.id, title: m.title, tmdbId: m.tmdbId, status: m.status,
+    year: m.releaseDate ? Number(m.releaseDate.slice(0, 4)) : null,
+    path: m.rootFolderPath || "", monitored: m.monitored, qualityProfileId: m.qualityProfileId,
+    overview: m.overview, added: m.addedAt, hasFile: m.hasFile,
   };
 }
 
@@ -110,16 +150,39 @@ export class CompatService {
           monitored: input.monitored === undefined ? true : Boolean(input.monitored),
           seriesType: (String(input.seriesType ?? "standard")) as "standard" | "daily" | "anime",
           qualityProfileId: input.qualityProfileId ? String(input.qualityProfileId) : undefined,
-          overview: "",
-          tags: [],
+          overview: String(input.overview ?? ""),
+          tags: stringTags(input.tags),
         });
-        return {
-          id: created.id, title: created.title, tvdbId: created.tvdbId, seriesType: created.seriesType || "standard",
-          year: created.firstAirYear, path: created.rootFolderPath, monitored: created.monitored,
-          qualityProfileId: created.qualityProfileId, status: created.status,
-        };
+        // `create` returns a full series row (its literal just omits `alternateTitles`);
+        // cast to the row type the mapper expects rather than re-fetching.
+        return toCompatSeries(created as unknown as typeof schema.series.$inferSelect);
+      },
+      updateSeries: async (id, input) => {
+        try { await this.series.get(id); } catch { return null; }
+        const seasonsIn = Array.isArray(input.seasons) ? input.seasons : [];
+        if (seasonsIn.length > 0) {
+          const current = await this.series.seasons(id);
+          for (const body of seasonsIn) {
+            const b = body as { seasonNumber?: number; monitored?: boolean };
+            if (typeof b?.seasonNumber === "number" && typeof b.monitored === "boolean") {
+              const cur = current.find((cs) => cs.seasonNumber === b.seasonNumber);
+              if (cur && cur.monitored !== b.monitored) await this.series.setSeasonMonitored(id, cur.id, b.monitored);
+            }
+          }
+        }
+        await this.series.update(id, {
+          monitored: input.monitored !== undefined ? Boolean(input.monitored) : undefined,
+          qualityProfileId: input.qualityProfileId !== undefined ? (input.qualityProfileId === null ? null : String(input.qualityProfileId)) : undefined,
+          rootFolderPath: input.rootFolderPath !== undefined ? String(input.rootFolderPath) : undefined,
+          tags: !Array.isArray(input.tags) ? undefined : stringTags(input.tags),
+        });
+        const updated = await this.series.get(id);
+        return toCompatSeries(updated, await this.series.seasons(id));
       },
       removeSeries: async (id) => { await this.series.remove(id); },
+      updateEpisodesMonitor: async (seriesId, episodeIds, monitored) => {
+        for (const episodeId of episodeIds) await this.series.setEpisodeMonitored(seriesId, episodeId, monitored);
+      },
       qualityProfiles: async () => {
         const rows = await this.db.select().from(schema.qualityProfile);
         return rows.map(toCompatQualityProfile);
@@ -159,15 +222,23 @@ export class CompatService {
           tmdbId: input.tmdbId ? Number(input.tmdbId) : undefined,
           rootFolderPath: String(input.rootFolderPath ?? ""),
           monitored: input.monitored === undefined ? true : Boolean(input.monitored),
-          overview: "",
-          tags: [],
-          // Radarr's AddMovieOptions has a minimumAvailability field with different enum
-          // casing than ours ("inCinemas" vs "in_cinemas", etc.) — mapping it is real work
-          // this compat write surface doesn't otherwise attempt (see the hardcoded overview/
-          // tags above), so default like every other omitted field here does.
-          minimumAvailability: "announced",
+          overview: String(input.overview ?? ""),
+          tags: stringTags(input.tags),
+          // Radarr sends MinimumAvailability as its camelCase enum names; map to ours.
+          minimumAvailability: fromRadarrAvailability(input.minimumAvailability) ?? "announced",
         });
-        return { id: created.id, title: created.title, tmdbId: created.tmdbId, status: created.status, year: created.releaseDate ? Number(created.releaseDate.slice(0, 4)) : null, path: created.rootFolderPath, monitored: created.monitored, qualityProfileId: created.qualityProfileId, hasFile: false } satisfies CompatMovie;
+        return toCompatMovie(created as unknown as typeof schema.movie.$inferSelect);
+      },
+      updateMovie: async (id, input) => {
+        try { await this.movies.get(id); } catch { return null; }
+        await this.movies.update(id, {
+          monitored: input.monitored !== undefined ? Boolean(input.monitored) : undefined,
+          qualityProfileId: input.qualityProfileId !== undefined ? (input.qualityProfileId === null ? null : String(input.qualityProfileId)) : undefined,
+          rootFolderPath: input.rootFolderPath !== undefined ? String(input.rootFolderPath) : undefined,
+          minimumAvailability: input.minimumAvailability !== undefined ? (fromRadarrAvailability(input.minimumAvailability) ?? undefined) : undefined,
+          tags: !Array.isArray(input.tags) ? undefined : stringTags(input.tags),
+        });
+        return toCompatMovie(await this.movies.get(id));
       },
       removeMovie: async (id) => { await this.movies.remove(id); },
       qualityProfiles: async () => (await this.db.select().from(schema.qualityProfile)).map(toCompatQualityProfile),

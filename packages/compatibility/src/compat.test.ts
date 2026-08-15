@@ -19,6 +19,13 @@ const sonarrSource: SonarrNativeSource = {
   }],
   getSeries: async (id) => (id === "s1" ? (await sonarrSource.listSeries())[0] : null),
   addSeries: async (input) => ({ id: "s_new", title: String(input.title), tvdbId: Number(input.tvdbId), seriesType: "standard", year: null, path: String(input.rootFolderPath ?? ""), monitored: true, qualityProfileId: "qp_hd", status: "continuing" }),
+  updateSeries: async (id, input) => ({
+    id, title: String(input.title ?? "Severance"), tvdbId: 405861, seriesType: "standard", year: 2022,
+    path: "/media/Severance", monitored: input.monitored === undefined ? true : Boolean(input.monitored),
+    qualityProfileId: input.qualityProfileId ? String(input.qualityProfileId) : "qp_hd", status: "continuing",
+    seasons: Array.isArray(input.seasons) ? input.seasons : [{ seasonNumber: 1, monitored: true }],
+  }),
+  updateEpisodesMonitor: async () => {},
   removeSeries: async () => {},
   qualityProfiles: async () => [{ id: "qp_hd", name: "HD-1080p", upgradeAllowed: true, cutoff: 3, items: [] }],
   episodes: async () => [{ id: "e1", seriesId: "s1", seasonNumber: 1, episodeNumber: 1, title: "Good News About Hell", airDateUtc: "2022-02-18T00:00:00Z", monitored: true, hasFile: false }],
@@ -30,6 +37,11 @@ const radarrSource: RadarrNativeSource = {
   listMovies: async () => [{ id: "m1", title: "Dune", tmdbId: 438631, status: "released", year: 2021, path: "/media/Dune", monitored: true, qualityProfileId: "qp_hd", hasFile: false }],
   getMovie: async (id) => (id === "m1" ? (await radarrSource.listMovies())[0] : null),
   addMovie: async (input) => ({ id: "m_new", title: String(input.title), tmdbId: Number(input.tmdbId), status: "released", year: null, path: String(input.rootFolderPath ?? ""), monitored: true, qualityProfileId: "qp_hd", hasFile: false }),
+  updateMovie: async (id, input) => ({
+    id, title: String(input.title ?? "Dune"), tmdbId: 438631, status: "released", year: 2021,
+    path: "/media/Dune", monitored: input.monitored === undefined ? true : Boolean(input.monitored),
+    qualityProfileId: input.qualityProfileId ? String(input.qualityProfileId) : "qp_hd", hasFile: false,
+  }),
   removeMovie: async () => {},
   qualityProfiles: async () => [{ id: "qp_hd", name: "HD-1080p", upgradeAllowed: true, cutoff: 3, items: [] }],
   runCommand: async (name) => ({ id: "cmd1", name }),
@@ -69,8 +81,22 @@ describe("sonarr v3 surface", () => {
   it("GET qualityprofile and POST command return upstream shapes", async () => {
     const qp = await surface.match("GET", "/api/sonarr/v3/qualityprofile")!.route.handler({} as never);
     expect((qp.body as any[])[0].name).toBe("HD-1080p");
-    const cmd = await surface.match("POST", "/api/sonarr/v3/command")!.route.handler({ ...{} as never, body: { name: "SeriesSearch" } } as never);
+    const cmd = await surface.match("POST", "/api/sonarr/v3/command")!.route.handler({ body: { name: "SeriesSearch" } } as never);
     expect((cmd.body as any).name).toBe("SeriesSearch");
+  });
+  it("PUT /series/:id updates monitored / qualityProfileId / seasons", async () => {
+    const hit = surface.match("PUT", "/api/sonarr/v3/series/s1")!;
+    const res = await hit.route.handler({ ...hit.ctx, body: { monitored: false, qualityProfileId: 2, seasons: [{ seasonNumber: 1, monitored: false }] } } as never);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: "s1", monitored: false, qualityProfileId: "2", seasons: [{ seasonNumber: 1, monitored: false }] });
+  });
+  it("PUT /episode/monitor updates episodes and requires seriesId + episodeIds", async () => {
+    const ok = surface.match("PUT", "/api/sonarr/v3/episode/monitor")!;
+    const res = await ok.route.handler({ ...ok.ctx, body: { seriesId: "s1", episodeIds: [1, 2], monitored: true } } as never);
+    expect(res.status).toBe(200);
+    const bad = surface.match("PUT", "/api/sonarr/v3/episode/monitor")!;
+    const err = await bad.route.handler({ ...bad.ctx, body: { monitored: true } } as never);
+    expect(err.status).toBe(400);
   });
 });
 
@@ -81,6 +107,12 @@ describe("radarr v3 surface", () => {
     expect((list.body as any[])[0]).toMatchObject({ title: "Dune", tmdbId: 438631 });
     const added = await surface.match("POST", "/api/radarr/v3/movie")!.route.handler({ body: { title: "Blade Runner", tmdbId: 335984 } } as never);
     expect((added.body as any).title).toBe("Blade Runner");
+  });
+  it("PUT /movie/:id updates monitored / qualityProfileId", async () => {
+    const hit = surface.match("PUT", "/api/radarr/v3/movie/m1")!;
+    const res = await hit.route.handler({ ...hit.ctx, body: { monitored: false, qualityProfileId: 2 } } as never);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: "m1", monitored: false, qualityProfileId: "2" });
   });
 });
 
