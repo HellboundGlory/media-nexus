@@ -257,6 +257,19 @@ export const tag = pgTable("tag", {
   updatedAt: iso("updated_at"),
 });
 
+// Mirror of schema.ts release_profile (roadmap P3, gap C6): tag-scoped required/ignored term
+// restrictions for the decision engine.
+export const releaseProfile = pgTable("release_profile", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  enabled: bool("enabled", true),
+  required: json<string[]>("required"),
+  ignored: json<string[]>("ignored"),
+  tags: json<string[]>("tags"),
+  createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+});
+
 // ---------- Import lists ----------
 export const importList = pgTable("import_list", {
   id: text("id").primaryKey(),
@@ -487,6 +500,7 @@ export const schema = {
   healthCheckResult,
   providerStatus,
   tag,
+  releaseProfile,
   importList,
   importExclusion,
 };

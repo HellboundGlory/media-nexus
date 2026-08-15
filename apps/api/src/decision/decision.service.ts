@@ -46,7 +46,7 @@ export class DecisionService {
       };
     }
 
-    const [existingFiles, isBlocklisted, hasActiveQueueConflict, cfg, profile, freeSpaceBytes, customFormats] = await Promise.all([
+    const [existingFiles, isBlocklisted, hasActiveQueueConflict, cfg, profile, freeSpaceBytes, customFormats, releaseProfiles] = await Promise.all([
       this.media.existingFiles(target),
       this.blocklist.isBlocklisted({ mediaType, mediaId, title: release.title, indexerId: release.indexerId }),
       this.hasActiveQueueConflict(mediaType, mediaId),
@@ -54,6 +54,7 @@ export class DecisionService {
       getQualityProfile(this.db, item.qualityProfileId),
       this.freeSpaceFor(item.rootFolderPath),
       this.db.select().from(schema.customFormat),
+      this.db.select().from(schema.releaseProfile).where(eq(schema.releaseProfile.enabled, true)),
     ]);
 
     const context: DecisionContext = {
@@ -64,6 +65,8 @@ export class DecisionService {
       formatScores: profile?.formatScores,
       minFormatScore: profile?.minFormatScore,
       cutoffFormatScore: profile?.cutoffFormatScore,
+      releaseProfiles,
+      mediaTags: item.tags,
     };
     return evaluate(release, context);
   }

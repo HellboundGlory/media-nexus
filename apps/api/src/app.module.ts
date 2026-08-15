@@ -31,6 +31,7 @@ import { RemotePathMappingsModule } from "./remote-path-mappings/remote-path-map
 import { TagsModule } from "./tags/tags.module";
 import { ImportListsModule } from "./import-lists/import-lists.module";
 import { CustomFormatsModule } from "./custom-formats/custom-formats.module";
+import { ReleaseProfilesModule } from "./release-profiles/release-profiles.module";
 import { WebUiModule } from "./web-ui/web-ui.module";
 import { RequestIdMiddleware } from "./common/request-id.middleware";
 import { MetricsMiddleware } from "./observability/metrics.middleware";
@@ -67,6 +68,7 @@ import { SecurityHeadersMiddleware } from "./common/security-headers.middleware"
     TagsModule,
     ImportListsModule,
     CustomFormatsModule,
+    ReleaseProfilesModule,
     // Must stay last: its catch-all route serves the SPA shell only when nothing
     // above it (native/compat routes) matched.
     WebUiModule,

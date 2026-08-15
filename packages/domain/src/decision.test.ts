@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { evaluate, pickBest, compareDecisions, type DecisionContext } from "./decision";
 import type { CustomFormat } from "./custom-formats";
+import { matchesTerm, type ReleaseProfile } from "./release-profile";
 import { qualityId, type QualityProfileLike, type Quality } from "./quality";
 import { movieTarget } from "./media";
 import type { Release } from "./release";
@@ -290,5 +291,91 @@ describe("custom-format scoring (roadmap P2)", () => {
       expect(d.approved).toBe(false);
       expect(d.rejections.map((r) => r.reason)).toContain("cutoff_already_met");
     });
+  });
+});
+
+describe("matchesTerm (release-profile term syntax, Sonarr TermMatcherService)", () => {
+  it("matches a plain substring case-insensitively", () => {
+    expect(matchesTerm("x265", "Movie.2020.1080p.X265")).toBe(true);
+    expect(matchesTerm("REMUX", "movie.remux.2020")).toBe(true);
+  });
+  it("does not match a substring that isn't present", () => {
+    expect(matchesTerm("hdr", "Movie.2020.1080p")).toBe(false);
+  });
+  it("treats a /term/ bracketed term as a case-insensitive regex", () => {
+    expect(matchesTerm("/^The/", "The Movie")).toBe(true);
+    expect(matchesTerm("/1080p$/", "Movie.1080p")).toBe(true);
+  });
+  it("a regex that shouldn't match returns false", () => {
+    expect(matchesTerm("/^The/", "Movie.The")).toBe(false);
+  });
+  it("honours flags supplied inside the bracketed term", () => {
+    expect(matchesTerm("/MOVIE/i", "the movie")).toBe(true);
+    expect(matchesTerm("/THE/i", "the complete movie")).toBe(true);
+  });
+  it("a malformed regex never matches rather than throwing", () => {
+    expect(matchesTerm("/[unclosed/", "anything")).toBe(false);
+  });
+});
+
+describe("evaluate — release profiles (roadmap P3, gap C6)", () => {
+  const prof = (over: Partial<ReleaseProfile> = {}): ReleaseProfile => ({
+    id: "rp1", name: "P", enabled: true, required: [], ignored: [], tags: [], ...over,
+  });
+
+  it("rejects a release that matches none of an applicable profile's required terms", () => {
+    const d = evaluate(release({ title: "Movie.2020.1080p.WEB-DL" }), baseContext({
+      releaseProfiles: [prof({ required: ["x265"] })],
+    }));
+    expect(d.approved).toBe(false);
+    expect(d.rejections.map((r) => r.reason)).toContain("required_term_missing");
+  });
+
+  it("approves a release matching at least one required term", () => {
+    const d = evaluate(release({ title: "Movie.2020.1080p.x265" }), baseContext({
+      releaseProfiles: [prof({ required: ["x265"] })],
+    }));
+    expect(d.approved).toBe(true);
+  });
+
+  it("rejects a release matching an applicable profile's ignored term", () => {
+    const d = evaluate(release({ title: "Movie.2020.480p.WEB-DL" }), baseContext({
+      releaseProfiles: [prof({ ignored: ["/480p/"] })],
+    }));
+    expect(d.approved).toBe(false);
+    expect(d.rejections.map((r) => r.reason)).toContain("ignored_term_present");
+  });
+
+  it("is unaffected by a profile whose tags don't overlap the media's tags", () => {
+    const d = evaluate(release({ title: "Movie.2020.480p" }), baseContext({
+      releaseProfiles: [prof({ tags: ["4k"], ignored: ["480p"] })],
+      mediaTags: ["hdr"], // profile tagged 4k; media has hdr -> not applicable
+    }));
+    expect(d.approved).toBe(true);
+  });
+
+  it("applies a profile that shares the media's tags", () => {
+    const d = evaluate(release({ title: "Movie.2020.480p" }), baseContext({
+      releaseProfiles: [prof({ tags: ["4k"], ignored: ["480p"] })],
+      mediaTags: ["4k"],
+    }));
+    expect(d.approved).toBe(false);
+    expect(d.rejections.map((r) => r.reason)).toContain("ignored_term_present");
+  });
+
+  it("requires EACH applicable profile to be satisfied independently", () => {
+    const d = evaluate(release({ title: "Movie.2020.1080p.x265" }), baseContext({
+      releaseProfiles: [
+        prof({ id: "a", name: "A", required: ["x265"] }),             // satisfied
+        prof({ id: "b", name: "B", required: ["/\\bremux\\b/"] }),    // not satisfied -> reject
+      ],
+    }));
+    expect(d.approved).toBe(false);
+    expect(d.rejections.map((r) => r.reason)).toContain("required_term_missing");
+  });
+
+  it("leaves releases unaffected when no profiles are configured", () => {
+    const d = evaluate(release({ title: "Anything.480p" }), baseContext());
+    expect(d.approved).toBe(true);
   });
 });

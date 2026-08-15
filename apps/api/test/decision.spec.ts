@@ -149,6 +149,48 @@ describe("DecisionService — protocol preference, from real settings", () => {
   });
 });
 
+describe("DecisionService — release profiles, from real release_profile rows (roadmap P3, gap C6)", () => {
+  async function seedReleaseProfile(db: Awaited<ReturnType<typeof freshDb>>, over: Partial<typeof schema.releaseProfile.$inferInsert> = {}) {
+    const now = new Date().toISOString();
+    await db.insert(schema.releaseProfile).values({
+      id: "rp1", name: "P", enabled: true, required: [], ignored: [], tags: [],
+      createdAt: now, updatedAt: now, ...over,
+    });
+  }
+
+  it("rejects a release that misses an applicable profile's required term", async () => {
+    const db = await freshDb();
+    await seedMovie(db, { tags: ["4k"] });
+    await seedReleaseProfile(db, { name: "No REMUX", required: ["x265"], tags: ["4k"] });
+    const decisions = decisionService(db);
+
+    const d = await decisions.evaluate("movie", "m1", release({ title: "Some.Movie.2020.1080p.REMUX" }));
+    expect(d.approved).toBe(false);
+    expect(d.rejections.map((r) => r.reason)).toContain("required_term_missing");
+  });
+
+  it("rejects a release matching an applicable profile's ignored term", async () => {
+    const db = await freshDb();
+    await seedMovie(db, { tags: ["4k"] });
+    await seedReleaseProfile(db, { name: "No 480p", ignored: ["480p"], tags: ["4k"] });
+    const decisions = decisionService(db);
+
+    const d = await decisions.evaluate("movie", "m1", release({ title: "Some.Movie.2020.480p.WEB-DL" }));
+    expect(d.approved).toBe(false);
+    expect(d.rejections.map((r) => r.reason)).toContain("ignored_term_present");
+  });
+
+  it("leaves a release unaffected when the profile's tags don't match the media's tags", async () => {
+    const db = await freshDb();
+    await seedMovie(db, { tags: ["hdr"] }); // media tagged hdr, profile tagged 4k -> not applicable
+    await seedReleaseProfile(db, { name: "4k only", ignored: ["480p"], tags: ["4k"] });
+    const decisions = decisionService(db);
+
+    const d = await decisions.evaluate("movie", "m1", release({ title: "Some.Movie.2020.480p" }));
+    expect(d.approved).toBe(true);
+  });
+});
+
 describe("IndexersService.search() attaches a decision to every result (gap report C3)", () => {
   it("interactive search results carry approval/rejection info", async () => {
     const db = await freshDb();

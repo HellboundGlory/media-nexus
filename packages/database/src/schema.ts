@@ -286,6 +286,23 @@ export const tag = sqliteTable("tag", {
   updatedAt: iso("updated_at"),
 });
 
+// ---------- Release profiles (roadmap P3, gap report C6) ----------
+// Tag-scoped hard required/ignored term restrictions for the decision engine. `required` and
+// `ignored` are Sonarr TermMatcherService-style terms (plain substring or /regex/); `tags` is the
+// media tag scope (empty = applies to all media). Reject-only — scored/"preferred" terms are Custom
+// Formats' job (see packages/domain/src/release-profile.ts). See also ADR-004-era divergence note:
+// this scopes by the unified tag mechanism only, no separate indexer-id axis.
+export const releaseProfile = sqliteTable("release_profile", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  enabled: bool("enabled", true),
+  required: json<string[]>("required").notNull(),
+  ignored: json<string[]>("ignored").notNull(),
+  tags: json<string[]>("tags").notNull(),
+  createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+});
+
 // ---------- Import lists (roadmap P2, gap report C2) ----------
 // A generic watchlist-sync subsystem. `import_list` is a configured list source (provider
 // type + credentials/config, e.g. a TMDB list id); a recurring `media.importLists` job
@@ -547,6 +564,7 @@ export const schema = {
   healthCheckResult,
   providerStatus,
   tag,
+  releaseProfile,
   importList,
   importExclusion,
 };

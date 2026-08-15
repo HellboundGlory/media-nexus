@@ -252,6 +252,17 @@ export interface HealthStatus {
   checkedAt: string | null;
 }
 
+export interface ReleaseProfile {
+  id: string;
+  name: string;
+  enabled: boolean;
+  required: string[];
+  ignored: string[];
+  tags: string[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
 export type DiscoverMediaType = "movie" | "series";
 export type DiscoverCategory = "trending" | "popular" | "upcoming" | "top_rated";
 

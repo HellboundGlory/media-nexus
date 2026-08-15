@@ -5,6 +5,8 @@ import { qualityAllowed, meetsCutoff, compareQuality, profilePosition, type Qual
 import {
   calculateFormatScore, releaseMatchInput, existingFileMatchInput, type CustomFormat,
 } from "./custom-formats";
+import { tagApplies } from "./tags";
+import { matchesTerm, type ReleaseProfile } from "./release-profile";
 
 /**
  * Release decision engine (roadmap P0.3, gap report B1).
@@ -42,7 +44,9 @@ export type RejectionReason =
   | "blocklisted"
   | "queue_conflict"
   | "wrong_protocol"
-  | "insufficient_free_space";
+  | "insufficient_free_space"
+  | "required_term_missing"
+  | "ignored_term_present";
 
 export interface Rejection {
   reason: RejectionReason;
@@ -76,6 +80,14 @@ export interface DecisionContext {
   /** Upgrade-side cutoff — once an existing file reaches this format score (and the
    *  quality cutoff), no further upgrades are wanted. 0 disables. */
   cutoffFormatScore?: number;
+  /** Enabled release profiles to apply as hard required/ignored term restrictions (roadmap P3,
+   *  gap C6). Optional so callers that don't configure profiles stay valid: an empty list makes
+   *  release-profile restrictions inert. All *enabled* profiles, unfiltered — each spec calls
+   *  `tagApplies(profile.tags, mediaTags)` before checking terms, so enabled-but-non-applicable
+   *  profiles are a no-op rather than a filter here. */
+  releaseProfiles?: ReleaseProfile[];
+  /** The target media item's own tag ids, used to decide which release profiles apply. */
+  mediaTags?: string[];
 }
 
 /** Score a release against the profile's formats; 0 when none are configured. */
@@ -157,6 +169,33 @@ const blocklistSpecification: Specification = (_release, ctx) =>
 const queueConflictSpecification: Specification = (_release, ctx) =>
   ctx.hasActiveQueueConflict ? { reason: "queue_conflict", message: "already queued or downloading for this title" } : null;
 
+/** Hard required/ignored term restrictions from tag-applicable release profiles (roadmap P3,
+ *  gap C6). Mirrors upstream `ReleaseRestrictionsSpecification`: every enabled profile that
+ *  applies to this media's tags is checked independently — a release must satisfy EACH applicable
+ *  profile (must match at least one of its `required` terms and none of its `ignored` terms), so a
+ *  release rejected by one applicable profile is rejected even if another profile would accept it.
+ *  Reject-only: scored/"preferred" terms are Custom Formats' job (see release-profile.ts header). */
+const releaseProfileSpecification: Specification = (release, ctx) => {
+  const profiles = ctx.releaseProfiles ?? [];
+  for (const profile of profiles) {
+    if (!tagApplies(profile.tags, ctx.mediaTags)) continue; // profile not scoped to this media
+    if (profile.required.length > 0 && !profile.required.some((term) => matchesTerm(term, release.title))) {
+      return {
+        reason: "required_term_missing",
+        message: `release doesn't match any required term of profile "${profile.name}"`,
+      };
+    }
+    const hit = profile.ignored.find((term) => matchesTerm(term, release.title));
+    if (hit) {
+      return {
+        reason: "ignored_term_present",
+        message: `release matches ignored term "${hit}" of profile "${profile.name}"`,
+      };
+    }
+  }
+  return null;
+};
+
 const protocolSpecification: Specification = (release, ctx) => {
   if (ctx.preferredProtocol === "any") return null;
   if (release.protocol === ctx.preferredProtocol) return null;
@@ -184,6 +223,7 @@ export const SPECIFICATIONS: readonly Specification[] = [
   queueConflictSpecification,
   profileAllowedSpecification,
   minFormatScoreSpecification,
+  releaseProfileSpecification,
   upgradeSpecification,
   protocolSpecification,
   freeSpaceSpecification,
