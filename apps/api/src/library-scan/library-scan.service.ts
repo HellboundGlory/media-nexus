@@ -262,16 +262,26 @@ export class LibraryScanService implements OnModuleInit {
         await this.db.transaction(async (tx) => {
           for (const f of staleThisSeason) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id));
           for (const f of supersededOld) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id));
+          // J3 dual-write: capture each approved file's id so the episodes it newly covers can be
+          // pointed at it via the media_file_id FK (kept in sync with episode_ids). Episodes whose
+          // file is removed are NULLed by the FK ON DELETE SET NULL from the deletes above.
+          const episodeToNewFile = new Map<string, string>();
           for (const a of approved) {
+            const mfId = newEntityId("mf");
+            for (const epId of a.episodeIds) episodeToNewFile.set(epId, mfId);
             await tx.insert(schema.mediaFile).values({
-              id: newEntityId("mf"), mediaType: "series", mediaId: seriesId, episodeIds: a.episodeIds,
+              id: mfId, mediaType: "series", mediaId: seriesId, episodeIds: a.episodeIds,
               relativePath: relative(root, a.path), size: a.size, quality: a.quality, dateAdded: new Date().toISOString(),
             });
           }
           for (const ep of seasonEpisodes) {
+            const set: { hasFile?: boolean; mediaFileId?: string } = {};
             const hasFile = coveredEpisodeIds.has(ep.id);
-            if (hasFile !== ep.hasFile) {
-              await tx.update(schema.episode).set({ hasFile }).where(eq(schema.episode.id, ep.id));
+            if (hasFile !== ep.hasFile) set.hasFile = hasFile;
+            const newFileId = episodeToNewFile.get(ep.id);
+            if (newFileId) set.mediaFileId = newFileId;
+            if (Object.keys(set).length > 0) {
+              await tx.update(schema.episode).set(set).where(eq(schema.episode.id, ep.id));
             }
           }
         });
@@ -279,16 +289,24 @@ export class LibraryScanService implements OnModuleInit {
         this.db.transaction((tx) => {
           for (const f of staleThisSeason) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
           for (const f of supersededOld) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
+          // J3 dual-write (sync body — SQLite path): same episode->new-file FK wiring as the pg body.
+          const episodeToNewFile = new Map<string, string>();
           for (const a of approved) {
+            const mfId = newEntityId("mf");
+            for (const epId of a.episodeIds) episodeToNewFile.set(epId, mfId);
             tx.insert(schema.mediaFile).values({
-              id: newEntityId("mf"), mediaType: "series", mediaId: seriesId, episodeIds: a.episodeIds,
+              id: mfId, mediaType: "series", mediaId: seriesId, episodeIds: a.episodeIds,
               relativePath: relative(root, a.path), size: a.size, quality: a.quality, dateAdded: new Date().toISOString(),
             }).run();
           }
           for (const ep of seasonEpisodes) {
+            const set: { hasFile?: boolean; mediaFileId?: string } = {};
             const hasFile = coveredEpisodeIds.has(ep.id);
-            if (hasFile !== ep.hasFile) {
-              tx.update(schema.episode).set({ hasFile }).where(eq(schema.episode.id, ep.id)).run();
+            if (hasFile !== ep.hasFile) set.hasFile = hasFile;
+            const newFileId = episodeToNewFile.get(ep.id);
+            if (newFileId) set.mediaFileId = newFileId;
+            if (Object.keys(set).length > 0) {
+              tx.update(schema.episode).set(set).where(eq(schema.episode.id, ep.id)).run();
             }
           }
         });

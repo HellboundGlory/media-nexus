@@ -788,7 +788,10 @@ export class AcquisitionService {
             relativePath: io.relativePath, size: io.size, quality: releaseQuality, dateAdded: now,
           });
           for (const epId of io.episodeIds) {
-            await tx.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, epId));
+            // J3 dual-write: keep episode.has_file AND point the episode at its covering file via
+            // the indexed media_file_id FK (the JSON episode_ids stays authoritative for the
+            // supersession logic; the FK is the queryable hot-path inverse).
+            await tx.update(schema.episode).set({ hasFile: true, mediaFileId: io.mediaFileId }).where(eq(schema.episode.id, epId));
           }
         }
         for (const f of toDeleteOld) {
@@ -810,7 +813,8 @@ export class AcquisitionService {
             relativePath: io.relativePath, size: io.size, quality: releaseQuality, dateAdded: now,
           }).run();
           for (const epId of io.episodeIds) {
-            tx.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, epId)).run();
+            // J3 dual-write (sync body — SQLite path): has_file + the media_file_id FK pointer.
+            tx.update(schema.episode).set({ hasFile: true, mediaFileId: io.mediaFileId }).where(eq(schema.episode.id, epId)).run();
           }
         }
         for (const f of toDeleteOld) {

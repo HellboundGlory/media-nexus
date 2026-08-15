@@ -4,6 +4,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import { createDb, schema } from "@medianexus/database";
 import { MediaRepository } from "../src/media/media.repository";
 
@@ -76,6 +77,9 @@ beforeAll(async () => {
     { id: "mf1", mediaType: "series", mediaId: "s1", episodeIds: ["s2e1"], relativePath: "Test Show/Season 2/S02E01.mkv", size: 100, quality: { source: "web", resolution: "1080p", edition: "" }, mediaInfo: {}, languages: [], dateAdded: now },
     { id: "mf2", mediaType: "movie", mediaId: "m1", episodeIds: [], relativePath: "Arrival (2016)/Arrival.mkv", size: 200, quality: { source: "bluray", resolution: "2160p", edition: "" }, mediaInfo: {}, languages: [], dateAdded: now },
   ]);
+  // Sync the FK inverse for the fixture (what the write sites / backfill maintain) — done via
+  // update AFTER the media_file rows exist, since episode.media_file_id is a real FK.
+  await handle.db.update(schema.episode).set({ mediaFileId: "mf1" }).where(eq(schema.episode.id, "s2e1"));
 });
 
 afterAll(() => handle.close());

@@ -252,15 +252,38 @@ export class MediaRepository {
 
   /** Files already covering a target — the input to "is this release an upgrade?". */
   async existingFiles(target: ReleaseTarget): Promise<ExistingFile[]> {
-    const rows = await this.db.select().from(schema.mediaFile).where(and(
-      eq(schema.mediaFile.mediaType, target.mediaType),
-      eq(schema.mediaFile.mediaId, target.mediaId),
-    ));
-    const files = rows.map(toExistingFile);
-    if (target.kind === "movie") return files;
+    if (target.kind === "movie") {
+      const rows = await this.db.select().from(schema.mediaFile).where(and(
+        eq(schema.mediaFile.mediaType, target.mediaType),
+        eq(schema.mediaFile.mediaId, target.mediaId),
+      ));
+      return rows.map(toExistingFile);
+    }
 
-    const wanted = new Set(target.episodes.map((e) => e.id));
-    return files.filter((f) => f.episodeIds.some((id) => wanted.has(id)));
+    // Series branch (gap report J3 — the hot path): answer "which of this series' files cover
+    // these wanted episode ids" through the indexed `episode.media_file_id` FK instead of loading
+    // every media_file row and filtering each one's `episode_ids` JSON in JS. The FK is kept in
+    // sync with `episode_ids` by the write sites and the startup backfill, so the join is exact.
+    // A file covering several wanted episodes appears once in the join — dedupe on file id.
+    const wanted = target.episodes.map((e) => e.id);
+    if (wanted.length === 0) return [];
+    const joined = await this.db
+      .select()
+      .from(schema.mediaFile)
+      .innerJoin(schema.episode, eq(schema.episode.mediaFileId, schema.mediaFile.id))
+      .where(and(
+        eq(schema.mediaFile.mediaType, target.mediaType),
+        eq(schema.mediaFile.mediaId, target.mediaId),
+        inArray(schema.episode.id, wanted),
+      ));
+    const seen = new Set<string>();
+    const files: ExistingFile[] = [];
+    for (const { media_file } of joined) {
+      if (seen.has(media_file.id)) continue;
+      seen.add(media_file.id);
+      files.push(toExistingFile(media_file));
+    }
+    return files;
   }
 }
 

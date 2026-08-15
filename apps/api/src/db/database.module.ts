@@ -6,6 +6,7 @@ import { seedStatic } from "@medianexus/database";
 import { parseEnv } from "@medianexus/shared";
 import { runSecretBackfill } from "../secrets/secret-backfill";
 import { runSettingsBlobBackfill } from "../notifications/settings-blob-backfill";
+import { runEpisodeMediaFileBackfill } from "../media/media-file-backfill";
 
 export const DB_TOKEN = Symbol("DATABASE");
 export const DB_HANDLE_TOKEN = Symbol("DATABASE_HANDLE");
@@ -47,6 +48,13 @@ export class DatabaseLifecycle implements OnModuleDestroy {
         // runMigrations so the `notification`/`media_server` tables exist.
         if (env.AUTO_MIGRATE) {
           await runSettingsBlobBackfill(handle.db);
+        }
+        // Roadmap P3 (gap J3): populate episode.media_file_id from pre-existing media_file.episode_ids
+        // so the indexed FK inverse is in sync with the JSON array for rows written before the FK
+        // existed. Idempotent (isNull-guarded) + non-destructive; runs after migrations. Does not
+        // need the secret. (Reads episode_ids directly.)
+        if (env.AUTO_MIGRATE) {
+          await runEpisodeMediaFileBackfill(handle.db);
         }
         return handle;
       },

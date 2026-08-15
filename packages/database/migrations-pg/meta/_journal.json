@@ -15,6 +15,13 @@
       "when": 1786802760713,
       "tag": "0001_goofy_killmonger",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786808180617,
+      "tag": "0002_slow_serpent_society",
+      "breakpoints": true
     }
   ]
 }

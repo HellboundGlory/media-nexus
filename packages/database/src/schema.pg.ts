@@ -168,11 +168,14 @@ export const episode = pgTable("episode", {
   airDateUtc: text("air_date_utc"),
   monitored: bool("monitored", true),
   hasFile: bool("has_file", false),
+  // Mirror of schema.ts: indexed back-reference to the covering media_file (gap report J3).
+  mediaFileId: text("media_file_id").references(() => mediaFile.id, { onDelete: "set null" }),
   sceneSeasonNumber: integer("scene_season_number"),
   sceneEpisodeNumber: integer("scene_episode_number"),
 }, (t) => [
   index("episode_series_idx").on(t.seriesId),
   index("episode_season_idx").on(t.seasonId),
+  index("episode_media_file_idx").on(t.mediaFileId),
 ]);
 
 export const mediaFile = pgTable("media_file", {

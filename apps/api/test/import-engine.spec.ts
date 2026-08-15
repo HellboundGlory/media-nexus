@@ -223,7 +223,7 @@ describe("P0.5 — upgrade-replace", () => {
     });
     mkdirSync(join(h.mediaRoot, "Pack Show", "Season 2"), { recursive: true });
     writeFileSync(join(h.mediaRoot, "Pack Show", "Season 2", "old.mkv"), Buffer.alloc(500));
-    await h.db.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, "s2e1"));
+    await h.db.update(schema.episode).set({ hasFile: true, mediaFileId: "mf_old" }).where(eq(schema.episode.id, "s2e1"));
 
     const packDir = stagePack(h.downloadsRoot, "Pack.Show.S02E01.1080p.WEB-DL", [{ name: "Pack.Show.S02E01.1080p.WEB-DL.mkv", size: 2000 }]);
     await packQueueEntry(h.db, "Pack.Show.S02E01.1080p.WEB-DL", { source: "web", resolution: "1080p", edition: "" });
@@ -250,7 +250,7 @@ describe("P0.5 — upgrade-replace", () => {
       relativePath: "Pack Show/Season 2/old.mkv", size: 500,
       quality: { source: "hdtv", resolution: "720p", edition: "" }, dateAdded: now,
     });
-    await h.db.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, "s2e1"));
+    await h.db.update(schema.episode).set({ hasFile: true, mediaFileId: "mf_old" }).where(eq(schema.episode.id, "s2e1"));
 
     const packDir = stagePack(h.downloadsRoot, "Pack.Show.S02E01.1080p.WEB-DL", [{ name: "Pack.Show.S02E01.1080p.WEB-DL.mkv", size: 2000 }]);
     await packQueueEntry(h.db, "Pack.Show.S02E01.1080p.WEB-DL", { source: "web", resolution: "1080p", edition: "" });
@@ -430,7 +430,7 @@ describe("B7 — recycle bin", () => {
     });
     mkdirSync(join(h.mediaRoot, "Pack Show", "Season 2"), { recursive: true });
     writeFileSync(join(h.mediaRoot, "Pack Show", "Season 2", "old.mkv"), Buffer.alloc(500));
-    await h.db.update(schema.episode).set({ hasFile: true }).where(eq(schema.episode.id, "s2e1"));
+    await h.db.update(schema.episode).set({ hasFile: true, mediaFileId: "mf_old" }).where(eq(schema.episode.id, "s2e1"));
 
     const packDir = stagePack(h.downloadsRoot, "Pack.Show.S02E01.1080p.WEB-DL", [{ name: "Pack.Show.S02E01.1080p.WEB-DL.mkv", size: 2000 }]);
     await packQueueEntry(h.db, "Pack.Show.S02E01.1080p.WEB-DL", { source: "web", resolution: "1080p", edition: "" });

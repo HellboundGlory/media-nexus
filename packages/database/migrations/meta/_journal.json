@@ -162,6 +162,13 @@
       "when": 1786802755743,
       "tag": "0022_narrow_captain_stacy",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1786808079107,
+      "tag": "0023_numerous_lord_tyger",
+      "breakpoints": true
     }
   ]
 }

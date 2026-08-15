@@ -179,11 +179,16 @@ export const episode = sqliteTable("episode", {
   airDateUtc: text("air_date_utc"),
   monitored: bool("monitored", true),
   hasFile: bool("has_file", false),
+  // Back-reference to the media_file that covers this episode (gap report J3): the indexed,
+  // queryable inverse of media_file.episode_ids. An episode losing its file must NOT cascade the
+  // episode away — SET NULL keeps the row (family history) and just drops the file pointer.
+  mediaFileId: text("media_file_id").references(() => mediaFile.id, { onDelete: "set null" }),
   sceneSeasonNumber: integer("scene_season_number"),
   sceneEpisodeNumber: integer("scene_episode_number"),
 }, (t) => [
   index("episode_series_idx").on(t.seriesId),
   index("episode_season_idx").on(t.seasonId),
+  index("episode_media_file_idx").on(t.mediaFileId),
 ]);
 
 export const mediaFile = sqliteTable("media_file", {
