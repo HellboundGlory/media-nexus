@@ -8,6 +8,10 @@
  * TVDB is *additive* to TMDB — it is used only to backfill those three numbering fields on
  * episode rows, never for discovery/search/overview/images (those stay TMDB).
  *
+ * Note: deliberately does NOT implement `MetadataProviderContract` — that contract is for
+ * TMDB-style discovery providers (search/getDetails). TvdbProvider is a numbering-only
+ * backfill source exposing just `episodes()`.
+ *
  * Two modes, mirroring the TmdbProvider shape:
  *  - shared-proxy (default): no `apiKey` → calls go to the MediaNexus Cloudflare proxy URL
  *    (which holds the key, exactly like Sonarr's `skyhook.sonarr.tv`). The proxy authenticates
@@ -15,8 +19,6 @@
  *  - BYO-key: an `apiKey` is supplied → base URL defaults to the real TVDB API and the client
  *    does its own login / bearer-token cache / 401 re-login retry.
  */
-import type { MetadataProviderContract } from "./contracts";
-
 export const DEFAULT_TVDB_WORKER_URL = "https://medianexus-tvdb-proxy.hellboundg-e09.workers.dev";
 const REAL_TVDB_API = "https://api4.thetvdb.com/v4";
 const TOKEN_TTL_MS = 27 * 24 * 3600 * 1000; // refresh conservatively before TVDB's 1-month expiry
@@ -50,7 +52,7 @@ interface RawEpisodesPage {
   links?: { next?: string | null };
 }
 
-export class TvdbProvider implements MetadataProviderContract {
+export class TvdbProvider {
   readonly key = "tvdb";
   /** Resolved base URL (exposed for introspection/tests); trailing slash stripped. */
   readonly baseUrl: string;
