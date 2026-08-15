@@ -137,6 +137,12 @@ compatibility, Docker-first, strong typing, strong testing, long-term maintainab
   app that is explicitly not meant to sit behind a public reverse proxy — see `docs/security.md`). Postgres remains a
   documented future driver, not a compose service today (SQLite volume is the default), documented in
   `deployment/docker.md`.
+- **No in-app self-updater (2026-08-15):** because the only supported install/update path is a container image, the app
+  has nothing to replace itself with — the operator's update action is `docker pull` + restart (or their compose /
+  watchtower setup). Building an `_arr`-style self-replacing `MediaNexus.Update` binary would be actively wrong for this
+  deployment model. MediaNexus instead ships a read-only **update check** (roadmap P3, gap-report C8): the
+  `system.updateCheck` job asks GitHub whether a newer release exists, caches the answer in memory, and surfaces a
+  sidebar badge — it never touches the running binary/container. See `apps/api/src/system/update-check.service.ts`.
 
 ## ADR-010 — Auth: single-tier API key (header `X-Api-Key`), `_arr`-style
 

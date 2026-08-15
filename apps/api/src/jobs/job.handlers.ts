@@ -13,6 +13,7 @@ import { MediaProbeService } from "../media/media-probe.service";
 import { HealthCheckService } from "../health/health-check.service";
 import { HousekeepingService } from "../system/housekeeping.service";
 import { BackupService } from "../system/backup.service";
+import { UpdateCheckService } from "../system/update-check.service";
 import { ImportListsService } from "../import-lists/import-lists.service";
 import { CardigannSyncService } from "../indexers/cardigann-sync.service";
 
@@ -34,12 +35,14 @@ export class JobHandlers implements OnModuleInit {
     private readonly healthCheck: HealthCheckService,
     private readonly housekeeping: HousekeepingService,
     private readonly backup: BackupService,
+    private readonly updateCheck: UpdateCheckService,
   ) {}
 
   onModuleInit(): void {
     this.jobs.register("system.healthCheck", () => this.healthCheck.run());
     this.jobs.register("system.housekeeping", () => this.housekeeping.run());
     this.jobs.register("system.backup", () => this.backup.run());
+    this.jobs.register("system.updateCheck", () => this.updateCheck.run());
     this.jobs.register("discovery.indexerRefresh", () => this.indexerRefresh());
     this.jobs.register("acquisition.downloadMonitor", (ctx) => this.downloadMonitor(ctx));
     this.jobs.register("media.rssSync", () => this.rssSync.runFeedPoll());

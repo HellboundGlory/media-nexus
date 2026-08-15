@@ -13,6 +13,7 @@ import { ConfigService } from "./config.service";
 import { BackupService } from "./backup.service";
 import { ParseService } from "./parse.service";
 import { LogsService } from "./logs.service";
+import { UpdateCheckService } from "./update-check.service";
 
 const upsertSchema = z.record(z.string(), z.unknown());
 
@@ -25,6 +26,7 @@ export class SystemController {
     private readonly backupSvc: BackupService,
     private readonly parseSvc: ParseService,
     private readonly logsSvc: LogsService,
+    private readonly updateCheckSvc: UpdateCheckService,
   ) {}
 
   @Get("logs")
@@ -39,6 +41,12 @@ export class SystemController {
   async parse(@Query("title") title: string) {
     if (!title || !title.trim()) throw new ApiError({ code: "VALIDATION_ERROR", message: "title query param is required" });
     return this.parseSvc.parse(title.trim());
+  }
+
+  @Get("update-check")
+  @ApiOperation({ summary: "Cached result of the last system.updateCheck run (is a newer release available?). Never performs a network call — reads the in-memory cache the job populates; 'checked: false' until the first successful check." })
+  updateCheck() {
+    return this.updateCheckSvc.get();
   }
 
   @Get("backups")

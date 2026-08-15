@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, ListTree, ScrollText, LogOut, Download, CalendarDays, FileText } from "lucide-react";
 import { useAppStore, applyTheme } from "../store/useAppStore";
 import { api } from "../api/client";
+import type { SystemStatus, UpdateCheckState } from "../api/types";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -20,6 +22,10 @@ export default function Layout() {
   const theme = useAppStore((s) => s.theme);
   const setTheme = useAppStore((s) => s.setTheme);
   const navigate = useNavigate();
+  // Version is sourced from the API's /system/status (which derives from root package.json at
+  // runtime), not a hardcoded literal — released from the AGENTS.md release-sync checklist.
+  const status = useQuery({ queryKey: ["system-status"], queryFn: () => api.get<SystemStatus>("/system/status") });
+  const update = useQuery({ queryKey: ["update-check"], queryFn: () => api.get<UpdateCheckState>("/system/update-check") });
   const logout = async () => {
     await api.post("/auth/logout").catch(() => {});
     navigate("/login", { replace: true });
@@ -84,7 +90,20 @@ export default function Layout() {
             <LogOut className="h-3.5 w-3.5" /> Logout
           </button>
           <div className="flex items-center justify-between rounded-lg px-2 py-1">
-            <span className="text-xs text-zinc-500">v1.2.0</span>
+            <span className="flex items-center gap-1.5 text-xs text-zinc-500">
+              {status.data ? `v${status.data.version}` : "…"}
+              {update.data?.updateAvailable && update.data.latestVersion && update.data.releaseUrl && (
+                <a
+                  href={update.data.releaseUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={`Update available: v${update.data.latestVersion} → release page`}
+                  className="rounded-full bg-violet-100 px-1.5 py-px text-[10px] font-medium text-violet-700 hover:bg-violet-200 dark:bg-violet-900/40 dark:text-violet-200 dark:hover:bg-violet-900/60"
+                >
+                  v{update.data.latestVersion} available
+                </a>
+              )}
+            </span>
             <button
               onClick={() => { const next = theme === "dark" ? "light" : "dark"; setTheme(next); applyTheme(next); }}
               className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"

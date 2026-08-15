@@ -101,6 +101,26 @@ export interface SystemStatus {
   database: { vendor: string };
 }
 
+export interface UpdateCheckResult {
+  checked: true;
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  releaseUrl: string | null;
+  checkedAt: string;
+}
+
+export interface UpdateCheckNotChecked {
+  checked: false;
+  currentVersion: string;
+  latestVersion: null;
+  updateAvailable: false;
+  releaseUrl: null;
+  checkedAt: null;
+}
+
+export type UpdateCheckState = UpdateCheckResult | UpdateCheckNotChecked;
+
 export interface HistoryRow {
   id: string;
   mediaType: string;

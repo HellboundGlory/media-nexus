@@ -106,6 +106,9 @@ export async function seedStatic(db: Db): Promise<void> {
     // failed every run — removed by migration 0011) in the same 04:00 daily slot.
     { key: "system.housekeeping", name: "Housekeeping", description: "Sweep orphaned rows and trim job_run/audit_log/terminal queue/blocklist entries past their configured retention", schedule: "0 4 * * *", timeoutMs: 60_000, maxRetries: 1, priority: 200 },
     { key: "system.backup", name: "Backup", description: "Online SQLite backup to system.backupPath (no-op when unconfigured)", schedule: "0 3 * * 0", timeoutMs: 120_000, maxRetries: 1, priority: 200 },
+    // Daily 06:00 — clear of the other daily/fixed slots (3am metadataRefresh, 4am housekeeping,
+    // 5am missingSearch, Sunday-3am backup). Read-only; see update-check.service.ts.
+    { key: "system.updateCheck", name: "Update check", description: "Check GitHub for a newer MediaNexus release and cache the result (read-only — never self-updates)", schedule: "0 6 * * *", timeoutMs: 30_000, maxRetries: 1, priority: 50 },
     { key: "acquisition.downloadMonitor", name: "Download monitor", description: "Poll download clients and import completed downloads", schedule: "*/1 * * * *", timeoutMs: 60_000, maxRetries: 2, priority: 80 },
     { key: "media.rssSync", name: "RSS sync", description: "Poll configured indexers' recent-releases feeds and auto-grab matches for monitored missing movies/episodes", schedule: "*/10 * * * *", timeoutMs: 180_000, maxRetries: 2, priority: 60 },
     { key: "media.missingSearch", name: "Missing search", description: "Actively search indexers for monitored missing movies/episodes the passive RSS poll hasn't caught (safety net)", schedule: "0 5 * * *", timeoutMs: 180_000, maxRetries: 2, priority: 60 },

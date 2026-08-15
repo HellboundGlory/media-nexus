@@ -5,6 +5,10 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { GlobalExceptionFilter } from "./common/errors.filter";
 import { CompatService } from "./compat/compat.service";
 import { CompatSurface } from "@medianexus/compatibility";
+// Same single-source-of-truth as system-status.service.ts: the Swagger version mirrors the
+// root package.json "version" field rather than a hand-kept literal. `../../../` reaches the
+// repo root from both src/ (dev) and the built dist/.
+import pkg from "../../../package.json";
 
 /**
  * Shared application wiring used by both `main.ts` (production bootstrap) and e2e tests:
@@ -19,7 +23,7 @@ export function configureApp(app: INestApplication): void {
   const config = new DocumentBuilder()
     .setTitle("MediaNexus API")
     .setDescription("Unified media automation platform — native API (compat APIs are separate).")
-    .setVersion("1.2.0")
+    .setVersion(pkg.version)
     .addApiKey({ type: "apiKey", name: "x-api-key", in: "header" }, "X-Api-Key")
     .build();
   const document = SwaggerModule.createDocument(app, config);
