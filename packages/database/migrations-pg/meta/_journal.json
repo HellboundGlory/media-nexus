@@ -8,6 +8,13 @@
       "when": 1786791485534,
       "tag": "0000_worried_king_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786802760713,
+      "tag": "0001_goofy_killmonger",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { ApiError } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
@@ -59,12 +59,14 @@ export class MetadataService {
     if (!movie[0]) throw ApiError.notFound("movie", movieId);
     if (!movie[0].tmdbId) throw new ApiError({ code: "UNPROCESSABLE", message: "movie has no tmdbId" });
     const d = await p.getDetails("movie", String(movie[0].tmdbId));
+    const now = new Date().toISOString();
     await this.db.update(schema.movie).set({
       overview: d.overview ?? movie[0].overview ?? "",
       genres: d.genres ?? [],
       images: d.images ?? [],
       releaseDate: d.releaseDate ?? movie[0].releaseDate,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
+      lastRefreshedAt: now,
     }).where(eq(schema.movie.id, movieId));
     return { updated: true, title: d.title };
   }
@@ -80,12 +82,14 @@ export class MetadataService {
 
     const d = await p.getDetails("series", tmdbId);
     const seasons = await p.seriesSeasons(Number(tmdbId));
+    const now = new Date().toISOString();
     await this.db.update(schema.series).set({
       overview: d.overview ?? series[0].overview ?? "",
       genres: d.genres ?? [],
       images: d.images ?? [],
       firstAirYear: d.year ?? series[0].firstAirYear,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
+      lastRefreshedAt: now,
     }).where(eq(schema.series.id, seriesId));
 
     // upsert seasons + episodes idempotently
@@ -203,13 +207,45 @@ export class MetadataService {
     }
   }
 
-  /** Refresh up to `limit` series that have no episodes yet (bounded job). */
+  /**
+   * Refresh up to `limit` titles (movies AND series) that have gone longest without a metadata
+   * refresh (roadmap P3, gap report D5). Selection is ordered by `lastRefreshedAt` ASC across
+   * both tables, nulls first: never-refreshed rows (NULL) sort ahead of everything, and a
+   * successful refresh bumps `lastRefreshedAt` to now, pushing a row to the back of the queue for
+   * the next run — so the job rotates through the whole library instead of repeatedly re-selecting
+   * the same first N. A dedicated column rather than `updatedAt` (which is also bumped by edits,
+   * imports and library scans — a recently *used* title would otherwise be wrongly deprioritized).
+   * No `monitored` filter: this is a metadata-completeness net rather than an acquisition pass, so
+   * unmonitored titles are refreshed too. A failing row (e.g. no tmdbId/tvdbId -> UNPROCESSABLE) is
+   * caught, logged, and skipped — one bad row never aborts the batch.
+   */
   async refreshMissing(limit = 5): Promise<{ refreshed: number }> {
-    const series = await this.db.select().from(schema.series).limit(limit);
+    // Order by `lastRefreshedAt` ASC with NULLs first (never-refreshed). Postgres sorts NULLs
+    // LAST on ASC by default while SQLite puts them first, so pin `NULLS FIRST` on the pg branch.
+    const [movies, series] = await Promise.all([
+      this.db.select().from(schema.movie)
+        .orderBy(this.db.dbDialect === "postgres" ? sql`${schema.movie.lastRefreshedAt} asc nulls first` : sql`${schema.movie.lastRefreshedAt} asc`)
+        .limit(limit),
+      this.db.select().from(schema.series)
+        .orderBy(this.db.dbDialect === "postgres" ? sql`${schema.series.lastRefreshedAt} asc nulls first` : sql`${schema.series.lastRefreshedAt} asc`)
+        .limit(limit),
+    ]);
+    // Merge both candidate sets, oldest-lastRefreshedAt first, keep the `limit` oldest overall.
+    // ISO timestamps sort lexicographically == chronologically; null/"no refresh yet" sorts first.
+    const candidates = [
+      ...movies.map((m) => ({ kind: "movie" as const, id: m.id, title: m.title, lastRefreshedAt: m.lastRefreshedAt })),
+      ...series.map((s) => ({ kind: "series" as const, id: s.id, title: s.title, lastRefreshedAt: s.lastRefreshedAt })),
+    ].sort((a, b) => (a.lastRefreshedAt ?? "").localeCompare(b.lastRefreshedAt ?? "")).slice(0, limit);
+
     let refreshed = 0;
-    for (const s of series) {
-      try { await this.refreshSeries(s.id); refreshed++; }
-      catch (err) { this.logger.warn(`metadata refresh skipped ${s.title}: ${(err as Error).message}`); }
+    for (const c of candidates) {
+      try {
+        if (c.kind === "movie") await this.refreshMovie(c.id);
+        else await this.refreshSeries(c.id);
+        refreshed++;
+      } catch (err) {
+        this.logger.warn(`metadata refresh skipped ${c.title}: ${(err as Error).message}`);
+      }
     }
     return { refreshed };
   }

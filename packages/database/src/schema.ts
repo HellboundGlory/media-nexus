@@ -132,6 +132,7 @@ export const movie = sqliteTable("movie", {
   hasFile: bool("has_file", false),
   addedAt: iso("added_at"),
   updatedAt: iso("updated_at"),
+  lastRefreshedAt: nullableIso("last_refreshed_at"),
 }, (t) => [uniqueIndex("movie_tmdb_idx").on(t.tmdbId)]);
 
 export const series = sqliteTable("series", {
@@ -154,6 +155,7 @@ export const series = sqliteTable("series", {
   alternateTitles: json<string[]>("alternate_titles"),
   addedAt: iso("added_at"),
   updatedAt: iso("updated_at"),
+  lastRefreshedAt: nullableIso("last_refreshed_at"),
 }, (t) => [uniqueIndex("series_tvdb_idx").on(t.tvdbId), uniqueIndex("series_tmdb_idx").on(t.tmdbId)]);
 
 export const season = sqliteTable("season", {

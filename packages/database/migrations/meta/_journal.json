@@ -155,6 +155,13 @@
       "when": 1789100000000,
       "tag": "0021_settings_blob_entities",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1786802755743,
+      "tag": "0022_narrow_captain_stacy",
+      "breakpoints": true
     }
   ]
 }
