@@ -7,6 +7,7 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import {
   episodeQueryTag, parseEpisodeRelease, titleMatches, pickBest, ACTIVE_QUEUE_STATUSES,
+  type SeriesType,
 } from "@medianexus/domain";
 import type { Release } from "@medianexus/domain";
 import { IndexersService } from "../indexers/indexers.service";
@@ -15,6 +16,9 @@ import { MoviesService, type WantedMovie } from "../movies/movies.service";
 import { DecisionService } from "../decision/decision.service";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
+
+/** A single wanted (monitored, missing) episode row as returned by `wantedMissing()`. */
+type WantedEpisode = Awaited<ReturnType<SeriesService["wantedMissing"]>>[number];
 
 /**
  * Two related but distinct mechanisms, both against monitored movies/episodes that are
@@ -69,8 +73,10 @@ export class RssSyncService {
     // an unmonitored title match and auto-grab.
     const movieCandidates = await this.movies.wantedMissing(5000);
     const wantedEpisodes = await this.series.wantedMissing(5000);
-    const seriesTitles = new Map<string, string>();
-    for (const ep of wantedEpisodes) if (!seriesTitles.has(ep.seriesId)) seriesTitles.set(ep.seriesId, ep.seriesTitle);
+    const seriesById = new Map<string, { title: string; seriesType: SeriesType }>();
+    for (const ep of wantedEpisodes) {
+      if (!seriesById.has(ep.seriesId)) seriesById.set(ep.seriesId, { title: ep.seriesTitle, seriesType: ep.seriesType as SeriesType });
+    }
 
     // Group matches by target: an uncapped poll can return several encodes of the same
     // release across indexers in one tick — grabbing raw feed order would grab whichever
@@ -78,7 +84,7 @@ export class RssSyncService {
     // for its own search results.
     const byTarget = new Map<string, { mediaType: "movie" | "series"; mediaId: string; decision: Awaited<ReturnType<DecisionService["evaluate"]>> }[]>();
     for (const release of unseen) {
-      const match = this.matchRelease(release, movieCandidates, seriesTitles, wantedEpisodes);
+      const match = this.matchRelease(release, movieCandidates, seriesById, wantedEpisodes);
       if (!match) continue;
       const decision = await this.decisions.evaluate(match.mediaType, match.mediaId, release);
       const key = `${match.mediaType}:${match.mediaId}`;
@@ -123,16 +129,20 @@ export class RssSyncService {
    *  that series' wanted (missing+monitored) episodes — matching on series title alone
    *  would let a release for an already-complete season match a series that merely has
    *  *some* other wanted episode. Ambiguous matches (0 or 2+ candidates) return null —
-   *  skip rather than risk grabbing into the wrong title. */
+   *  skip rather than risk grabbing into the wrong title.
+   *
+   *  Daily/anime releases name a date or absolute number instead of SxxExx, so they carry
+   *  no `season`. They get a parallel path (`matchDailyOrAnime`) that narrows the wanted
+   *  episode list by air date / absolute number on the candidate series' own seriesType. */
   private matchRelease(
     release: Release,
     movieCandidates: WantedMovie[],
-    seriesTitles: Map<string, string>,
+    seriesById: Map<string, { title: string; seriesType: SeriesType }>,
     wantedEpisodes: Awaited<ReturnType<SeriesService["wantedMissing"]>>,
   ): { mediaType: "movie" | "series"; mediaId: string } | null {
     const parsed = parseEpisodeRelease(release.title);
     if (parsed.season !== undefined) {
-      const hits = [...seriesTitles.entries()].filter(([, title]) => titleMatches(parsed.seriesTitle, title));
+      const hits = [...seriesById.entries()].filter(([, s]) => titleMatches(parsed.seriesTitle, s.title));
       if (hits.length !== 1) return null;
       const [seriesId] = hits[0];
       const inSeason = wantedEpisodes.filter((e) => e.seriesId === seriesId && e.seasonNumber === parsed.season);
@@ -140,8 +150,50 @@ export class RssSyncService {
       if (!parsed.isSeasonPack && parsed.episodes.length > 0 && !inSeason.some((e) => parsed.episodes.includes(e.episodeNumber))) return null;
       return { mediaType: "series", mediaId: seriesId };
     }
+
+    const dailyOrAnime = this.matchDailyOrAnime(parsed, seriesById, wantedEpisodes);
+    if (dailyOrAnime) return dailyOrAnime;
+
     const hits = movieCandidates.filter((m) => this.matchesMovie(release, m.title, movieYear(m)));
     return hits.length === 1 ? { mediaType: "movie", mediaId: hits[0].id } : null;
+  }
+
+  /** Daily/anime feed-poll narrowing: a release with no season but a date or absolute
+   *  number resolves against the wanted episodes of daily/anime candidate series. Same
+   *  exactly-one-candidate discipline as the S&E path. Each hit must also fuzzily match a
+   *  candidate series title, mirroring the S&E branch's wrong-title guard. */
+  private matchDailyOrAnime(
+    parsed: ReturnType<typeof parseEpisodeRelease>,
+    seriesById: Map<string, { title: string; seriesType: SeriesType }>,
+    wantedEpisodes: Awaited<ReturnType<SeriesService["wantedMissing"]>>,
+  ): { mediaType: "series"; mediaId: string } | null {
+    if (parsed.dailyDate === undefined && parsed.absoluteNumber === undefined) return null;
+    let matchedSeriesId: string | null = null;
+    for (const [seriesId, s] of seriesById) {
+      if (parsed.seriesTitle && !titleMatches(parsed.seriesTitle, s.title)) continue;
+      const eps = wantedEpisodes.filter((e) => e.seriesId === seriesId);
+      let hit = false;
+      if (s.seriesType === "daily" && parsed.dailyDate) {
+        hit = eps.some((e) => this.airDateMatches(e.airDateUtc, parsed.dailyDate as string));
+      } else if (s.seriesType === "anime" && parsed.absoluteNumber !== undefined) {
+        hit = eps.some((e) => e.absoluteNumber === parsed.absoluteNumber);
+      }
+      if (hit) {
+        if (matchedSeriesId) return null; // ambiguous across two series — skip
+        matchedSeriesId = seriesId;
+      }
+    }
+    return matchedSeriesId ? { mediaType: "series", mediaId: matchedSeriesId } : null;
+  }
+
+  /** Whether an episode's air date falls on `date` (exact, else ±1 day for drift). */
+  private airDateMatches(airDateUtc: string | null | undefined, date: string): boolean {
+    if (!airDateUtc) return false;
+    const day = airDateUtc.slice(0, 10);
+    if (day === date) return true;
+    const t = new Date(`${day}T00:00:00.000Z`).getTime();
+    const base = new Date(`${date}T00:00:00.000Z`).getTime();
+    return Number.isNaN(t) || Number.isNaN(base) ? false : Math.abs(t - base) <= 86400000;
   }
 
   private async pruneSeenReleases(): Promise<void> {
@@ -264,16 +316,14 @@ export class RssSyncService {
       if (scannedSeries >= maxSeries) break;
       if (await this.hasActiveQueue("series", seriesId)) { skipped += eps.length; continue; }
       const firstTarget = eps[0];
-      if (await this.grabbedRecently("series", seriesId, (releaseTitle) => {
-        const m = parseEpisodeRelease(releaseTitle);
-        return m.season === firstTarget.seasonNumber && m.episodes.includes(firstTarget.episodeNumber);
-      })) { skipped += eps.length; continue; }
+      const seriesType = firstTarget.seriesType as SeriesType;
+      if (await this.grabbedRecently("series", seriesId, (releaseTitle) => this.matchesTarget(seriesType, firstTarget, releaseTitle))) { skipped += eps.length; continue; }
 
       scannedSeries++;
       const seriesTitle = eps[0].seriesTitle;
       const targets = eps.slice(0, perSeries);
       for (const target of targets) {
-        const didGrab = await this.tryGrabEpisode(seriesId, seriesTitle, target.seasonNumber, target.episodeNumber);
+        const didGrab = await this.tryGrabEpisode(seriesId, seriesTitle, seriesType, target);
         if (didGrab) { grabbed++; if (await this.hasActiveQueue("series", seriesId)) break; }
         else skipped++;
       }
@@ -282,19 +332,21 @@ export class RssSyncService {
     return { scannedSeries, grabbed, skipped };
   }
 
-  private async tryGrabEpisode(seriesId: string, seriesTitle: string, season: number, episode: number): Promise<boolean> {
-    const tag = episodeQueryTag(season, episode);
-    const query = `${seriesTitle} ${tag}`;
+  private async tryGrabEpisode(
+    seriesId: string,
+    seriesTitle: string,
+    seriesType: SeriesType,
+    target: WantedEpisode,
+  ): Promise<boolean> {
+    const query = this.seriesQuery(seriesType, seriesTitle, target);
     const res = await this.indexers.search({ mediaType: "series", mediaId: seriesId, query, limit: 50 });
     if (res.releases.length === 0) return false;
 
-    // Filter to releases whose title actually contains the target episode (SxxExx
-    // match), then let the decision engine's verdicts — already attached to each
-    // release by search() — pick the best *approved* candidate. A higher-quality
-    // release that's blocklisted, disallowed by the profile, or not an upgrade over an
-    // existing file loses to a worse-but-approved one, instead of always winning on
-    // raw quality the way the old compareQuality-only bestRelease() did.
-    const candidates = res.releases.filter((r) => this.matchesTarget(r, season, episode));
+    // Filter to releases whose title actually matches the target episode — SxxExx for
+    // standard, air date for daily, absolute number for anime — then let the decision
+    // engine's verdicts (already attached to each release by search()) pick the best
+    // *approved* candidate, matching the pre-existing S&E behaviour.
+    const candidates = res.releases.filter((r) => this.matchesTarget(seriesType, target, r.title));
     const best = pickBest(candidates.map((r) => r.decision));
     if (!best) return false;
 
@@ -302,21 +354,40 @@ export class RssSyncService {
       await this.indexers.grab({ mediaType: "series", mediaId: seriesId, releaseId: best.release.id, indexerId: best.release.indexerId, release: best.release });
       return true;
     } catch (err) {
-      this.logger.warn(`auto-grab failed for ${seriesTitle} ${tag}: ${(err as Error).message}`);
+      this.logger.warn(`auto-grab failed for ${seriesTitle} ${query}: ${(err as Error).message}`);
       this.events.publish(EventTypes.DownloadClientFailed, { seriesId, error: (err as Error).message });
       return false;
     }
   }
 
-  private matchesTarget(r: Release, season: number, episode: number): boolean {
-    const m = parseEpisodeRelease(r.title);
-    if (m.season !== season) return false;
-    if (!m.episodes.includes(episode)) return false;
-    // series name sanity (only when our parser extracted something)
-    if (m.seriesTitle && !titleMatches(m.seriesTitle, r.indexerName) && m.confidence === 1) {
-      // tolerate unknown indexer name mismatch; rely on SxxExx which is strong
+  /** The per-title indexer query for a wanted episode, shaped by the series' numbering:
+   *  standard → SxxExx tag; daily → the episode's air date; anime → the absolute number.
+   *  Formatting follows the parser's own conventions in packages/domain/src/episodes.ts. */
+  private seriesQuery(seriesType: SeriesType, seriesTitle: string, target: WantedEpisode): string {
+    if (seriesType === "daily" && target.airDateUtc) {
+      const date = target.airDateUtc.slice(0, 10).replace(/-/g, ".");
+      return `${seriesTitle} ${date}`;
     }
-    return true;
+    if (seriesType === "anime" && target.absoluteNumber !== null && target.absoluteNumber !== undefined) {
+      return `${seriesTitle} ${target.absoluteNumber}`;
+    }
+    return `${seriesTitle} ${episodeQueryTag(target.seasonNumber, target.episodeNumber)}`;
+  }
+
+  /** Whether a release title matches a wanted episode, by the series' numbering scheme.
+   *  Daily/anime prefer their own signal (date / absolute number) and fall back to S&E
+   *  when one is present; absent data (null absoluteNumber/airDateUtc) degrades to a no-match. */
+  private matchesTarget(seriesType: SeriesType, target: WantedEpisode, title: string): boolean {
+    const m = parseEpisodeRelease(title);
+    if (seriesType === "daily") {
+      if (m.dailyDate && target.airDateUtc && this.airDateMatches(target.airDateUtc, m.dailyDate)) return true;
+      return m.season === target.seasonNumber && m.episodes.includes(target.episodeNumber);
+    }
+    if (seriesType === "anime") {
+      if (m.absoluteNumber !== undefined && target.absoluteNumber !== null && m.absoluteNumber === target.absoluteNumber) return true;
+      return m.season === target.seasonNumber && m.episodes.includes(target.episodeNumber);
+    }
+    return m.season === target.seasonNumber && m.episodes.includes(target.episodeNumber);
   }
 
   // ---------- shared: active-queue / recently-grabbed dedupe ----------

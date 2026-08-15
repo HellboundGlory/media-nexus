@@ -324,6 +324,95 @@ describe("B7 — naming templates honored on import", () => {
   });
 });
 
+describe("D8 — daily/anime release import (not Season Unknown)", () => {
+  async function seedSeriesTypeSeries(
+    db: Harness["db"],
+    mediaRoot: string,
+    over: { id: string; seriesType: string; title: string; seasons: { id: string; number: number; episodes: { id: string; number: number; absoluteNumber?: number | null; airDateUtc?: string | null }[] }[] },
+  ) {
+    const now = new Date().toISOString();
+    await db.insert(schema.series).values({
+      id: over.id, tvdbId: 1, tmdbId: null, imdbId: null, title: over.title, overview: "",
+      status: "continuing", seriesType: over.seriesType, network: null, firstAirYear: 2023,
+      monitored: true, qualityProfileId: null, rootFolderPath: mediaRoot,
+      genres: [], images: [], tags: [], addedAt: now, updatedAt: now,
+    });
+    for (const s of over.seasons) {
+      await db.insert(schema.season).values({ id: s.id, seriesId: over.id, seasonNumber: s.number, monitored: true });
+      await db.insert(schema.episode).values(
+        s.episodes.map((e) => ({
+          id: e.id, seriesId: over.id, seasonId: s.id, episodeNumber: e.number,
+          absoluteNumber: e.absoluteNumber ?? null, title: "", overview: "",
+          airDateUtc: e.airDateUtc ?? null, monitored: true, hasFile: false,
+          sceneSeasonNumber: null, sceneEpisodeNumber: null,
+        })),
+      );
+    }
+  }
+
+  async function singleFileEntry(h: Harness, mediaId: string, title: string) {
+    const now = new Date().toISOString();
+    await h.db.insert(schema.downloadQueueEntry).values({
+      id: "q1", mediaType: "series", mediaId, downloadClientId: null, downloadId: "d1",
+      title, status: "downloading", progress: 50, size: 2000, remainingTime: null, errorMessage: null,
+      data: { releaseTitle: title, quality: { source: "web", resolution: "1080p", edition: "" } } as Record<string, unknown>,
+      addedAt: now, updatedAt: now,
+    });
+  }
+
+  it("imports a daily-dated release onto its episode instead of Season Unknown", async () => {
+    const h = await harness();
+    await seedSeriesTypeSeries(h.db, h.mediaRoot, {
+      id: "sd", seriesType: "daily", title: "Daily Chat",
+      seasons: [{
+        id: "sdsea1", number: 1,
+        episodes: [
+          { id: "sde1", number: 1, airDateUtc: "2024-05-14T00:00:00.000Z" },
+          { id: "sde2", number: 2, airDateUtc: "2024-05-15T00:00:00.000Z" },
+        ],
+      }],
+    });
+    const title = "Daily.Chat.2024.05.15.1080p.HDTV";
+    const downloadDir = stagePack(h.downloadsRoot, title, [{ name: `${title}.mkv`, size: 2000 }]);
+    await singleFileEntry(h, "sd", title);
+    h.client.items = [{ downloadId: "d1", title, status: "completed", progress: 100, size: 2000, contentPath: downloadDir }];
+
+    await h.service.syncForClient(h.configured);
+
+    const ep2 = (await h.db.select().from(schema.episode).where(eq(schema.episode.id, "sde2")))[0];
+    const ep1 = (await h.db.select().from(schema.episode).where(eq(schema.episode.id, "sde1")))[0];
+    expect(ep2.hasFile).toBe(true);
+    expect(ep1.hasFile).toBe(false);
+    const files = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaId, "sd"));
+    expect(files).toHaveLength(1);
+    expect(files[0].relativePath).toContain("Season 1"); // not Season Unknown
+  });
+
+  it("imports an anime-absolute release onto its episode across seasons", async () => {
+    const h = await harness();
+    await seedSeriesTypeSeries(h.db, h.mediaRoot, {
+      id: "sa", seriesType: "anime", title: "Anime Show",
+      seasons: [
+        { id: "sasea1", number: 1, episodes: [{ id: "sa1e1", number: 1, absoluteNumber: 1 }, { id: "sa1e12", number: 12, absoluteNumber: 12 }] },
+        { id: "sasea2", number: 2, episodes: [{ id: "sa2e1", number: 1, absoluteNumber: 13 }] },
+      ],
+    });
+    const title = "[Subs] Anime.Show - 13 [1080p]";
+    const downloadDir = stagePack(h.downloadsRoot, title, [{ name: `${title}.mkv`, size: 2000 }]);
+    await singleFileEntry(h, "sa", title);
+    h.client.items = [{ downloadId: "d1", title, status: "completed", progress: 100, size: 2000, contentPath: downloadDir }];
+
+    await h.service.syncForClient(h.configured);
+
+    const target = (await h.db.select().from(schema.episode).where(eq(schema.episode.id, "sa2e1")))[0];
+    expect(target.hasFile).toBe(true);
+    const files = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaId, "sa"));
+    expect(files).toHaveLength(1);
+    expect(files[0].episodeIds).toEqual(["sa2e1"]);
+    expect(files[0].relativePath).toContain("Season 2");
+  });
+});
+
 describe("B7 — recycle bin", () => {
   async function upgradeHarness() {
     const h = await harness();

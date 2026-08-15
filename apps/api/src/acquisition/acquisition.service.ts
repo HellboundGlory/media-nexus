@@ -17,7 +17,7 @@ import { LocalStorageProvider, findLargestVideo, findAllVideos } from "@medianex
 import type { ClientQueueItem, DownloadClientContract } from "@medianexus/integrations";
 import {
   parseEpisodeRelease, episodeTarget, compareQuality,
-  decideImportFile, type KnownEpisode, type ImportRejection, type Quality,
+  decideImportFile, type KnownEpisode, type ImportRejection, type Quality, type SeriesType,
 } from "@medianexus/domain";
 import { MediaRepository } from "../media/media.repository";
 import { ensureAvailabilitySync, getQualityProfile, type Tx } from "../media/library.helpers";
@@ -579,16 +579,23 @@ export class AcquisitionService {
     }
     await this.assertSufficientFreeSpace(root, candidates.reduce((sum, f) => sum + f.size, 0), cfg);
 
-    if (match.season === undefined) {
-      // Unparseable release: no season to file under or episodes to match. Import the
-      // single largest candidate as before, with no episode marked as having a file.
+    const seriesType = series[0].seriesType as SeriesType;
+    // Resolve the release's target episodes through the seriesType-aware chokepoint. A
+    // standard SxxExx/season-pack release resolves exactly as before, and a daily/anime
+    // release (date / absolute number, no season) now resolves to its real DB episodes
+    // instead of falling through to Season Unknown. Null → genuinely unparseable or no
+    // matching episode (e.g. anime with an unpopulated absoluteNumber): keep the legacy
+    // "import to Season Unknown, no episode marked" behaviour.
+    const resolved = await this.media.resolveEpisodeTargets(seriesType, series[0].id, match);
+    if (!resolved) {
       return this.importSeriesUnknownSeason(entry, series[0], candidates[0], root, safeSeries, releaseQuality, item, now);
     }
 
-    const seasonEpisodes = await this.media.episodesInSeason(series[0].id, match.season);
+    const season = resolved.seasonNumber;
+    const seasonEpisodes = await this.media.episodesInSeason(series[0].id, season);
     const epNumberById = new Map(seasonEpisodes.map((e) => [e.id, e.episodeNumber]));
     const epTitleById = new Map(seasonEpisodes.map((e) => [e.id, e.title]));
-    const target = episodeTarget(series[0].id, match.season, seasonEpisodes, match.isSeasonPack);
+    const target = episodeTarget(series[0].id, season, seasonEpisodes, resolved.isSeasonPack);
     const existing = await this.media.existingFiles(target);
     const bestExistingByEpisode = new Map<string, { quality: Quality }>();
     for (const f of existing) {
@@ -602,13 +609,13 @@ export class AcquisitionService {
     );
     const profile = await getQualityProfile(this.db, series[0].qualityProfileId);
 
-    const targetDir = join(root, safeSeries, `Season ${match.season}`);
+    const targetDir = join(root, safeSeries, `Season ${season}`);
     await this.storage.ensureDir(targetDir);
 
     // Single-file, non-pack releases already know their episode(s) from the release title
     // itself — reuse that rather than re-parsing a possibly-uninformative filename. A
     // season pack's individual files each need their own filename parsed.
-    const useReleaseLevelMatch = !match.isSeasonPack && match.episodes.length > 0 && candidates.length === 1;
+    const useReleaseLevelMatch = !resolved.isSeasonPack && resolved.episodes.length > 0 && candidates.length === 1;
 
     // Phase 1 (async): all external I/O — hardlink/copy every approved file — happens
     // before the transaction. No DB writes here, so a failure partway through never
@@ -619,7 +626,26 @@ export class AcquisitionService {
     let fileIndex = 0;
 
     for (const file of candidates) {
-      const episodesInFile = useReleaseLevelMatch ? match.episodes : parseEpisodeRelease(baseNameOf(file.path)).episodes;
+      let episodesInFile: number[];
+      if (useReleaseLevelMatch) {
+        // Single-file: trust the release-title resolution (real DB episode numbers for
+        // daily/anime, not raw match.episodes which is empty for date/absolute titles).
+        episodesInFile = resolved.episodes.map((e) => e.episodeNumber);
+      } else {
+        const fileMatch = parseEpisodeRelease(baseNameOf(file.path));
+        if (fileMatch.episodes.length > 0) {
+          episodesInFile = fileMatch.episodes;
+        } else if (fileMatch.dailyDate !== undefined || fileMatch.absoluteNumber !== undefined) {
+          // Daily/anime filenames name a date/absolute number — resolve against the
+          // series' own numbering and keep only episodes inside the resolved season.
+          const fileResolved = await this.media.resolveEpisodeTargets(seriesType, series[0].id, fileMatch);
+          episodesInFile = (fileResolved?.episodes ?? [])
+            .filter((e) => e.seasonNumber === season)
+            .map((e) => e.episodeNumber);
+        } else {
+          episodesInFile = [];
+        }
+      }
       const decision = decideImportFile(file, episodesInFile, knownEpisodes, releaseQuality, profile);
       if (!decision.approved) {
         rejected.push({ path: file.path, reasons: decision.rejections.map(rejectionLabel) });
@@ -627,7 +653,7 @@ export class AcquisitionService {
       }
       try {
         const io = await this.hardlinkSeriesFile(
-          file, decision.episodeIds, epNumberById, epTitleById, targetDir, root, match.season,
+          file, decision.episodeIds, epNumberById, epTitleById, targetDir, root, season,
           safeSeries, series[0].title, releaseQuality, cfg, fileIndex++,
         );
         appliedIO.push(io);
@@ -669,7 +695,7 @@ export class AcquisitionService {
       }
       this.markAvailabilitySync(tx, "series", series[0].id, now);
       this.insertHistorySync(tx, "series", series[0].id, now, {
-        title: releaseTitle, downloadId: item.downloadId, season: match.season,
+        title: releaseTitle, downloadId: item.downloadId, season,
         imported: imported.map((f) => ({ mediaFileId: f.mediaFileId, path: f.path, episodes: f.episodeIds.map((id) => epNumberById.get(id)) })),
         rejected,
       });
@@ -689,7 +715,7 @@ export class AcquisitionService {
 
     const first = imported[0];
     this.emitImport("series", series[0].id, series[0].title, item.downloadId, first.path, first.mediaFileId, {
-      season: match.season, filesImported: imported.length, filesRejected: rejected.length,
+      season, filesImported: imported.length, filesRejected: rejected.length,
       episodes: imported.flatMap((f) => f.episodeIds),
     });
     return { imported, rejected };

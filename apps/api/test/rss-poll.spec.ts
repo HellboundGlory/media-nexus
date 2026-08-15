@@ -84,11 +84,12 @@ const wantedMovie: WantedMovie = {
   minimumAvailability: "announced", monitored: true, hasFile: false,
 };
 
-function wantedEpisode(over: Partial<{ id: string; episodeNumber: number; seasonNumber: number }> = {}) {
+function wantedEpisode(over: Partial<{ id: string; episodeNumber: number; seasonNumber: number; seriesType: string; airDateUtc: string | null; absoluteNumber: number | null; seriesId: string; seriesTitle: string }> = {}) {
   return {
     id: "ep1", seriesId: "s1", seasonId: "sea2", episodeNumber: 1, absoluteNumber: null,
     title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false,
     sceneSeasonNumber: null, sceneEpisodeNumber: null, seasonNumber: 2, seriesTitle: "Show",
+    seriesType: "standard",
     ...over,
   };
 }
@@ -192,6 +193,105 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
     } as unknown as IndexersService;
     const rssRejected = new RssSyncService(db2, indexersRejected, series, movies, new EventsService(new EventBus()), decisionsStub(() => movieCtx));
     expect((await rssRejected.runFeedPoll()).matched).toBe(0);
+  });
+
+  it("matches a daily-dated release to a wanted daily episode", async () => {
+    const db = await freshDb();
+    const grabbed: string[] = [];
+    const indexers = {
+      pollRecent: async () => [release({ id: "r-daily", title: "Daily.Chat.2024.05.15.1080p.HDTV" })],
+      grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
+    } as unknown as IndexersService;
+    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const series = {
+      wantedMissing: async () => [
+        { ...wantedEpisode(), seriesId: "sDaily", seriesTitle: "Daily Chat", seriesType: "daily", seasonNumber: 1, episodeNumber: 2, airDateUtc: "2024-05-15T00:00:00.000Z" },
+      ],
+    } as unknown as SeriesService;
+    const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => episodeCtx));
+
+    const result = await rss.runFeedPoll();
+    expect(result.matched).toBe(1);
+    expect(grabbed).toEqual(["r-daily"]);
+  });
+
+  it("matches an anime-absolute release to a wanted anime episode", async () => {
+    const db = await freshDb();
+    const grabbed: string[] = [];
+    const indexers = {
+      pollRecent: async () => [release({ id: "r-anime", title: "[Subs] Anime.Show - 13 [1080p]" })],
+      grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
+    } as unknown as IndexersService;
+    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const series = {
+      wantedMissing: async () => [
+        { ...wantedEpisode(), seriesId: "sAnime", seriesTitle: "Anime Show", seriesType: "anime", seasonNumber: 2, episodeNumber: 1, absoluteNumber: 13, airDateUtc: null },
+      ],
+    } as unknown as SeriesService;
+    const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => episodeCtx));
+
+    const result = await rss.runFeedPoll();
+    expect(result.matched).toBe(1);
+    expect(grabbed).toEqual(["r-anime"]);
+  });
+
+  it("does not match an anime release when the wanted episode lacks an absoluteNumber (graceful)", async () => {
+    const db = await freshDb();
+    const indexers = {
+      pollRecent: async () => [release({ title: "[Subs] Anime.Show - 13 [1080p]" })],
+      grab: async () => ({}),
+    } as unknown as IndexersService;
+    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const series = {
+      wantedMissing: async () => [
+        { ...wantedEpisode(), seriesId: "sAnime", seriesTitle: "Anime Show", seriesType: "anime", seasonNumber: 2, episodeNumber: 1, absoluteNumber: null, airDateUtc: null },
+      ],
+    } as unknown as SeriesService;
+    const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => episodeCtx));
+
+    expect((await rss.runFeedPoll()).matched).toBe(0);
+  });
+});
+
+describe("RssSyncService.runMissingSearch() — daily/anime queries and matching", () => {
+  it("grabs a daily-dated release for a wanted daily episode", async () => {
+    const db = await freshDb();
+    const grabbed: string[] = [];
+    const target = { ...wantedEpisode(), seriesId: "sDaily", seriesTitle: "Daily Chat", seriesType: "daily", seasonNumber: 1, episodeNumber: 2, airDateUtc: "2024-05-15T00:00:00.000Z" };
+    const indexers = {
+      search: async () => {
+        const r = release({ id: "r-dm", title: "Daily.Chat.2024.05.15.1080p.HDTV" });
+        return { mediaType: "series", mediaId: "sDaily", query: "x", releases: [{ ...r, decision: evaluate(r, episodeCtx) }] };
+      },
+      grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
+    } as unknown as IndexersService;
+    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const series = { wantedMissing: async () => [target] } as unknown as SeriesService;
+    const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), {} as unknown as DecisionService);
+
+    const result = await rss.runMissingSearch({ maxSeries: 1, perSeries: 1 });
+    expect(result.grabbedSeries).toBe(1);
+    expect(grabbed).toEqual(["r-dm"]);
+  });
+
+  it("grabs an anime-absolute release for a wanted anime episode", async () => {
+    const db = await freshDb();
+    const grabbed: string[] = [];
+    const target = { ...wantedEpisode(), seriesId: "sAnime", seriesTitle: "Anime Show", seriesType: "anime", seasonNumber: 2, episodeNumber: 1, absoluteNumber: 13, airDateUtc: null };
+    const indexers = {
+      search: async () => {
+        const r = release({ id: "r-am", title: "[Subs] Anime.Show - 13 [1080p]" });
+        return { mediaType: "series", mediaId: "sAnime", query: "x", releases: [{ ...r, decision: evaluate(r, episodeCtx) }] };
+      },
+      grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
+    } as unknown as IndexersService;
+    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const series = { wantedMissing: async () => [target] } as unknown as SeriesService;
+    const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), {} as unknown as DecisionService);
+
+    const result = await rss.runMissingSearch({ maxSeries: 1, perSeries: 1 });
+    expect(result.grabbedSeries).toBe(1);
+    expect(grabbed).toEqual(["r-am"]);
   });
 });
 
