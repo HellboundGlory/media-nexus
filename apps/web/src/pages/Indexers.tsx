@@ -74,7 +74,7 @@ export default function Indexers() {
   });
 
   const grab = useMutation({
-    mutationFn: ({ release }: { release: Release }) => api.post("/grabs", { mediaType: "movie", mediaId: movieId, releaseId: release.id }),
+    mutationFn: ({ release }: { release: Release }) => api.post("/grabs", { mediaType: "movie", mediaId: movieId, releaseId: release.id, indexerId: release.indexerId, release }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["queue"] }); qc.invalidateQueries({ queryKey: ["indexer-stats"] }); setReleases(null); },
   });
 

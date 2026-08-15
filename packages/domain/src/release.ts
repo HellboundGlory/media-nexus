@@ -50,5 +50,12 @@ export const grabRequestSchema = z.object({
   releaseId: z.string(),
   indexerId: z.string().optional(),
   downloadClientId: z.string().optional(),
+  // Manual-grab path (gap report I6): forward the full search result the caller already
+  // has so `IndexersService.grab()` skips the hidden re-search round-trip (which would
+  // otherwise double every manual grab's indexer load and rate-limit spend). The
+  // grab-time decision re-evaluation still runs regardless; this only avoids the
+  // redundant search, never the safety gate. Optional for backward compatibility with
+  // callers (e.g. RSS auto-grab bypasses this DTO) that still omit it.
+  release: releaseSchema.optional(),
 });
 export type GrabRequest = z.infer<typeof grabRequestSchema>;

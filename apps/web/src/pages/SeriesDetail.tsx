@@ -33,7 +33,7 @@ export default function SeriesDetail() {
   });
 
   const grab = useMutation({
-    mutationFn: (r: Release) => api.post("/grabs", { mediaType: "series", mediaId: id, releaseId: r.id, indexerId: r.indexerId }),
+    mutationFn: (r: Release) => api.post("/grabs", { mediaType: "series", mediaId: id, releaseId: r.id, indexerId: r.indexerId, release: r }),
     onSuccess: () => { setReleases(null); setTimeout(() => qc.invalidateQueries({ queryKey: ["series-episodes", id] }), 400); },
   });
 
