@@ -7,8 +7,15 @@
  */
 import type { MetadataProviderContract, MediaSummary } from "./contracts";
 
+/** Default shared TMDB proxy (see infra/cloudflare). Public by design — the Worker injects the
+ *  real key. Used as `metadata.tmdbBaseUrl` when the user hasn't set their own key OR base URL;
+ *  use via TmdbProvider with apiKey unset (proxy mode). */
+export const DEFAULT_TMDB_WORKER_URL = "https://medianexus-proxy.hellboundg-e09.workers.dev/tmdb";
+
 export interface TmdbSettings {
-  apiKey: string;
+  /** Leave unset to use the shared proxy (baseUrl must then be the proxy's /tmdb URL, which is the
+   *  default) — the Worker injects the real key. Set to use your own TMDB key directly. */
+  apiKey?: string;
   baseUrl?: string; // default https://api.themoviedb.org/3
   language?: string;
 }
@@ -59,7 +66,9 @@ export class TmdbProvider implements MetadataProviderContract {
   }
   private base() { return this.settings.baseUrl!.replace(/\/$/, ""); }
   private q(params: Record<string, string>): string {
-    const u = new URLSearchParams({ api_key: this.settings.apiKey, language: this.settings.language ?? "en-US", ...params });
+    const u = new URLSearchParams({ language: this.settings.language ?? "en-US", ...params });
+    // Own-key mode sends the key; proxy mode (apiKey unset) omits it so the Worker can inject it.
+    if (this.settings.apiKey) u.set("api_key", this.settings.apiKey);
     return `?${u.toString()}`;
   }
   private async get<T>(path: string, params: Record<string, string> = {}): Promise<T> {

@@ -11,7 +11,6 @@ function baseContext(over: Partial<HealthContext> = {}): HealthContext {
     downloadsPathAccessible: true,
     minimumFreeSpaceMb: 100,
     preferredProtocol: "any",
-    tmdbApiKeyConfigured: true,
     recentFailedJobKeys: [],
     recentContentNotFoundCount: 0,
     ...over,
@@ -25,9 +24,9 @@ function find(results: HealthCheckResult[], key: string): HealthCheckResult {
 }
 
 describe("runHealthChecks — all healthy", () => {
-  it("returns 12 ok results for a fully healthy context (10 + the two B10 autoDisabled checks)", () => {
+  it("returns 11 ok results for a fully healthy context", () => {
     const results = runHealthChecks(baseContext());
-    expect(results).toHaveLength(12);
+    expect(results).toHaveLength(11);
     expect(results.every((r) => r.level === "ok")).toBe(true);
     expect(overallLevel(results)).toBe("ok");
   });
@@ -191,13 +190,6 @@ describe("protocol.noClientForPreferred", () => {
       "protocol.noClientForPreferred",
     );
     expect(r.level).toBe("ok");
-  });
-});
-
-describe("metadata.tmdbKeyMissing", () => {
-  it("warns when unset", () => {
-    const r = find(runHealthChecks(baseContext({ tmdbApiKeyConfigured: false })), "metadata.tmdbKeyMissing");
-    expect(r.level).toBe("warning");
   });
 });
 

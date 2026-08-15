@@ -1320,12 +1320,12 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
     expect(ep1.episode.title).toBe("Discover Pilot");
   });
 
-  it("discover: 422s when TMDB isn't configured", async () => {
-    await auth(request(http).put("/api/v1/system/config").send({ "metadata.tmdbApiKey": "" }));
+  it("discover works without an API key when a metadata base URL (shared proxy) is configured", async () => {
+    await auth(request(http).put("/api/v1/system/config").send({ "metadata.tmdbApiKey": "", "metadata.tmdbBaseUrl": tmdbUrl }));
     const res = await auth(request(http).get("/api/v1/discover?mediaType=movie&category=popular"));
-    expect(res.status).toBe(422);
-    expect(res.body.error.code).toBe("UNPROCESSABLE");
-    // restore for hygiene (nothing else in this file currently depends on it, but keep the suite order-independent)
+    expect(res.status).toBe(200);
+    expect(res.body.results.some((r: any) => r.title === "Discover Movie")).toBe(true);
+    // restore for hygiene (keep the suite order-independent)
     await auth(request(http).put("/api/v1/system/config").send({ "metadata.tmdbApiKey": "test-key", "metadata.tmdbBaseUrl": tmdbUrl }));
   });
 });

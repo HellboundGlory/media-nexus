@@ -6,7 +6,7 @@ import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import { ConfigService } from "../system/config.service";
-import { TmdbProvider, TvdbProvider, type TvdbEpisodeRecord } from "@medianexus/integrations";
+import { TmdbProvider, TvdbProvider, DEFAULT_TMDB_WORKER_URL, type TvdbEpisodeRecord } from "@medianexus/integrations";
 import type { MediaSummary, DiscoverCategory } from "@medianexus/integrations";
 import { MoviesService } from "../movies/movies.service";
 import { SeriesService } from "../series/series.service";
@@ -27,11 +27,15 @@ export class MetadataService {
     private readonly autoTags: AutoTagsService,
   ) {}
 
-  async provider(): Promise<TmdbProvider | null> {
+  async provider(): Promise<TmdbProvider> {
     const c = await this.config.get();
-    const apiKey = c["metadata.tmdbApiKey"];
-    if (!apiKey) return null;
-    const baseUrl = c["metadata.tmdbBaseUrl"] || undefined;
+    const apiKey = c["metadata.tmdbApiKey"]?.trim() || undefined;
+    // TMDBPROXY (roadmap P3): additive fallback mirroring TvdbProvider — an own key goes straight
+    // to the real TMDB API; no key uses the shared Cloudflare proxy (/tmdb), which injects the real
+    // key. An explicit `metadata.tmdbBaseUrl` overrides either default. TMDB metadata is thus always
+    // available; never "not configured".
+    const defaultBase = apiKey ? "https://api.themoviedb.org/3" : DEFAULT_TMDB_WORKER_URL;
+    const baseUrl = (c["metadata.tmdbBaseUrl"]?.trim() || defaultBase).replace(/\/$/, "");
     return new TmdbProvider({ apiKey, baseUrl });
   }
 
@@ -50,13 +54,11 @@ export class MetadataService {
 
   async lookup(query: string, mediaType: "movie" | "series"): Promise<MediaSummary[]> {
     const p = await this.provider();
-    if (!p) throw new ApiError({ code: "UNPROCESSABLE", message: "metadata.tmdbApiKey is not configured" });
     return p.search(query, mediaType);
   }
 
   async refreshMovie(movieId: string): Promise<{ updated: boolean; title?: string }> {
     const p = await this.provider();
-    if (!p) throw new ApiError({ code: "UNPROCESSABLE", message: "metadata.tmdbApiKey is not configured" });
     const movie = await this.db.select().from(schema.movie).where(eq(schema.movie.id, movieId)).limit(1);
     if (!movie[0]) throw ApiError.notFound("movie", movieId);
     if (!movie[0].tmdbId) throw new ApiError({ code: "UNPROCESSABLE", message: "movie has no tmdbId" });
@@ -86,7 +88,6 @@ export class MetadataService {
 
   async refreshSeries(seriesId: string): Promise<{ updated: boolean; title?: string; seasons: number; episodes: number }> {
     const p = await this.provider();
-    if (!p) throw new ApiError({ code: "UNPROCESSABLE", message: "metadata.tmdbApiKey is not configured" });
     const series = await this.db.select().from(schema.series).where(eq(schema.series.id, seriesId)).limit(1);
     if (!series[0]) throw ApiError.notFound("series", seriesId);
 
@@ -278,7 +279,6 @@ export class MetadataService {
   /** Browse TMDB trending/popular/upcoming/top-rated lists, flagged against the local library. */
   async discover(mediaType: "movie" | "series", category: DiscoverCategory, page = 1) {
     const p = await this.provider();
-    if (!p) throw new ApiError({ code: "UNPROCESSABLE", message: "metadata.tmdbApiKey is not configured" });
     const result = await p.discover(mediaType, category, page);
 
     const tmdbIds = result.results.map((r) => r.tmdbId);
@@ -304,7 +304,6 @@ export class MetadataService {
   /** One-click add from discover: create the title, then best-effort enrich (images/genres/seasons). */
   async addFromDiscover(mediaType: "movie" | "series", tmdbId: number): Promise<{ id: string; created: boolean }> {
     const p = await this.provider();
-    if (!p) throw new ApiError({ code: "UNPROCESSABLE", message: "metadata.tmdbApiKey is not configured" });
 
     if (mediaType === "movie") {
       const existing = await this.db.select({ id: schema.movie.id }).from(schema.movie).where(eq(schema.movie.tmdbId, tmdbId)).limit(1);

@@ -1,0 +1,10 @@
+# MediaNexus consolidated metadata proxy (Cloudflare Worker)
+name = "medianexus-proxy"
+main = "proxy.js"
+compatibility_date = "2026-08-15"
+
+# The two real API keys are NOT stored here. Set them as encrypted Cloudflare secrets
+# (dashboard → Settings → Variables and Secrets → "Encrypted secret") or via:
+#   wrangler secret put TVDB_API_KEY
+#   wrangler secret put TMDB_API_KEY
+# See README.md in this directory for the full deploy + Git-integration steps.

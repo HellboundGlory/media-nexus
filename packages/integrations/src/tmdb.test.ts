@@ -56,10 +56,36 @@ describe("TmdbProvider", () => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ id: 2, title: "Blade Runner", overview: "x", release_date: "1982-06-25", genres: [{ name: "Sci-Fi" }], poster_path: "/p.jpg" }));
     });
-    const p = new TmdbProvider({ apiKey: "k", baseUrl: url });
+    const p = new TmdbProvider({ apiKey: "test", baseUrl: url });
     const d = await p.getDetails("movie", "2");
     expect(d.title).toBe("Blade Runner");
     expect(d.genres).toContain("Sci-Fi");
     expect(d.year).toBe(1982);
+  });
+});
+
+describe("TmdbProvider — TMDBPROXY (roadmap P3): shared-proxy vs own-key modes", () => {
+  it("proxy mode (no apiKey) sends NO api_key query param — the Worker injects it", async () => {
+    let query = "";
+    const url = await listen((u, res) => {
+      query = u.search;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ results: [] }));
+    });
+    const p = new TmdbProvider({ baseUrl: url });
+    await p.search("dune", "movie");
+    expect(query).not.toContain("api_key");
+  });
+
+  it("own-key mode sends api_key", async () => {
+    let query = "";
+    const url = await listen((u, res) => {
+      query = u.search;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ results: [] }));
+    });
+    const p = new TmdbProvider({ apiKey: "k-secret-xyz", baseUrl: url });
+    await p.search("dune", "movie");
+    expect(query).toContain("api_key=k-secret-xyz");
   });
 });

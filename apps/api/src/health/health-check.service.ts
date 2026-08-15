@@ -128,7 +128,6 @@ export class HealthCheckService {
       downloadsPathAccessible,
       minimumFreeSpaceMb: cfg["media.minimumFreeSpaceMb"],
       preferredProtocol: cfg["media.preferredProtocol"],
-      tmdbApiKeyConfigured: !!cfg["metadata.tmdbApiKey"],
       recentFailedJobKeys: failedJobs.map((j) => j.jobKey),
       recentContentNotFoundCount,
     };

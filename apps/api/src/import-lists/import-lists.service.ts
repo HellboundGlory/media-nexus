@@ -139,7 +139,6 @@ export class ImportListsService {
   private async buildProvider(list: typeof schema.importList.$inferSelect): Promise<ImportListContract> {
     if (list.provider === "tmdb") {
       const tmdb = await this.metadata.provider();
-      if (!tmdb) throw new ApiError({ code: "UNPROCESSABLE", message: "metadata.tmdbApiKey is not configured" });
       const listId = String((list.config as { listId?: string | number })?.listId ?? "");
       if (!listId) throw new ApiError({ code: "UNPROCESSABLE", message: `Import list "${list.name}" has no listId configured` });
       return new TmdbImportListProvider(tmdb, listId);

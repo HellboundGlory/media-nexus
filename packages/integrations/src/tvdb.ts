@@ -19,7 +19,7 @@
  *  - BYO-key: an `apiKey` is supplied → base URL defaults to the real TVDB API and the client
  *    does its own login / bearer-token cache / 401 re-login retry.
  */
-export const DEFAULT_TVDB_WORKER_URL = "https://medianexus-tvdb-proxy.hellboundg-e09.workers.dev";
+export const DEFAULT_TVDB_WORKER_URL = "https://medianexus-proxy.hellboundg-e09.workers.dev/tvdb";
 const REAL_TVDB_API = "https://api4.thetvdb.com/v4";
 const TOKEN_TTL_MS = 27 * 24 * 3600 * 1000; // refresh conservatively before TVDB's 1-month expiry
 

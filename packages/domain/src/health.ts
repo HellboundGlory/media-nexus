@@ -40,7 +40,6 @@ export interface HealthContext {
    *  setting; it's already the number the decision engine treats as the safety margin. */
   minimumFreeSpaceMb: number;
   preferredProtocol: "usenet" | "torrent" | "any";
-  tmdbApiKeyConfigured: boolean;
   /** job_run rows with status failed/timed_out whose finishedAt falls in the last hour. */
   recentFailedJobKeys: string[];
   /** download_queue_entry rows in the last 24h whose status is `failed` and whose
@@ -154,11 +153,6 @@ const protocolNoClientForPreferred: HealthCheck = (ctx) => {
   return ok("protocol.noClientForPreferred", `An enabled ${ctx.preferredProtocol} download client is configured.`);
 };
 
-const metadataTmdbKeyMissing: HealthCheck = (ctx) => {
-  if (!ctx.tmdbApiKeyConfigured) return warn("metadata.tmdbKeyMissing", "metadata.tmdbApiKey is not set — Discover and metadata refresh are disabled.");
-  return ok("metadata.tmdbKeyMissing", "TMDB API key is configured.");
-};
-
 const jobsRecentFailures: HealthCheck = (ctx) => {
   if (ctx.recentFailedJobKeys.length === 0) return ok("jobs.recentFailures", "No job failures in the last hour.");
   return warn("jobs.recentFailures", `${ctx.recentFailedJobKeys.length} job run(s) failed or timed out in the last hour: ${[...new Set(ctx.recentFailedJobKeys)].join(", ")}.`);
@@ -183,7 +177,6 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
   downloadsPathMissing,
   diskSpaceLow,
   protocolNoClientForPreferred,
-  metadataTmdbKeyMissing,
   jobsRecentFailures,
   acquisitionContentNotFound,
 ];
