@@ -61,6 +61,61 @@ describe("episode release parser", () => {
     const m = parseEpisodeRelease("Interstellar 2014 1080p BluRay x264");
     expect(m.season).toBeUndefined();
   });
+
+  describe("daily / date-based numbering", () => {
+    it("parses an explicit air date in common daily-release forms", () => {
+      const cases: [string, string][] = [
+        ["The.Today.Show.2024.05.15.1080p.HDTV", "2024-05-15"],
+        ["The.Today.Show.2024-05-15.1080p", "2024-05-15"],
+        ["The.Today.Show - 2024 05 15 1080p", "2024-05-15"],
+        ["TheTodayShow 2024-05-15 HDTV", "2024-05-15"],
+      ];
+      for (const [title, expected] of cases) {
+        const m = parseEpisodeRelease(title);
+        expect(m.dailyDate, title).toBe(expected);
+        expect(m.season, title).toBeUndefined();
+        expect(m.episodes, title).toEqual([]);
+      }
+    });
+
+    it("never treats a bare 4-digit year as a date", () => {
+      // The RSS movie e2e canary — a plain movie with a year+resolution must stay a movie.
+      const m = parseEpisodeRelease("The.Test.Movie.2024.1080p.WEB-DL.x264-GROUP");
+      expect(m.dailyDate).toBeUndefined();
+      expect(m.confidence).toBe(0);
+      expect(parseEpisodeRelease("Interstellar 2014 1080p BluRay x264").dailyDate).toBeUndefined();
+    });
+
+    it("does not misread a resolution tag as a date", () => {
+      expect(parseEpisodeRelease("Show.2024.1080p.WEB").dailyDate).toBeUndefined();
+    });
+  });
+
+  describe("absolute / anime numbering", () => {
+    it("parses a lone absolute episode number", () => {
+      const m = parseEpisodeRelease("[Erai-raws] Spy x Family - 12 [1080p][Multiple Subtitle]");
+      expect(m.absoluteNumber).toBe(12);
+      expect(m.absoluteIsGuess).toBe(true);
+    });
+
+    it("parses zero-padded absolute numbers", () => {
+      expect(parseEpisodeRelease("Show - 012 1080p").absoluteNumber).toBe(12);
+    });
+
+    it("rejects resolution values and 4-digit years as absolute numbers", () => {
+      expect(parseEpisodeRelease("Show.2024.1080p.WEB").absoluteNumber).toBeUndefined();
+      expect(parseEpisodeRelease("Show.2160p.BluRay").absoluteNumber).toBeUndefined();
+      expect(parseEpisodeRelease("Interstellar 2014 1080p").absoluteNumber).toBeUndefined();
+    });
+
+    it("does not fuse a number into a word (x264 / h265 / S05)", () => {
+      for (const title of ["Show.S05E01.720p", "Show.x264-GROUP", "Show.720p.H.265"]) {
+        const m = parseEpisodeRelease(title);
+        // Whatever it resolves to, resolution-bearing tokens must not surface as episodes.
+        if (!m.season && !m.isSeasonPack) expect(m.confidence).not.toBe(0.8);
+      }
+    });
+  });
 });
 
 describe("title matching (series and movies)", () => {

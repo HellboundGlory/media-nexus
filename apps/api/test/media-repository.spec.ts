@@ -36,7 +36,41 @@ beforeAll(async () => {
   await handle.db.insert(schema.episode).values([
     { id: "s1e1", seriesId: "s1", seasonId: "sea1", episodeNumber: 1, absoluteNumber: null, title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null },
     { id: "s1e2", seriesId: "s1", seasonId: "sea1", episodeNumber: 2, absoluteNumber: null, title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null },
+    // scene-number inversion fixture: the release's S01E05 (scene) corresponds to this
+    // TVDB episode #3 of season 1.
+    { id: "s1e3", seriesId: "s1", seasonId: "sea1", episodeNumber: 3, absoluteNumber: null, title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: 1, sceneEpisodeNumber: 5 },
     { id: "s2e1", seriesId: "s1", seasonId: "sea2", episodeNumber: 1, absoluteNumber: null, title: "", overview: "", airDateUtc: null, monitored: false, hasFile: true, sceneSeasonNumber: null, sceneEpisodeNumber: null },
+  ]);
+
+  // Daily series — episodes keyed by air date (season number is secondary in daily numbering).
+  await handle.db.insert(schema.series).values({
+    id: "sDaily", tvdbId: 8, tmdbId: null, imdbId: null, title: "Daily Chat", overview: "",
+    status: "continuing", seriesType: "daily", network: null, firstAirYear: 2024,
+    monitored: true, qualityProfileId: null, rootFolderPath: "/media/tv", genres: [], images: [],
+    tags: [], addedAt: now, updatedAt: now,
+  });
+  await handle.db.insert(schema.season).values({ id: "dsea1", seriesId: "sDaily", seasonNumber: 1, monitored: true });
+  await handle.db.insert(schema.episode).values([
+    { id: "de1", seriesId: "sDaily", seasonId: "dsea1", episodeNumber: 1, absoluteNumber: null, title: "", overview: "", airDateUtc: "2024-05-14T00:00:00.000Z", monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null },
+    { id: "de2", seriesId: "sDaily", seasonId: "dsea1", episodeNumber: 2, absoluteNumber: null, title: "", overview: "", airDateUtc: "2024-05-15T00:00:00.000Z", monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null },
+    { id: "de3", seriesId: "sDaily", seasonId: "dsea1", episodeNumber: 3, absoluteNumber: null, title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null },
+  ]);
+
+  // Anime series — episodes numbered absolutely across both seasons.
+  await handle.db.insert(schema.series).values({
+    id: "sAnime", tvdbId: 9, tmdbId: null, imdbId: null, title: "Anime Show", overview: "",
+    status: "continuing", seriesType: "anime", network: null, firstAirYear: 2023,
+    monitored: true, qualityProfileId: null, rootFolderPath: "/media/tv", genres: [], images: [],
+    tags: [], addedAt: now, updatedAt: now,
+  });
+  await handle.db.insert(schema.season).values([
+    { id: "asea1", seriesId: "sAnime", seasonNumber: 1, monitored: true },
+    { id: "asea2", seriesId: "sAnime", seasonNumber: 2, monitored: true },
+  ]);
+  await handle.db.insert(schema.episode).values([
+    { id: "a1e1", seriesId: "sAnime", seasonId: "asea1", episodeNumber: 1, absoluteNumber: 1, title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null },
+    { id: "a1e12", seriesId: "sAnime", seasonId: "asea1", episodeNumber: 12, absoluteNumber: 12, title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null },
+    { id: "a2e1", seriesId: "sAnime", seasonId: "asea2", episodeNumber: 1, absoluteNumber: 13, title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null },
   ]);
   await handle.db.insert(schema.mediaFile).values([
     { id: "mf1", mediaType: "series", mediaId: "s1", episodeIds: ["s2e1"], relativePath: "Test Show/Season 2/S02E01.mkv", size: 100, quality: { source: "web", resolution: "1080p", edition: "" }, mediaInfo: {}, languages: [], dateAdded: now },
@@ -88,7 +122,7 @@ describe("release targeting", () => {
     expect(target?.kind).toBe("episode");
     if (target && target.kind === "episode") {
       expect(target.isSeasonPack).toBe(true);
-      expect(target.episodes.map((e) => e.id).sort()).toEqual(["s1e1", "s1e2"]);
+      expect(target.episodes.map((e) => e.id).sort()).toEqual(["s1e1", "s1e2", "s1e3"]);
     }
   });
 
@@ -98,6 +132,53 @@ describe("release targeting", () => {
 
   it("returns null when the season exists in the title but not the library", async () => {
     expect(await repo.resolveTarget("series", "s1", "Test.Show.S09E01.1080p.WEB")).toBeNull();
+  });
+
+  it("resolves a daily release by its air date", async () => {
+    const target = await repo.resolveTarget("series", "sDaily", "Daily.Chat.2024.05.15.1080p.HDTV");
+    expect(target?.kind).toBe("episode");
+    expect(target && "episodes" in target && target.episodes.map((e) => e.id)).toEqual(["de2"]);
+  });
+
+  it("tolerates ±1 day of air-date drift in daily matching", async () => {
+    // A release dated one day after the episode's air date (05-15) still resolves to it.
+    const target = await repo.resolveTarget("series", "sDaily", "Daily.Chat.2024.05.16.1080p.HDTV");
+    expect(target && "episodes" in target && target.episodes.map((e) => e.id)).toEqual(["de2"]);
+  });
+
+  it("returns null for a daily release whose date matches no episode (graceful)", async () => {
+    expect(await repo.resolveTarget("series", "sDaily", "Daily.Chat.2020.01.01.1080p.HDTV")).toBeNull();
+  });
+
+  it("resolves an anime release by its absolute number across seasons", async () => {
+    // Absolute 13 lives in season 2 of sAnime — season-agnostic resolution must find it.
+    const target = await repo.resolveTarget("series", "sAnime", "[Subs] Anime.Show - 13 [1080p]");
+    expect(target?.kind).toBe("episode");
+    if (target && target.kind === "episode") {
+      expect(target.seasonNumber).toBe(2);
+      expect(target.episodes.map((e) => e.id)).toEqual(["a2e1"]);
+    }
+  });
+
+  it("falls back to S&E for an anime release that carries one", async () => {
+    const target = await repo.resolveTarget("series", "sAnime", "Anime.Show.S01E12.720p");
+    expect(target && "episodes" in target && target.episodes.map((e) => e.id)).toEqual(["a1e12"]);
+  });
+
+  it("returns null for an anime release with an unresolvable absolute number (graceful)", async () => {
+    expect(await repo.resolveTarget("series", "sAnime", "[Subs] Anime.Show - 9999 [1080p]")).toBeNull();
+  });
+
+  it("inverts scene S&E to the TVDB episode when direct numbering resolves nothing", async () => {
+    // S01E05 is not a real TVDB episode in season 1; s1e3 carries sceneSeason=1 / sceneEpisode=5.
+    const target = await repo.resolveTarget("series", "s1", "Test.Show.S01E05.1080p.WEB");
+    expect(target?.kind).toBe("episode");
+    expect(target && "episodes" in target && target.episodes.map((e) => e.id)).toEqual(["s1e3"]);
+  });
+
+  it("does not treat a resolution tag as an anime absolute number", async () => {
+    // "Show.1080p" must never resolve as absolute episode 1080.
+    expect(await repo.resolveTarget("series", "sAnime", "Anime.Show.1080p.WEB")).toBeNull();
   });
 });
 

@@ -9,7 +9,7 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import {
   movieTarget, episodeTarget, parseQualityFromTitle, parseEpisodeRelease, compareQuality,
-  decideImportFile, type MediaType, type Quality, type KnownEpisode,
+  decideImportFile, type MediaType, type Quality, type KnownEpisode, type SeriesType,
 } from "@medianexus/domain";
 import { LocalStorageProvider, findAllVideos } from "@medianexus/integrations";
 import { MediaRepository } from "../media/media.repository";
@@ -202,8 +202,20 @@ export class LibraryScanService implements OnModuleInit {
 
       const approved: { path: string; size: number; episodeIds: string[]; quality: Quality }[] = [];
       for (const file of untracked) {
-        const episodesInFile = parseEpisodeRelease(baseNameOf(file.path)).episodes;
-        const quality = parseQualityFromTitle(baseNameOf(file.path));
+        const fname = baseNameOf(file.path);
+        const match = parseEpisodeRelease(fname);
+        let episodesInFile = match.episodes;
+        // Daily/anime files name a date or absolute number instead of S&E (episodes stay
+        // empty in the pure parse). Resolve them against the series' own numbering and
+        // keep only episodes belonging to the season dir currently being scanned.
+        if (series.seriesType !== "standard" && episodesInFile.length === 0
+          && (match.dailyDate !== undefined || match.absoluteNumber !== undefined)) {
+          const resolved = await this.media.resolveEpisodeTargets(series.seriesType as SeriesType, seriesId, match);
+          episodesInFile = (resolved?.episodes ?? [])
+            .filter((e) => e.seasonNumber === season.seasonNumber)
+            .map((e) => e.episodeNumber);
+        }
+        const quality = parseQualityFromTitle(fname);
         const decision = decideImportFile(file, episodesInFile, knownEpisodes, quality, profile);
         if (decision.approved && decision.episodeIds.length > 0) {
           approved.push({ path: file.path, size: file.size, episodeIds: decision.episodeIds, quality });

@@ -7,7 +7,7 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import {
   episodeTarget, movieTarget, parseEpisodeRelease,
-  type EpisodeRef, type ExistingFile, type MediaItem, type MediaType,
+  type EpisodeRef, type EpisodeReleaseMatch, type ExistingFile, type MediaItem, type MediaType,
   type MinimumAvailability, type MovieMediaItem, type Quality,
   type ReleaseTarget, type SeriesMediaItem, type SeriesType,
 } from "@medianexus/domain";
@@ -52,9 +52,12 @@ export class MediaRepository {
   /**
    * Resolve which library entities a release title covers.
    *
-   * Movies map one-to-one. For series the season number is part of the key: matching on
-   * episode number alone would pull in the same episode number from every other season.
-   * A release that parses as episodic but names no episodes is treated as a season pack.
+   * Movies map one-to-one. For series the resolution dispatches on the series' own
+   * `seriesType` (the release parser is media-agnostic and reports every signal it can —
+   * S&E, date, absolute — so the DB-aware layer here picks the numbering scheme that
+   * applies): standard → S&E (with a scene-number inversion fallback), daily → air date
+   * (S&E secondary), anime → absolute number (S&E secondary). A release that parses as
+   * episodic but names no episodes is treated as a season pack.
    */
   async resolveTarget(
     mediaType: MediaType,
@@ -63,19 +66,73 @@ export class MediaRepository {
   ): Promise<ReleaseTarget | null> {
     if (mediaType === "movie") return movieTarget(mediaId);
 
+    const series = await this.findSeries(mediaId);
+    if (!series) return null;
+
     const match = parseEpisodeRelease(releaseTitle);
+    const res = await this.resolveEpisodeTargets(series.seriesType, series.id, match);
+    if (!res) return null;
+    return episodeTarget(mediaId, res.seasonNumber, res.episodes, res.isSeasonPack);
+  }
+
+  /**
+   * The shared episode-resolution core used by `resolveTarget` (and the RSS/series paths)
+   * so the numbering schemes can't drift between call sites. Returns the season + the
+   * covered episodes, or null when nothing resolves. Always graceful on absent data:
+   * a daily/anime series with null `airDateUtc`/`absoluteNumber`/scene columns simply
+   * yields no match rather than erroring.
+   */
+  async resolveEpisodeTargets(
+    seriesType: SeriesType,
+    seriesId: string,
+    match: EpisodeReleaseMatch,
+  ): Promise<{ seasonNumber: number; episodes: EpisodeRef[]; isSeasonPack: boolean } | null> {
+    if (seriesType === "daily") {
+      if (match.dailyDate) {
+        const eps = await this.episodesByAirDate(seriesId, match.dailyDate);
+        if (eps.length) return { seasonNumber: eps[0].seasonNumber, episodes: eps, isSeasonPack: false };
+      }
+      return this.resolveBySeasonEpisode(seriesId, match, "secondary");
+    }
+
+    if (seriesType === "anime") {
+      if (match.absoluteNumber !== undefined) {
+        const eps = await this.episodesByAbsoluteNumber(seriesId, match.absoluteNumber);
+        if (eps.length) return { seasonNumber: eps[0].seasonNumber, episodes: eps, isSeasonPack: false };
+      }
+      return this.resolveBySeasonEpisode(seriesId, match, "secondary");
+    }
+
+    // standard
+    return this.resolveBySeasonEpisode(seriesId, match, "primary");
+  }
+
+  /** S&E + season-pack resolution; for standard it also falls back to scene-number
+   *  inversion. `mode` marks whether S&E is the primary scheme (standard) or a secondary
+   *  fallback once the daily/anime primary returned nothing. */
+  private async resolveBySeasonEpisode(
+    seriesId: string,
+    match: EpisodeReleaseMatch,
+    _mode: "primary" | "secondary",
+  ): Promise<{ seasonNumber: number; episodes: EpisodeRef[]; isSeasonPack: boolean } | null> {
     if (match.season === undefined) return null;
 
     if (match.episodes.length === 0) {
       // Season pack: every episode of that season is a target.
-      const episodes = await this.episodesInSeason(mediaId, match.season);
+      const episodes = await this.episodesInSeason(seriesId, match.season);
       if (episodes.length === 0) return null;
-      return episodeTarget(mediaId, match.season, episodes, true);
+      return { seasonNumber: match.season, episodes, isSeasonPack: true };
     }
 
-    const episodes = await this.episodesByNumber(mediaId, match.season, match.episodes);
-    if (episodes.length === 0) return null;
-    return episodeTarget(mediaId, match.season, episodes, false);
+    const episodes = await this.episodesByNumber(seriesId, match.season, match.episodes);
+    if (episodes.length > 0) return { seasonNumber: match.season, episodes, isSeasonPack: false };
+
+    // Scene-number inversion fallback (standard only): a release's S&E may use scene
+    // numbering that differs from TVDB. When the direct episodeNumber lookup returns
+    // nothing, look for the TVDB episode whose scene S&E matches the parsed S&E.
+    const scene = await this.episodesBySceneNumber(seriesId, match.season, match.episodes);
+    if (scene.length === 0) return null;
+    return { seasonNumber: scene[0].seasonNumber, episodes: scene, isSeasonPack: false };
   }
 
   async episodesInSeason(seriesId: string, seasonNumber: number): Promise<EpisodeRef[]> {
@@ -120,6 +177,75 @@ export class MediaRepository {
         inArray(schema.episode.episodeNumber, episodeNumbers),
       ));
     return rows;
+  }
+
+  /** Episodes whose airDateUtc falls on `date` ("YYYY-MM-DD"). Exact day first; only when
+   *  nothing matches exactly does it fall back to ±1 day (timezone / re-air drift). This
+   *  keeps back-to-back daily episodes (each on its own day) resolving to exactly one
+   *  episode instead of pulling in neighbours. Empty when the series has no dated episodes —
+   *  daily matching degrades gracefully instead of erroring on null air dates. */
+  async episodesByAirDate(seriesId: string, date: string): Promise<EpisodeRef[]> {
+    const rows = await this.db
+      .select({
+        id: schema.episode.id,
+        seasonNumber: schema.season.seasonNumber,
+        episodeNumber: schema.episode.episodeNumber,
+        title: schema.episode.title,
+        monitored: schema.episode.monitored,
+        hasFile: schema.episode.hasFile,
+        airDateUtc: schema.episode.airDateUtc,
+      })
+      .from(schema.episode)
+      .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
+      .where(eq(schema.episode.seriesId, seriesId));
+    const byDay = rows.filter((r) => r.airDateUtc).map((r) => ({ ...r, day: r.airDateUtc!.slice(0, 10) }));
+    const exact = byDay.filter((r) => r.day === date);
+    const pick = exact.length > 0 ? exact : byDay.filter((r) => {
+      const t = new Date(r.day + "T00:00:00.000Z").getTime();
+      const base = new Date(`${date}T00:00:00.000Z`).getTime();
+      return Math.abs(t - base) <= 86400000;
+    });
+    return pick.map((r) => ({ id: r.id, seasonNumber: r.seasonNumber, episodeNumber: r.episodeNumber, title: r.title, monitored: r.monitored, hasFile: r.hasFile }));
+  }
+
+  /** Episodes with a matching absolute (anime) number, across ALL seasons. */
+  async episodesByAbsoluteNumber(seriesId: string, absoluteNumber: number): Promise<EpisodeRef[]> {
+    return this.db
+      .select({
+        id: schema.episode.id,
+        seasonNumber: schema.season.seasonNumber,
+        episodeNumber: schema.episode.episodeNumber,
+        title: schema.episode.title,
+        monitored: schema.episode.monitored,
+        hasFile: schema.episode.hasFile,
+      })
+      .from(schema.episode)
+      .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
+      .where(and(
+        eq(schema.episode.seriesId, seriesId),
+        eq(schema.episode.absoluteNumber, absoluteNumber),
+      ));
+  }
+
+  /** Episodes whose scene S&E numbers invert to the given scene season/episodes. */
+  async episodesBySceneNumber(seriesId: string, sceneSeason: number, sceneEpisodes: number[]): Promise<EpisodeRef[]> {
+    if (sceneEpisodes.length === 0) return [];
+    return this.db
+      .select({
+        id: schema.episode.id,
+        seasonNumber: schema.season.seasonNumber,
+        episodeNumber: schema.episode.episodeNumber,
+        title: schema.episode.title,
+        monitored: schema.episode.monitored,
+        hasFile: schema.episode.hasFile,
+      })
+      .from(schema.episode)
+      .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
+      .where(and(
+        eq(schema.episode.seriesId, seriesId),
+        eq(schema.episode.sceneSeasonNumber, sceneSeason),
+        inArray(schema.episode.sceneEpisodeNumber, sceneEpisodes),
+      ));
   }
 
   // ---------- Existing files (upgrade decisions) ----------
