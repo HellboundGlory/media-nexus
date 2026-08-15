@@ -131,6 +131,7 @@ export const SETTING_SECRET_KEYS = new Set([
   "notifications.email",
   "media.servers",
   "metadata.tmdbApiKey",
+  "metadata.tvdbApiKey",
 ]);
 
 /**
@@ -159,6 +160,8 @@ export function encryptSettingValue(key: string, value: unknown, secret: string 
       });
     case "metadata.tmdbApiKey":
       return encryptSecretValue(value, secret);
+    case "metadata.tvdbApiKey":
+      return encryptSecretValue(value, secret);
     default:
       return value;
   }
@@ -184,6 +187,8 @@ export function decryptSettingValue(key: string, value: unknown, secret: string 
         return { ...(sv as object), settings: { ...s, ...("apiKey" in s ? { apiKey: decryptSecretValue(s.apiKey, secret) } : {}) } };
       });
     case "metadata.tmdbApiKey":
+      return decryptSecretValue(value, secret);
+    case "metadata.tvdbApiKey":
       return decryptSecretValue(value, secret);
     default:
       return value;

@@ -204,6 +204,10 @@ export default function System() {
           </button>
         </form>
         {savedTmdb && <p className="mt-2 text-xs text-emerald-600">Saved.</p>}
+        <p className="mt-3 border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-800">
+          Series episode numbering (absolute &amp; scene) is provided by{" "}
+          <a href="https://www.thetvdb.com/" target="_blank" rel="noreferrer" className="underline">TheTVDB</a>.
+        </p>
       </section>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">

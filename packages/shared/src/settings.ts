@@ -86,6 +86,11 @@ export const runtimeSettingsSchema = z.object({
   "notifications.email": z.array(emailNotificationSchema).default([]),
   "metadata.tmdbApiKey": z.string().default(""),
   "metadata.tmdbBaseUrl": z.string().default(""),
+  // TheTVDB numbering backfill (roadmap P2, gap D8). Empty baseUrl -> the shared Cloudflare
+  // proxy default (DEFAULT_TVDB_WORKER_URL) is used; an empty apiKey means shared-proxy mode,
+  // a non-empty one means BYO-key mode against the real TVDB API. The apiKey is a J9 secret.
+  "metadata.tvdbBaseUrl": z.string().default(""),
+  "metadata.tvdbApiKey": z.string().default(""),
   "media.servers": z.array(mediaServerConfigSchema).default([]),
   "system.timezone": z.string().default("UTC"),
   "ui.theme": z.enum(["dark", "light"]).default("dark"),

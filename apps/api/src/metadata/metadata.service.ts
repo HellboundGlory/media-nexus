@@ -6,7 +6,7 @@ import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import { ConfigService } from "../system/config.service";
-import { TmdbProvider } from "@medianexus/integrations";
+import { TmdbProvider, TvdbProvider, type TvdbEpisodeRecord } from "@medianexus/integrations";
 import type { MediaSummary, DiscoverCategory } from "@medianexus/integrations";
 import { MoviesService } from "../movies/movies.service";
 import { SeriesService } from "../series/series.service";
@@ -31,6 +31,19 @@ export class MetadataService {
     if (!apiKey) return null;
     const baseUrl = c["metadata.tmdbBaseUrl"] || undefined;
     return new TmdbProvider({ apiKey, baseUrl });
+  }
+
+  /**
+   * TheTVDB numbering backfill client. Always constructable (no key required): empty
+   * `metadata.tvdbBaseUrl` falls back to the shared Cloudflare proxy (which authenticates),
+   * and a non-empty `metadata.tvdbApiKey` switches to BYO-key mode against the real API.
+   */
+  async tvdbProvider(): Promise<TvdbProvider> {
+    const c = await this.config.get();
+    return new TvdbProvider({
+      baseUrl: c["metadata.tvdbBaseUrl"] || undefined,
+      apiKey: c["metadata.tvdbApiKey"] || undefined,
+    });
   }
 
   async lookup(query: string, mediaType: "movie" | "series"): Promise<MediaSummary[]> {
@@ -99,7 +112,77 @@ export class MetadataService {
       }
     }
     this.logger.log(`metadata refresh "${series[0].title}": +${seasonCount} seasons +${episodeCount} episodes`);
+
+    // Best-effort TheTVDB numbering backfill (roadmap P2, gap D8): TMDB does not expose
+    // absolute/scene numbers, so fill `absoluteNumber` / `sceneSeasonNumber` /
+    // `sceneEpisodeNumber` from TVDB. Strictly additive and non-fatal — a TVDB failure must
+    // never fail the TMDB portion of the refresh (which already succeeded above).
+    await this.backfillTvdbNumbering(series[0]);
+
     return { updated: true, title: d.title, seasons: seasonCount, episodes: episodeCount };
+  }
+
+  /**
+   * Backfill the TVDB-only numbering fields on a series' episode rows.
+   *
+   * Fetch the `official` ordering (matches the TMDB season/episode numbers local rows already
+   * use, and carries each episode's `absoluteNumber`) and the `dvd` ordering (the closest
+   * analog to scene numbering -> `sceneSeasonNumber`/`sceneEpisodeNumber`). Join by TVDB
+   * episode id, then to local rows by (seasonNumber, episodeNumber). Graceful on every failure
+   * edge: an unreachable worker, a series TVDB has no numbering for, or missing DVD ordering
+   * just leaves the fields null and logs a warning — never throws out of refreshSeries.
+   */
+  private async backfillTvdbNumbering(series: typeof schema.series.$inferSelect): Promise<void> {
+    if (!series.tvdbId) return;
+    const tvdb = await this.tvdbProvider();
+    try {
+      const official = await tvdb.episodes(series.tvdbId, "official");
+      // DVD ordering is optional per series — treat its absence as "no scene numbering".
+      let dvd: TvdbEpisodeRecord[] = [];
+      try { dvd = await tvdb.episodes(series.tvdbId, "dvd"); } catch { /* no DVD ordering */ }
+
+      const officialById = new Map<number, TvdbEpisodeRecord>();
+      const idByOfficialKey = new Map<string, number>(); // "season:number" -> tvdb episode id
+      for (const e of official) {
+        if (!e.id) continue;
+        officialById.set(e.id, e);
+        if (e.seasonNumber != null && e.number != null) idByOfficialKey.set(`${e.seasonNumber}:${e.number}`, e.id);
+      }
+      const dvdById = new Map<number, TvdbEpisodeRecord>();
+      for (const e of dvd) if (e.id) dvdById.set(e.id, e);
+
+      const rows = await this.db
+        .select({
+          id: schema.episode.id,
+          seasonNumber: schema.season.seasonNumber,
+          episodeNumber: schema.episode.episodeNumber,
+          absoluteNumber: schema.episode.absoluteNumber,
+          sceneSeasonNumber: schema.episode.sceneSeasonNumber,
+          sceneEpisodeNumber: schema.episode.sceneEpisodeNumber,
+        })
+        .from(schema.episode)
+        .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
+        .where(eq(schema.episode.seriesId, series.id));
+
+      let updated = 0;
+      for (const ep of rows) {
+        const tvdbId = idByOfficialKey.get(`${ep.seasonNumber}:${ep.episodeNumber}`);
+        if (!tvdbId) continue;
+        const off = officialById.get(tvdbId);
+        const scene = dvdById.get(tvdbId);
+        const set: { absoluteNumber?: number | null; sceneSeasonNumber?: number | null; sceneEpisodeNumber?: number | null } = {};
+        if (off?.absoluteNumber != null && ep.absoluteNumber !== off.absoluteNumber) set.absoluteNumber = off.absoluteNumber;
+        if (scene?.seasonNumber != null && ep.sceneSeasonNumber !== scene.seasonNumber) set.sceneSeasonNumber = scene.seasonNumber;
+        if (scene?.number != null && ep.sceneEpisodeNumber !== scene.number) set.sceneEpisodeNumber = scene.number;
+        if (Object.keys(set).length > 0) {
+          await this.db.update(schema.episode).set(set).where(eq(schema.episode.id, ep.id));
+          updated++;
+        }
+      }
+      if (updated > 0) this.logger.log(`TVDB numbering backfill "${series.title}": updated ${updated} episode(s)`);
+    } catch (err) {
+      this.logger.warn(`TVDB numbering backfill skipped for "${series.title}": ${(err as Error).message}`);
+    }
   }
 
   /** Refresh up to `limit` series that have no episodes yet (bounded job). */
