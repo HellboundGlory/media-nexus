@@ -67,13 +67,16 @@ describe("RateLimitGuard", () => {
 });
 
 describe("MetricsService", () => {
-  it("renders Prometheus text with recorded counters", () => {
+  it("renders Prometheus text with recorded counters (status label, sum/count summary)", async () => {
     const m = new MetricsService();
     m.recordRequest("/api/v1/movies", "GET", 200, 5);
-    m.recordJobRun("succeeded");
-    const text = m.render();
-    expect(text).toContain('http_requests_total{method="GET",route="/api/v1/movies"} 1');
-    expect(text).toContain('job_runs_total{status="succeeded"} 1');
+    m.recordRequest("/api/v1/movies", "GET", 200, 15);
+    const text = await m.render();
+    // status is a real label, matching the HELP text.
+    expect(text).toContain('http_requests_total{method="GET",route="/api/v1/movies",status="200"} 2');
+    // J8 fix: _sum is the raw total, _count is its sibling.
+    expect(text).toContain('http_request_duration_ms_sum{method="GET",route="/api/v1/movies"} 20');
+    expect(text).toContain('http_request_duration_ms_count{method="GET",route="/api/v1/movies"} 2');
     expect(text).toMatch(/uptime_seconds \d+/);
   });
 });

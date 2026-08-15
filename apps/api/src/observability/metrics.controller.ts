@@ -13,7 +13,7 @@ export class MetricsController {
   @Public()
   @Header("content-type", "text/plain; version=0.0.4; charset=utf-8")
   @ApiOperation({ summary: "Prometheus metrics (public)" })
-  render(): string {
+  render(): Promise<string> {
     return this.metrics.render();
   }
 }
