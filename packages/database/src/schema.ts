@@ -384,6 +384,25 @@ export const mediaServer = sqliteTable("media_server", {
   updatedAt: iso("updated_at"),
 });
 
+// Notification sinks (roadmap P2, gap report J4/D7): promoted from JSON arrays in the
+// `setting` blob (notifications.webhooks/discord/telegram/email, addressed by array
+// index) to a real entity with a stable id — same shape as `downloadClient`. `kind` is
+// webhook|discord|telegram|email; `settings` holds the kind-specific fields only
+// (webhook->{url,secret}, discord->{webhookUrl}, telegram->{botToken,chatId,baseUrl},
+// email->{from,to,transport,subject}); `eventTypes` is hoisted to its own column so the
+// fan-out filter is a plain WHERE rather than JSON digging. Legacy `setting` rows are
+// migrated by `settings-blob-backfill.ts` on boot (sentinel-gated, non-destructive).
+export const notification = sqliteTable("notification", {
+  id: text("id").primaryKey(),
+  kind: text("kind").notNull(), // webhook | discord | telegram | email
+  name: text("name").notNull(),
+  enabled: bool("enabled", true),
+  eventTypes: json<string[]>("event_types"),
+  settings: text("settings", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+  createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+});
+
 // ---------- 7. Jobs ----------
 export const jobDefinition = sqliteTable("job_definition", {
   id: text("id").primaryKey(),
@@ -513,6 +532,7 @@ export const schema = {
   blocklistEntry,
   mediaAvailability,
   mediaServer,
+  notification,
   jobDefinition,
   jobRun,
   auditLog,

@@ -101,6 +101,59 @@ export const DOWNLOAD_CLIENT_SECRET_FIELDS: Record<string, string[]> = {
   memory: [],
 };
 
+/** `notification.settings` secret leaf fields per kind (flat fields only — email's
+ *  `transport.auth.pass` is nested and handled bespoke by `encrypt/decryptNotificationSettings`). */
+export const NOTIFICATION_SECRET_FIELDS: Record<string, string[]> = {
+  webhook: ["secret"],
+  discord: ["webhookUrl"],
+  telegram: ["botToken"],
+  email: [],
+};
+
+/** `media_server.settings` secret leaf field (matches `DOWNLOAD_CLIENT_SECRET_FIELDS` shape). */
+export const MEDIA_SERVER_SECRET_FIELDS = ["apiKey"];
+
+/** Encrypt the secret leaf field(s) of a `notification.settings` object for one kind.
+ *  Idempotent + tolerant, mirroring `encryptSettingValue`. */
+export function encryptNotificationSettings(kind: string, settings: unknown, secret: string | undefined): unknown {
+  const s = (settings ?? {}) as Record<string, unknown>;
+  if (kind === "email") {
+    const t = s.transport as { auth?: { user?: string; pass?: string } } | undefined;
+    return {
+      ...s,
+      ...(t
+        ? {
+            transport: {
+              ...t,
+              ...(t.auth ? { auth: { ...t.auth, pass: encryptSecretValue(t.auth.pass, secret) } } : {}),
+            },
+          }
+        : {}),
+    };
+  }
+  return encryptFields(s, NOTIFICATION_SECRET_FIELDS[kind] ?? [], secret);
+}
+
+/** Inverse of {@link encryptNotificationSettings} — tolerant decrypt, so plaintext passes through. */
+export function decryptNotificationSettings(kind: string, settings: unknown, secret: string | undefined): unknown {
+  const s = (settings ?? {}) as Record<string, unknown>;
+  if (kind === "email") {
+    const t = s.transport as { auth?: { user?: string; pass?: string } } | undefined;
+    return {
+      ...s,
+      ...(t
+        ? {
+            transport: {
+              ...t,
+              ...(t.auth ? { auth: { ...t.auth, pass: decryptSecretValue(t.auth.pass, secret) } } : {}),
+            },
+          }
+        : {}),
+    };
+  }
+  return decryptFields(s, NOTIFICATION_SECRET_FIELDS[kind] ?? [], secret);
+}
+
 /** `indexer.proxy` secrets — the proxy password (username is not a credential). */
 export const PROXY_SECRET_FIELDS = ["password"] as const;
 
@@ -123,13 +176,11 @@ export function decryptSessionValue(cipher: string | undefined, secret: string |
 
 // ---------- settings-blob (`setting` table) secret fields ----------
 
-/** Setting-table keys that hold at-rest credentials. */
+/** Setting-table keys that hold at-rest credentials. (The notification.* and media.servers
+ *  keys were promoted to the `notification` and `media_server` tables — gap J4/D7 — so they
+ *  no longer live in the settings blob; their secret fields are handled by the
+ *  per-kind helpers operating on the new tables' `settings` column.) */
 export const SETTING_SECRET_KEYS = new Set([
-  "notifications.webhooks",
-  "notifications.discord",
-  "notifications.telegram",
-  "notifications.email",
-  "media.servers",
   "metadata.tmdbApiKey",
   "metadata.tvdbApiKey",
 ]);
@@ -142,22 +193,6 @@ export const SETTING_SECRET_KEYS = new Set([
  */
 export function encryptSettingValue(key: string, value: unknown, secret: string | undefined): unknown {
   switch (key) {
-    case "notifications.webhooks":
-      return (Array.isArray(value) ? value : []).map((w) => ({ ...(w as object), secret: encryptSecretValue((w as { secret?: string })?.secret, secret) }));
-    case "notifications.discord":
-      return (Array.isArray(value) ? value : []).map((d) => ({ ...(d as object), webhookUrl: encryptSecretValue((d as { webhookUrl: string })?.webhookUrl, secret) }));
-    case "notifications.telegram":
-      return (Array.isArray(value) ? value : []).map((t) => ({ ...(t as object), botToken: encryptSecretValue((t as { botToken: string })?.botToken, secret) }));
-    case "notifications.email":
-      return (Array.isArray(value) ? value : []).map((e) => {
-        const cfg = e as { transport: { auth?: { user: string; pass: string } } };
-        return { ...cfg, transport: { ...(cfg.transport ?? {}), ...(cfg.transport?.auth ? { auth: { ...cfg.transport.auth, pass: encryptSecretValue(cfg.transport.auth.pass, secret) } } : {}) } };
-      });
-    case "media.servers":
-      return (Array.isArray(value) ? value : []).map((sv) => {
-        const s = (sv as { settings: Record<string, unknown> })?.settings ?? {};
-        return { ...(sv as object), settings: { ...s, ...("apiKey" in s ? { apiKey: encryptSecretValue(s.apiKey, secret) } : {}) } };
-      });
     case "metadata.tmdbApiKey":
       return encryptSecretValue(value, secret);
     case "metadata.tvdbApiKey":
@@ -170,22 +205,6 @@ export function encryptSettingValue(key: string, value: unknown, secret: string 
 /** Inverse of {@link encryptSettingValue} — tolerant decrypt, so plaintext passes through. */
 export function decryptSettingValue(key: string, value: unknown, secret: string | undefined): unknown {
   switch (key) {
-    case "notifications.webhooks":
-      return (Array.isArray(value) ? value : []).map((w) => ({ ...(w as object), secret: decryptSecretValue((w as { secret?: string })?.secret, secret) }));
-    case "notifications.discord":
-      return (Array.isArray(value) ? value : []).map((d) => ({ ...(d as object), webhookUrl: decryptSecretValue((d as { webhookUrl: string })?.webhookUrl, secret) }));
-    case "notifications.telegram":
-      return (Array.isArray(value) ? value : []).map((t) => ({ ...(t as object), botToken: decryptSecretValue((t as { botToken: string })?.botToken, secret) }));
-    case "notifications.email":
-      return (Array.isArray(value) ? value : []).map((e) => {
-        const cfg = e as { transport: { auth?: { user: string; pass: string } } };
-        return { ...cfg, transport: { ...(cfg.transport ?? {}), ...(cfg.transport?.auth ? { auth: { ...cfg.transport.auth, pass: decryptSecretValue(cfg.transport.auth.pass, secret) } } : {}) } };
-      });
-    case "media.servers":
-      return (Array.isArray(value) ? value : []).map((sv) => {
-        const s = (sv as { settings: Record<string, unknown> })?.settings ?? {};
-        return { ...(sv as object), settings: { ...s, ...("apiKey" in s ? { apiKey: decryptSecretValue(s.apiKey, secret) } : {}) } };
-      });
     case "metadata.tmdbApiKey":
       return decryptSecretValue(value, secret);
     case "metadata.tvdbApiKey":

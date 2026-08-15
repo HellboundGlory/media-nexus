@@ -49,8 +49,12 @@ export default function Clients() {
   const mappings = useQuery({ queryKey: ["remote-path-mappings"], queryFn: () => api.get<RemotePathMapping[]>("/remote-path-mappings") });
 
   const saveServers = useMutation({
-    mutationFn: (list: any[]) => api.put<any[]>("/media-servers", { servers: list }),
+    mutationFn: (body: any) => api.post<any>("/media-servers", body),
     onSuccess: () => { serversQuery.refetch(); setServerDraft({ name: "", implementation: "jellyfin", host: "", apiKey: "" }); },
+  });
+  const removeServer = useMutation({
+    mutationFn: (id: string) => api.del(`/media-servers/${id}`),
+    onSuccess: () => serversQuery.refetch(),
   });
   const refreshServers = useMutation({ mutationFn: () => api.post("/media-servers/refresh"), onSuccess: () => qc.invalidateQueries({ queryKey: ["indexer-stats"] }) });
 
@@ -280,7 +284,7 @@ export default function Clients() {
           {servers.map((s, i) => (
             <li key={i} className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
               <span className="font-medium">{s.name}<span className="ml-2 font-mono text-xs text-zinc-500">{s.implementation}</span></span>
-              <button onClick={() => saveServers.mutate(servers.filter((_, j) => j !== i))} className="text-xs text-red-500 hover:underline">Remove</button>
+              <button onClick={() => removeServer.mutate(s.id)} className="text-xs text-red-500 hover:underline">Remove</button>
             </li>
           ))}
           {servers.length === 0 && <li className="text-sm text-zinc-500">No media servers configured.</li>}
@@ -296,7 +300,7 @@ export default function Clients() {
             <input value={serverDraft.host} onChange={(e) => setServerDraft({ ...serverDraft, host: e.target.value })} placeholder={serverDraft.implementation === "plex" ? "http://192.168.1.10:32400" : "http://192.168.1.10:8096"} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
           <label className="min-w-32"><span className="mb-1 block text-xs text-zinc-500">{SERVER_TOKEN_LABEL[serverDraft.implementation] ?? "API key"}</span>
             <input value={serverDraft.apiKey} onChange={(e) => setServerDraft({ ...serverDraft, apiKey: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
-          <button disabled={!serverDraft.name} onClick={() => saveServers.mutate([...servers, { name: serverDraft.name, implementation: serverDraft.implementation, enabled: true, settings: { host: serverDraft.host, apiKey: serverDraft.apiKey } }])}
+          <button disabled={!serverDraft.name} onClick={() => saveServers.mutate({ name: serverDraft.name, implementation: serverDraft.implementation, enabled: true, settings: { host: serverDraft.host, apiKey: serverDraft.apiKey } })}
             className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">Add server</button>
         </div>
         {saveServers.isError && <p className="mt-2 text-xs text-red-600">{saveServers.error instanceof Error ? saveServers.error.message : "Failed"}</p>}

@@ -1014,11 +1014,14 @@ describe("M5: SSE realtime, notification sinks (discord/telegram), metrics, audi
     const dUrl = `http://127.0.0.1:${(d.address() as any).port}`;
     const tUrl = `http://127.0.0.1:${(t.address() as any).port}`;
 
-    const r = await auth(request(http).put("/api/v1/system/config").send({
-      "notifications.discord": [{ webhookUrl: dUrl, eventTypes: ["acquisition.release.grabbed"] }],
-      "notifications.telegram": [{ botToken: "TEST", chatId: "1", baseUrl: tUrl, eventTypes: ["acquisition.release.grabbed"] }],
+    const r = await auth(request(http).post("/api/v1/notifications").send({
+      kind: "discord", name: "M5 Discord", settings: { webhookUrl: dUrl }, eventTypes: ["acquisition.release.grabbed"],
     }));
-    expect(r.status).toBe(200);
+    expect(r.status).toBe(201);
+    const tr = await auth(request(http).post("/api/v1/notifications").send({
+      kind: "telegram", name: "M5 Telegram", settings: { botToken: "TEST", chatId: "1", baseUrl: tUrl }, eventTypes: ["acquisition.release.grabbed"],
+    }));
+    expect(tr.status).toBe(201);
   });
 
   afterAll(async () => {

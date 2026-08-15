@@ -22,17 +22,20 @@ import { DownloadClientsService } from "../src/download-clients/download-clients
 import { IndexersService } from "../src/indexers/indexers.service";
 import {
   decryptFields,
+  decryptNotificationSettings,
   decryptRuntimeSettings,
   decryptSecretValue,
   decryptSessionValue,
-  decryptSettingValue,
   encryptFields,
+  encryptNotificationSettings,
   encryptRuntimeSettings,
   encryptSessionValue,
   encryptSettingValue,
   isEncrypted,
   INDEXER_SETTINGS_SECRET_FIELDS,
   DOWNLOAD_CLIENT_SECRET_FIELDS,
+  MEDIA_SERVER_SECRET_FIELDS,
+  NOTIFICATION_SECRET_FIELDS,
 } from "../src/secrets/provider-secrets";
 import { runSecretBackfill } from "../src/secrets/secret-backfill";
 
@@ -105,46 +108,65 @@ describe("settings-blob codec (RuntimeSettings)", () => {
   it("encrypts only the credential fields and decrypts them back to their original shape", () => {
     const settings = {
       "metadata.tmdbApiKey": "tmdb-secret",
-      "notifications.webhooks": [{ url: "https://hook", secret: "wh-secret", eventTypes: [] }],
-      "notifications.discord": [{ webhookUrl: "https://discord.com/api/webhooks/123/token", eventTypes: [] }],
-      "notifications.telegram": [{ botToken: "tg-bot-token", chatId: "12345", eventTypes: [] }],
-      "notifications.email": [{ from: "a@b.c", to: ["x@y.z"], subject: "s", eventTypes: [], transport: { host: "smtp", port: 587, secure: false, auth: { user: "u", pass: "mail-pass" } } }],
-      "media.servers": [{ name: "sv", implementation: "jellyfin", enabled: true, settings: { host: "h", apiKey: "jf-token" } }],
       "paths.downloads": "/downloads",
     } as never as import("@medianexus/shared").RuntimeSettings;
 
     const encrypted = encryptRuntimeSettings(settings, SECRET) as Record<string, any>;
     // credentials are no longer plaintext
     expect(encrypted["metadata.tmdbApiKey"]).not.toBe("tmdb-secret");
-    expect(encrypted["notifications.telegram"][0].botToken).not.toBe("tg-bot-token");
-    expect(encrypted["notifications.email"][0].transport.auth.pass).not.toBe("mail-pass");
-    expect(encrypted["notifications.discord"][0].webhookUrl).not.toBe("https://discord.com/api/webhooks/123/token");
-    expect(encrypted["notifications.webhooks"][0].secret).not.toBe("wh-secret");
-    expect(encrypted["media.servers"][0].settings.apiKey).not.toBe("jf-token");
     // non-secret fields untouched
-    expect(encrypted["notifications.telegram"][0].chatId).toBe("12345");
-    expect(encrypted["notifications.webhooks"][0].url).toBe("https://hook");
-    expect(encrypted["notifications.email"][0].transport.auth.user).toBe("u");
     expect(encrypted["paths.downloads"]).toBe("/downloads");
 
     const decrypted = decryptRuntimeSettings(encrypted as never, SECRET) as Record<string, any>;
     expect(decrypted["metadata.tmdbApiKey"]).toBe("tmdb-secret");
-    expect(decrypted["notifications.telegram"][0].botToken).toBe("tg-bot-token");
-    expect(decrypted["notifications.email"][0].transport.auth.pass).toBe("mail-pass");
-    expect(decrypted["notifications.discord"][0].webhookUrl).toBe("https://discord.com/api/webhooks/123/token");
-    expect(decrypted["notifications.webhooks"][0].secret).toBe("wh-secret");
-    expect(decrypted["media.servers"][0].settings.apiKey).toBe("jf-token");
   });
 
-  it("per-key encrypt/decrypt setting helpers round-trip and tolerate plaintext", () => {
-    const telegram = [{ botToken: "tok", chatId: "c", eventTypes: [] }];
-    const encrypted = encryptSettingValue("notifications.telegram", telegram, SECRET) as any[];
-    expect(encrypted[0].botToken).not.toBe("tok");
-    expect((decryptSettingValue("notifications.telegram", encrypted, SECRET) as any[])[0].botToken).toBe("tok");
-    // tolerant
-    expect((decryptSettingValue("notifications.telegram", telegram, SECRET) as any[])[0].botToken).toBe("tok");
-    // unknown key passes through untouched
+  it("unknown keys pass through untouched", () => {
     expect(encryptSettingValue("paths.downloads", "/x", SECRET)).toBe("/x");
+  });
+});
+
+describe("notification/media-server settings codec (gap J4/D7)", () => {
+  it("per-kind notification settings encrypt/decrypt the right secret leaf fields", () => {
+    expect(NOTIFICATION_SECRET_FIELDS.webhook).toEqual(["secret"]);
+    expect(NOTIFICATION_SECRET_FIELDS.discord).toEqual(["webhookUrl"]);
+    expect(NOTIFICATION_SECRET_FIELDS.telegram).toEqual(["botToken"]);
+    expect(MEDIA_SERVER_SECRET_FIELDS).toEqual(["apiKey"]);
+
+    const webhook = { url: "https://hook", secret: "wh-secret" };
+    const enc = encryptNotificationSettings("webhook", webhook, SECRET) as any;
+    expect(enc.secret).not.toBe("wh-secret");
+    expect(enc.url).toBe("https://hook");
+    expect((decryptNotificationSettings("webhook", enc, SECRET) as any).secret).toBe("wh-secret");
+
+    const discord = { webhookUrl: "https://discord.com/api/webhooks/123/token" };
+    const encD = encryptNotificationSettings("discord", discord, SECRET) as any;
+    expect(encD.webhookUrl).not.toBe(discord.webhookUrl);
+    expect((decryptNotificationSettings("discord", encD, SECRET) as any).webhookUrl).toBe(discord.webhookUrl);
+
+    const tg = { botToken: "tg-tok", chatId: "77" };
+    const encT = encryptNotificationSettings("telegram", tg, SECRET) as any;
+    expect(encT.botToken).not.toBe("tg-tok");
+    expect(encT.chatId).toBe("77");
+    expect((decryptNotificationSettings("telegram", encT, SECRET) as any).botToken).toBe("tg-tok");
+  });
+
+  it("email's nested transport.auth.pass is the secret leaf field", () => {
+    const email = { from: "a@b.c", to: ["x@y.z"], transport: { host: "smtp", port: 587, auth: { user: "u", pass: "mail-pass" } } };
+    const enc = encryptNotificationSettings("email", email, SECRET) as any;
+    expect(enc.transport.auth.pass).not.toBe("mail-pass");
+    expect(enc.transport.auth.user).toBe("u");
+    expect(enc.transport.host).toBe("smtp");
+    const dec = decryptNotificationSettings("email", enc, SECRET) as any;
+    expect(dec.transport.auth.pass).toBe("mail-pass");
+    expect(dec.transport.auth.user).toBe("u");
+  });
+
+  it("tolerant: plaintext notification settings pass through decrypt unchanged", () => {
+    const webhook = { url: "https://hook", secret: "wh-secret" };
+    expect((decryptNotificationSettings("webhook", webhook, SECRET) as any).secret).toBe("wh-secret");
+    const email = { from: "a", to: ["b"], transport: { host: "h", auth: { user: "u", pass: "p" } } };
+    expect((decryptNotificationSettings("email", email, SECRET) as any).transport.auth.pass).toBe("p");
   });
 });
 
@@ -165,16 +187,13 @@ describe("secret backfill — non-destructive, idempotent", () => {
       createdAt: now, updatedAt: now,
     }).run();
     db.insert(schema.setting).values({
-      key: "notifications.telegram", value: [{ botToken: "tg-tok", chatId: "1", eventTypes: [] }], updatedAt: now,
-    }).run();
-    db.insert(schema.setting).values({
       key: "metadata.tmdbApiKey", value: "tmdb-plain", updatedAt: now,
     }).run();
 
     const result = runSecretBackfill(db, SECRET);
     expect(result.indexers).toBe(1);
     expect(result.clients).toBe(1);
-    expect(result.settings).toBe(2);
+    expect(result.settings).toBe(1);
 
     const idx = db.select().from(schema.indexer).where(eq(schema.indexer.id, "idx1")).all();
     const idxRow = idx[0] as any;
@@ -189,9 +208,7 @@ describe("secret backfill — non-destructive, idempotent", () => {
     expect(dc.settings.username).toBe("admin"); // non-secret preserved
     expect(isEncrypted(dc.settings.password, SECRET)).toBe(true);
 
-    const tg = db.select().from(schema.setting).where(eq(schema.setting.key, "notifications.telegram")).all()[0] as any;
     const tmdb = db.select().from(schema.setting).where(eq(schema.setting.key, "metadata.tmdbApiKey")).all()[0] as any;
-    expect(tg.value[0].botToken).not.toBe("tg-tok");
     expect(tmdb.value).not.toBe("tmdb-plain");
 
     // idempotent: second run changes nothing
@@ -206,23 +223,18 @@ describe("ConfigService settings-blob symmetry", () => {
     const config = new ConfigService(db);
 
     await config.upsert({
-      "notifications.telegram": [{ botToken: "tg-live", chatId: "77", eventTypes: [] }],
       "metadata.tmdbApiKey": "tmdb-live",
     } as never);
 
     // stored form is encrypted
     const stored = db.select().from(schema.setting).all();
-    const tg = stored.find((r) => r.key === "notifications.telegram") as any;
     const tmdb = stored.find((r) => r.key === "metadata.tmdbApiKey") as any;
-    expect(tg.value[0].botToken).not.toBe("tg-live");
-    expect(isEncrypted(tg.value[0].botToken, SECRET)).toBe(true);
     expect(tmdb.value).not.toBe("tmdb-live");
+    expect(isEncrypted(tmdb.value, SECRET)).toBe(true);
 
     // read-back is plaintext (consumers see the real token)
     const got = await config.get();
-    expect(got["notifications.telegram"][0].botToken).toBe("tg-live");
     expect(got["metadata.tmdbApiKey"]).toBe("tmdb-live");
-    expect(got["notifications.telegram"][0].chatId).toBe("77");
   });
 
   it("re-upserting plaintext through get() does not double-encrypt", async () => {

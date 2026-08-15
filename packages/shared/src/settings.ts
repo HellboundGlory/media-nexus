@@ -80,10 +80,6 @@ export const runtimeSettingsSchema = z.object({
   "indexers.rateLimitWindowSeconds": z.number().int().positive().default(60),
   "indexers.maxQueriesPerWindow": z.number().int().positive().default(20),
   "indexers.maxGrabsPerWindow": z.number().int().positive().default(5),
-  "notifications.webhooks": z.array(webhookNotificationSchema).default([]),
-  "notifications.discord": z.array(discordNotificationSchema).default([]),
-  "notifications.telegram": z.array(telegramNotificationSchema).default([]),
-  "notifications.email": z.array(emailNotificationSchema).default([]),
   "metadata.tmdbApiKey": z.string().default(""),
   "metadata.tmdbBaseUrl": z.string().default(""),
   // TheTVDB numbering backfill (roadmap P2, gap D8). Empty baseUrl -> the shared Cloudflare
@@ -91,7 +87,6 @@ export const runtimeSettingsSchema = z.object({
   // a non-empty one means BYO-key mode against the real TVDB API. The apiKey is a J9 secret.
   "metadata.tvdbBaseUrl": z.string().default(""),
   "metadata.tvdbApiKey": z.string().default(""),
-  "media.servers": z.array(mediaServerConfigSchema).default([]),
   "system.timezone": z.string().default("UTC"),
   "ui.theme": z.enum(["dark", "light"]).default("dark"),
   // Housekeeping retention windows (roadmap P1, gap report B9). Orphan rows (no matching

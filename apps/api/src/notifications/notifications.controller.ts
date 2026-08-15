@@ -1,55 +1,58 @@
 // SPDX-License-Identifier: MIT
-import { Body, Controller, Get, Param, Post, Put, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { AdminGuard } from "../common/admin.guard";
-import { NotificationService, type NotifyKind } from "./notifications.service";
-import { ConfigService } from "../system/config.service";
+import { NotificationService } from "./notifications.service";
 
-const notifyBody = z.object({
-  webhooks: z.array(z.any()).optional(),
-  discord: z.array(z.any()).optional(),
-  telegram: z.array(z.any()).optional(),
-  email: z.array(z.any()).optional(),
+const createBody = z.object({
+  kind: z.enum(["webhook", "discord", "telegram", "email"]),
+  name: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
+  eventTypes: z.array(z.string()).optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
+});
+const updateBody = z.object({
+  name: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
+  eventTypes: z.array(z.string()).optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
 });
 
 @ApiTags("notifications")
 @UseGuards(AdminGuard)
 @Controller("api/v1/notifications")
 export class NotificationsController {
-  constructor(
-    private readonly notifications: NotificationService,
-    private readonly config: ConfigService,
-  ) {}
+  constructor(private readonly notifications: NotificationService) {}
 
   @Get()
-  @ApiOperation({ summary: "Current notification configuration" })
-  async list() {
-    const c = await this.config.get();
-    return {
-      webhooks: c["notifications.webhooks"] ?? [],
-      discord: c["notifications.discord"] ?? [],
-      telegram: c["notifications.telegram"] ?? [],
-      email: c["notifications.email"] ?? [],
-    };
+  @ApiOperation({ summary: "Configured notification sinks (webhook/discord/telegram/email)" })
+  list() {
+    return this.notifications.list();
   }
 
-  @Put()
-  @ApiOperation({ summary: "Save notification configuration (webhooks/discord/telegram/email)" })
-  async save(@Body(new ZodValidationPipe(notifyBody)) body: z.infer<typeof notifyBody>) {
-    const c = await this.config.get();
-    return this.config.upsert({
-      "notifications.webhooks": body.webhooks ?? (c["notifications.webhooks"] ?? []),
-      "notifications.discord": body.discord ?? (c["notifications.discord"] ?? []),
-      "notifications.telegram": body.telegram ?? (c["notifications.telegram"] ?? []),
-      "notifications.email": body.email ?? (c["notifications.email"] ?? []),
-    } as never);
+  @Post()
+  @ApiOperation({ summary: "Create a notification sink" })
+  create(@Body(new ZodValidationPipe(createBody)) body: z.infer<typeof createBody>) {
+    return this.notifications.create(body);
   }
 
-  @Post(":kind/:index/test")
+  @Put(":id")
+  @ApiOperation({ summary: "Edit a notification sink ([REDACTED] secret means unchanged)" })
+  update(@Param("id") id: string, @Body(new ZodValidationPipe(updateBody)) body: z.infer<typeof updateBody>) {
+    return this.notifications.update(id, body);
+  }
+
+  @Delete(":id")
+  @ApiOperation({ summary: "Remove a notification sink" })
+  remove(@Param("id") id: string) {
+    return this.notifications.remove(id);
+  }
+
+  @Post(":id/test")
   @ApiOperation({ summary: "Send a test notification to a configured sink" })
-  test(@Param("kind") kind: string, @Param("index") index: string) {
-    return this.notifications.test(kind as NotifyKind, Number(index));
+  test(@Param("id") id: string) {
+    return this.notifications.test(id);
   }
 }

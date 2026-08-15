@@ -33,9 +33,10 @@ export default function System() {
   const [notifyDraft, setNotifyDraft] = useState({ url: "", secret: "", eventTypes: "" });
   const [savedNotification, setSavedNotification] = useState(false);
   const saveWebhooks = useMutation({
-    mutationFn: (body: Record<string, any>) => api.put("/notifications", body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["config"] }); setSavedNotification(true); },
+    mutationFn: (body: { url: string; secret?: string; eventTypes: string[] }) => api.post("/notifications", { kind: "webhook", settings: { url: body.url, secret: body.secret }, eventTypes: body.eventTypes }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["config"] }); qc.invalidateQueries({ queryKey: ["notifications"] }); setSavedNotification(true); },
   });
+  const notifications = useQuery({ queryKey: ["notifications"], queryFn: () => api.get<any[]>("/notifications") });
   const [tmdbKeyDraft, setTmdbKeyDraft] = useState("");
   const [savedTmdb, setSavedTmdb] = useState(false);
   const saveTmdb = useMutation({
@@ -216,7 +217,7 @@ export default function System() {
         <div className="space-y-3">
           <form
             className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700"
-            onSubmit={(e) => { e.preventDefault(); const existing = (cfg.data?.["notifications.webhooks"] as any[]) ?? []; const eventTypes = notifyDraft.eventTypes ? notifyDraft.eventTypes.split(",").map((s) => s.trim()) : []; saveWebhooks.mutate({ webhooks: [...existing, { url: notifyDraft.url, secret: notifyDraft.secret || undefined, eventTypes }] }); setNotifyDraft({ url: "", secret: "", eventTypes: "" }); }}
+            onSubmit={(e) => { e.preventDefault(); const eventTypes = notifyDraft.eventTypes ? notifyDraft.eventTypes.split(",").map((s) => s.trim()) : []; saveWebhooks.mutate({ url: notifyDraft.url, secret: notifyDraft.secret || undefined, eventTypes }); setNotifyDraft({ url: "", secret: "", eventTypes: "" }); }}
           >
             <p className="mb-1 text-xs font-medium text-zinc-500">Add webhook</p>
             <div className="flex gap-2">
@@ -225,10 +226,10 @@ export default function System() {
             </div>
           </form>
           <div className="grid gap-2 text-xs font-mono text-zinc-600 dark:text-zinc-300">
-            <span>webhooks: {(cfg.data?.["notifications.webhooks"] as any[])?.length ?? 0}</span>
-            <span>discord: {(cfg.data?.["notifications.discord"] as any[])?.length ?? 0}</span>
-            <span>telegram: {(cfg.data?.["notifications.telegram"] as any[])?.length ?? 0}</span>
-            <span>email: {(cfg.data?.["notifications.email"] as any[])?.length ?? 0}</span>
+            <span>webhooks: {(notifications.data ?? []).filter((n: any) => n.kind === "webhook").length}</span>
+            <span>discord: {(notifications.data ?? []).filter((n: any) => n.kind === "discord").length}</span>
+            <span>telegram: {(notifications.data ?? []).filter((n: any) => n.kind === "telegram").length}</span>
+            <span>email: {(notifications.data ?? []).filter((n: any) => n.kind === "email").length}</span>
           </div>
           {savedNotification && <p className="text-xs text-emerald-600">Saved.</p>}
         </div>
