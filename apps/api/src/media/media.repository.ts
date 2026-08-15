@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable } from "@nestjs/common";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { ApiError } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
@@ -11,6 +11,31 @@ import {
   type MinimumAvailability, type MovieMediaItem, type Quality,
   type ReleaseTarget, type SeriesMediaItem, type SeriesType,
 } from "@medianexus/domain";
+
+/** One entry in the media-neutral calendar (roadmap P3 "calendar iCal export"): either an episode
+ *  airing or a movie release, discriminated on `mediaType`. The JSON feed and the .ics export both
+ *  consume this. */
+export type CalendarEntry =
+  | {
+      mediaType: "episode";
+      id: string;
+      seriesId: string;
+      seriesTitle: string;
+      seasonNumber: number;
+      episodeNumber: number;
+      title: string;
+      airDateUtc: string;
+      hasFile: boolean;
+      monitored: boolean;
+    }
+  | {
+      mediaType: "movie";
+      movieId: string;
+      movieTitle: string;
+      releaseDate: string;
+      hasFile: boolean;
+      monitored: boolean;
+    };
 
 /**
  * The single place that turns `movie` / `series` rows into the unified `MediaItem` and
@@ -284,6 +309,84 @@ export class MediaRepository {
       files.push(toExistingFile(media_file));
     }
     return files;
+  }
+
+  // ---------- Calendar (media-neutral) ----------
+
+  /**
+   * Media-neutral calendar: episode air dates AND movie release dates in [start, end], merged into
+   * one date-sorted discriminated union (roadmap P3 "calendar iCal export"). Both the JSON feed
+   * and the .ics export share this. Fixes the discovered gap where the calendar previously excluded
+   * movies entirely (only the episode/season/series join) — Radarr shows movie release dates, and a
+   * real unified calendar should show both. LocalDates are bounded to [start,end]: episodes compare
+   * on full air_date_utc; movies carry only a date (release_date), so they compare on the date part.
+   */
+  async calendar(startIso?: string, endIso?: string): Promise<CalendarEntry[]> {
+    const start = startIso ?? new Date().toISOString();
+    const end = endIso ?? new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
+
+    const [episodes, movies] = await Promise.all([
+      this.db
+        .select({
+          episode: schema.episode,
+          seasonNumber: schema.season.seasonNumber,
+          seriesId: schema.series.id,
+          seriesTitle: schema.series.title,
+        })
+        .from(schema.episode)
+        .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
+        .innerJoin(schema.series, eq(schema.episode.seriesId, schema.series.id))
+        .where(and(
+          sql`${schema.episode.airDateUtc} IS NOT NULL`,
+          gte(sql`${schema.episode.airDateUtc}`, start),
+          lte(sql`${schema.episode.airDateUtc}`, end),
+        ))
+        .limit(200),
+      this.db
+        .select({
+          movieId: schema.movie.id,
+          movieTitle: schema.movie.title,
+          releaseDate: schema.movie.releaseDate,
+          hasFile: schema.movie.hasFile,
+          monitored: schema.movie.monitored,
+        })
+        .from(schema.movie)
+        .where(and(
+          sql`${schema.movie.releaseDate} IS NOT NULL`,
+          gte(sql`${schema.movie.releaseDate}`, start.slice(0, 10)),
+          lte(sql`${schema.movie.releaseDate}`, end.slice(0, 10)),
+        ))
+        .limit(200),
+    ]);
+
+    const list: CalendarEntry[] = [
+      ...episodes.map((r) => ({
+        mediaType: "episode" as const,
+        id: r.episode.id,
+        seriesId: r.seriesId,
+        seriesTitle: r.seriesTitle,
+        seasonNumber: r.seasonNumber,
+        episodeNumber: r.episode.episodeNumber,
+        title: r.episode.title,
+        airDateUtc: r.episode.airDateUtc ?? "",
+        hasFile: r.episode.hasFile,
+        monitored: r.episode.monitored,
+      })),
+      ...movies.map((r) => ({
+        mediaType: "movie" as const,
+        movieId: r.movieId,
+        movieTitle: r.movieTitle,
+        releaseDate: r.releaseDate ?? "",
+        hasFile: r.hasFile,
+        monitored: r.monitored,
+      })),
+    ];
+    list.sort((a, b) => {
+      const da = a.mediaType === "episode" ? a.airDateUtc : a.releaseDate;
+      const db = b.mediaType === "episode" ? b.airDateUtc : b.releaseDate;
+      return da.localeCompare(db);
+    });
+    return list;
   }
 }
 

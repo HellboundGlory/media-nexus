@@ -74,17 +74,27 @@ export interface WantedMovieRow {
 /** GET /wanted/missing returns a merge of both (roadmap C1). */
 export type WantedItem = WantedMovieRow | WantedEpisodeRow;
 
-export interface CalendarEntry {
-  id: string;
-  seriesId: string;
-  seriesTitle: string;
-  seasonNumber: number;
-  episodeNumber: number;
-  title: string;
-  airDateUtc: string;
-  hasFile: boolean;
-  monitored: boolean;
-}
+export type CalendarEntry =
+  | {
+      mediaType: "episode";
+      id: string;
+      seriesId: string;
+      seriesTitle: string;
+      seasonNumber: number;
+      episodeNumber: number;
+      title: string;
+      airDateUtc: string;
+      hasFile: boolean;
+      monitored: boolean;
+    }
+  | {
+      mediaType: "movie";
+      movieId: string;
+      movieTitle: string;
+      releaseDate: string;
+      hasFile: boolean;
+      monitored: boolean;
+    };
 
 export interface Paged<T> {
   items: T[];

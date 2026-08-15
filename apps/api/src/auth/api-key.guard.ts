@@ -34,6 +34,18 @@ export class ApiKeyGuard implements CanActivate {
       return true;
     }
 
+    // iCal calendar feed only: external calendar apps (Google/Apple) subscribe by URL and can't send
+    // an X-Api-Key header or hold a session cookie, so accept the API key as a `?apikey=` query param
+    // on THIS route specifically (the long-established *arr calendar-feed convention). Scoped to
+    // exactly this path — deliberately NOT a general query-param auth mechanism — and the key is
+    // still required (the feed is never unauthenticated; it would leak library contents).
+    if (url.startsWith("/api/v1/calendar/ical") && typeof req.query?.apikey === "string" && req.query.apikey.length > 0) {
+      const principal = await this.auth.authenticateKey(req.query.apikey.trim());
+      if (!principal) throw new ApiError({ code: "UNAUTHORIZED", message: "Invalid API key" });
+      req.principal = principal;
+      return true;
+    }
+
     // no X-Api-Key header — fall back to a browser session cookie
     const sessionValue = readSessionCookie(req);
     if (sessionValue) {

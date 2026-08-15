@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable } from "@nestjs/common";
-import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { deletePolymorphicRows, deletePolymorphicRowsAsync, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
@@ -224,22 +224,10 @@ export class SeriesService {
     return rows.map((r) => ({ ...r.episode, seasonNumber: r.seasonNumber, seriesTitle: r.series.title, seriesType: r.series.seriesType, seriesAlternateTitles: r.series.alternateTitles ?? [] }));
   }
 
-  /** Calendar: upcoming episodes with air dates in [start, end] (default next 14 days). */
-  async calendar(startIso?: string, endIso?: string) {
-    const start = startIso ?? new Date().toISOString();
-    const end = endIso ?? new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
-    const rows = await this.db
-      .select({
-        episode: schema.episode,
-        seasonNumber: schema.season.seasonNumber,
-        series: { id: schema.series.id, title: schema.series.title },
-      })
-      .from(schema.episode)
-      .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
-      .innerJoin(schema.series, eq(schema.episode.seriesId, schema.series.id))
-      .where(and(sql`${schema.episode.airDateUtc} IS NOT NULL`, gte(sql`${schema.episode.airDateUtc}`, start), lte(sql`${schema.episode.airDateUtc}`, end)))
-      .orderBy(asc(schema.episode.airDateUtc))
-      .limit(200);
-    return rows.map((r) => ({ id: r.episode.id, seriesId: r.series.id, seriesTitle: r.series.title, seasonNumber: r.seasonNumber, episodeNumber: r.episode.episodeNumber, title: r.episode.title, airDateUtc: r.episode.airDateUtc, hasFile: r.episode.hasFile, monitored: r.episode.monitored }));
-  }
+  /**
+   * Calendar is now media-neutral (episode air dates + movie release dates) and lives in
+   * MediaRepository.calendar() — see `apps/api/src/media/media.repository.ts`. It moved there
+   * because a series-only home is wrong for movie data, and WantedController.calendar() routes
+   * there now.
+   */
 }
