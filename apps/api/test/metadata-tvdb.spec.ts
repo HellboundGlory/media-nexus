@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 /** TheTVDB numbering backfill (roadmap P2, gap D8) — driven through refreshSeries(). */
+import { AutoTagsService } from "../src/auto-tags/auto-tags.service";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -66,7 +67,7 @@ async function seedSeries(seriesId: string, ids: { tvdbId: number; tmdbId: numbe
 }
 
 function service(overrides: { tvdb?: object }): MetadataService {
-  const svc = new MetadataService(db, new ConfigService(db), {} as never, {} as never) as MetadataService;
+  const svc = new MetadataService(db, new ConfigService(db), {} as never, {} as never, new AutoTagsService(db)) as MetadataService;
   (svc as unknown as { provider: () => Promise<typeof fakeTmdb> }).provider = async () => fakeTmdb;
   (svc as unknown as { tvdbProvider: () => Promise<{ episodes: (...a: unknown[]) => Promise<unknown> }> }).tvdbProvider = async () => (overrides.tvdb ?? fakeTvdbOk) as never;
   return svc;

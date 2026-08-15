@@ -9,12 +9,14 @@ import type { Db } from "@medianexus/database";
 import type { CreateSeries, UpdateSeriesBody } from "@medianexus/domain";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
+import { AutoTagsService } from "../auto-tags/auto-tags.service";
 
 @Injectable()
 export class SeriesService {
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly events: EventsService,
+    private readonly autoTags: AutoTagsService,
   ) {}
 
   async list(q: { search?: string; page?: number; pageSize?: number }) {
@@ -41,8 +43,19 @@ export class SeriesService {
       tags: input.tags ?? existing.tags,
     };
     const updatedAt = new Date().toISOString();
-    await this.db.update(schema.series).set({ ...merged, updatedAt }).where(eq(schema.series.id, id));
-    return { ...existing, ...merged, updatedAt };
+    const tags = await this.autoTags.appliedTags({
+      tags: merged.tags,
+      genres: existing.genres ?? [],
+      status: existing.status,
+      monitored: merged.monitored,
+      rootFolderPath: merged.rootFolderPath,
+      qualityProfileId: merged.qualityProfileId,
+      year: existing.firstAirYear,
+      network: existing.network,
+      seriesType: merged.seriesType,
+    });
+    await this.db.update(schema.series).set({ ...merged, tags, updatedAt }).where(eq(schema.series.id, id));
+    return { ...existing, ...merged, tags, updatedAt };
   }
 
   async create(input: CreateSeries) {
@@ -72,6 +85,17 @@ export class SeriesService {
       addedAt: now,
       updatedAt: now,
     };
+    row.tags = await this.autoTags.appliedTags({
+      tags: row.tags,
+      genres: row.genres ?? [],
+      status: row.status,
+      monitored: row.monitored,
+      rootFolderPath: row.rootFolderPath,
+      qualityProfileId: row.qualityProfileId,
+      year: row.firstAirYear,
+      network: row.network,
+      seriesType: row.seriesType,
+    });
     await this.db.insert(schema.series).values(row);
     // create season rows for seasons 0 and 1 (extended by metadata import in M2)
     for (const seasonNumber of [0, 1]) {

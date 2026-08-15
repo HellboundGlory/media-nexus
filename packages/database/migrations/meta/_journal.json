@@ -176,6 +176,13 @@
       "when": 1786812994915,
       "tag": "0024_legal_zarek",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1786814107812,
+      "tag": "0025_clever_jane_foster",
+      "breakpoints": true
     }
   ]
 }

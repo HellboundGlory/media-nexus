@@ -9,6 +9,7 @@
  *    are added (monitored), excluded items are skipped, already-in-library items are skipped
  *  - the auto-exclusion recorded when a movie/series is removed from the library
  */
+import { AutoTagsService } from "../src/auto-tags/auto-tags.service";
 import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -137,7 +138,7 @@ describe("C2 auto-exclusion on library removal", () => {
       releaseDate: null, monitored: true, qualityProfileId: null, rootFolderPath: "/m", minimumAvailability: "announced",
       genres: [], images: [], tags: [], hasFile: false, addedAt: nowIso, updatedAt: nowIso,
     }).run();
-    const svc = new MoviesService(db, { publish: () => {} } as never);
+    const svc = new MoviesService(db, { publish: () => {} } as never, new AutoTagsService(db));
     await svc.remove("m1");
     const exc = (await db.select().from(schema.importExclusion).where(eq(schema.importExclusion.externalId, "777")).all())[0] as any;
     expect(exc.mediaType).toBe("movie");

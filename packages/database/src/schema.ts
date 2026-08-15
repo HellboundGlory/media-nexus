@@ -8,7 +8,7 @@
  */
 import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql, type SQL } from "drizzle-orm";
-import type { CustomFormatSpec } from "@medianexus/domain";
+import type { CustomFormatSpec, AutoTagSpec } from "@medianexus/domain";
 
 // ---------- helpers ----------
 const iso = (name: string) => text(name).notNull();
@@ -303,6 +303,20 @@ export const releaseProfile = sqliteTable("release_profile", {
   updatedAt: iso("updated_at"),
 });
 
+// ---------- Auto-tagging (roadmap P3, gap report C6) ----------
+// Rules that automatically apply/remove tags on movie/series rows based on typed conditions
+// (genre, status, network, ...), mirroring upstream AutoTag. `specifications` is an array of
+// discriminated-union spec objects (see packages/domain/src/auto-tag.ts).
+export const autoTag = sqliteTable("auto_tag", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  removeTagsAutomatically: bool("remove_tags_automatically", false),
+  tags: json<string[]>("tags").notNull(),
+  specifications: json<AutoTagSpec[]>("specifications").notNull(),
+  createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+});
+
 // ---------- Import lists (roadmap P2, gap report C2) ----------
 // A generic watchlist-sync subsystem. `import_list` is a configured list source (provider
 // type + credentials/config, e.g. a TMDB list id); a recurring `media.importLists` job
@@ -565,6 +579,7 @@ export const schema = {
   providerStatus,
   tag,
   releaseProfile,
+  autoTag,
   importList,
   importExclusion,
 };

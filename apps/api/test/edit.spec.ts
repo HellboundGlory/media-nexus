@@ -12,6 +12,7 @@
  *    non-secret settings still update, and the returned row is redacted
  *  - root-folder rename + single-default invariant
  */
+import { AutoTagsService } from "../src/auto-tags/auto-tags.service";
 import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -58,7 +59,7 @@ describe("C5 season monitoring", () => {
       overview: "", airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null,
     }).run();
 
-    const svc = new SeriesService(db, {} as never);
+    const svc = new SeriesService(db, {} as never, new AutoTagsService(db));
     const sea = await svc.setSeasonMonitored("s1", "sea1", false);
     expect(sea.monitored).toBe(false);
     const eps = db.select().from(schema.episode).where(eq(schema.episode.seasonId, "sea1")).all();
@@ -71,7 +72,7 @@ describe("C5 season monitoring", () => {
       id: "s1", tvdbId: 1, title: "Show", overview: "", status: "unknown", seriesType: "standard",
       monitored: true, rootFolderPath: "", genres: [], images: [], tags: [], addedAt: now(), updatedAt: now(),
     } as never).run();
-    const svc = new SeriesService(db, {} as never);
+    const svc = new SeriesService(db, {} as never, new AutoTagsService(db));
     await expect(svc.setSeasonMonitored("s1", "nope", false)).rejects.toThrow();
   });
 });
@@ -88,7 +89,7 @@ describe("C5 movie/series edits", () => {
       releaseDate: null, monitored: true, qualityProfileId: "qp1", rootFolderPath: "/rf",
       minimumAvailability: "announced", genres: [], images: [], tags: [], hasFile: false, addedAt: now(), updatedAt: now(),
     }).run();
-    const svc = new MoviesService(db, {} as never);
+    const svc = new MoviesService(db, {} as never, new AutoTagsService(db));
     const updated = await svc.update("m1", { title: "New", monitored: false });
     expect(updated.title).toBe("New");
     expect(updated.monitored).toBe(false);
@@ -104,7 +105,7 @@ describe("C5 movie/series edits", () => {
       seriesType: "standard", network: null, firstAirYear: null, monitored: true, qualityProfileId: null,
       rootFolderPath: "", genres: [], images: [], tags: [], addedAt: now(), updatedAt: now(),
     }).run();
-    const svc = new SeriesService(db, {} as never);
+    const svc = new SeriesService(db, {} as never, new AutoTagsService(db));
     const updated = await svc.update("s1", { seriesType: "daily", monitored: false });
     expect(updated.seriesType).toBe("daily");
     expect(updated.monitored).toBe(false);

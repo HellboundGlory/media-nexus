@@ -13,6 +13,7 @@
  * statement, deterministically simulating "the Nth write in this transaction fails"
  * without needing to fabricate a real constraint violation.
  */
+import { AutoTagsService } from "../src/auto-tags/auto-tags.service";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -193,7 +194,7 @@ describe("MoviesService.remove() / SeriesService.remove() cascade (roadmap P0.7,
     await db.insert(schema.mediaAvailability).values({ id: "av1", mediaType: "series", mediaId: "s1", status: "unknown" });
     await db.insert(schema.blocklistEntry).values({ id: "bl1", mediaType: "series", mediaId: "s1", indexerId: null, title: "x", torrentInfohash: null, reason: "x", createdAt: now });
 
-    const service = new SeriesService(db, new EventsService(new EventBus()));
+    const service = new SeriesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
     await service.remove("s1");
 
     expect(db.select().from(schema.series).all()).toHaveLength(0);
@@ -220,7 +221,7 @@ describe("MoviesService.remove() / SeriesService.remove() cascade (roadmap P0.7,
     await db.insert(schema.mediaAvailability).values({ id: "av1", mediaType: "movie", mediaId: "m1", status: "unknown" });
     await db.insert(schema.blocklistEntry).values({ id: "bl1", mediaType: "movie", mediaId: "m1", indexerId: null, title: "x", torrentInfohash: null, reason: "x", createdAt: now });
 
-    const service = new MoviesService(db, new EventsService(new EventBus()));
+    const service = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
     await service.remove("m1");
 
     expect(db.select().from(schema.movie).all()).toHaveLength(0);

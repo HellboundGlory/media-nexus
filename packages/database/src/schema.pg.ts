@@ -23,7 +23,7 @@
  */
 import { pgTable, text, integer, boolean, jsonb, serial, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql, type SQL } from "drizzle-orm";
-import type { CustomFormatSpec } from "@medianexus/domain";
+import type { CustomFormatSpec, AutoTagSpec } from "@medianexus/domain";
 
 // ---------- helpers ----------
 const iso = (name: string) => text(name).notNull();
@@ -270,6 +270,17 @@ export const releaseProfile = pgTable("release_profile", {
   updatedAt: iso("updated_at"),
 });
 
+// Mirror of schema.ts auto_tag (roadmap P3, gap C6): rules that auto-apply/remove tags.
+export const autoTag = pgTable("auto_tag", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  removeTagsAutomatically: bool("remove_tags_automatically", false),
+  tags: json<string[]>("tags"),
+  specifications: json<AutoTagSpec[]>("specifications"),
+  createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+});
+
 // ---------- Import lists ----------
 export const importList = pgTable("import_list", {
   id: text("id").primaryKey(),
@@ -501,6 +512,7 @@ export const schema = {
   providerStatus,
   tag,
   releaseProfile,
+  autoTag,
   importList,
   importExclusion,
 };

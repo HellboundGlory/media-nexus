@@ -9,6 +9,7 @@
  * release date — the specific fix the gap report says must land before automation ships,
  * not after.
  */
+import { AutoTagsService } from "../src/auto-tags/auto-tags.service";
 import { describe, it, expect, vi, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -75,7 +76,7 @@ describe("MoviesService.wantedMissing()", () => {
   it("includes a monitored, missing, announced movie", async () => {
     const db = await freshDb();
     await seedMovie(db);
-    const svc = new MoviesService(db, new EventsService(new EventBus()));
+    const svc = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
     const wanted = await svc.wantedMissing();
     expect(wanted.map((w) => w.id)).toEqual(["m1"]);
   });
@@ -83,14 +84,14 @@ describe("MoviesService.wantedMissing()", () => {
   it("excludes a 'released'-gated movie whose release date is in the future", async () => {
     const db = await freshDb();
     await seedMovie(db, { minimumAvailability: "released", releaseDate: "2099-01-01" });
-    const svc = new MoviesService(db, new EventsService(new EventBus()));
+    const svc = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
     expect(await svc.wantedMissing()).toEqual([]);
   });
 
   it("includes a 'released'-gated movie whose release date has passed", async () => {
     const db = await freshDb();
     await seedMovie(db, { minimumAvailability: "released", releaseDate: "2020-01-01" });
-    const svc = new MoviesService(db, new EventsService(new EventBus()));
+    const svc = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
     const wanted = await svc.wantedMissing();
     expect(wanted.map((w) => w.id)).toEqual(["m1"]);
   });
@@ -98,14 +99,14 @@ describe("MoviesService.wantedMissing()", () => {
   it("excludes an unmonitored movie", async () => {
     const db = await freshDb();
     await seedMovie(db, { monitored: false });
-    const svc = new MoviesService(db, new EventsService(new EventBus()));
+    const svc = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
     expect(await svc.wantedMissing()).toEqual([]);
   });
 
   it("excludes a movie that already has a file", async () => {
     const db = await freshDb();
     await seedMovie(db, { hasFile: true });
-    const svc = new MoviesService(db, new EventsService(new EventBus()));
+    const svc = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
     expect(await svc.wantedMissing()).toEqual([]);
   });
 });
@@ -234,9 +235,9 @@ describe("MetadataService.addFromDiscover() — smart minimumAvailability defaul
     const db = await freshDb();
     const config = new ConfigService(db);
     await config.upsert({ "metadata.tmdbApiKey": "test-key" });
-    const movies = new MoviesService(db, new EventsService(new EventBus()));
-    const series = new SeriesService(db, new EventsService(new EventBus()));
-    const svc = new MetadataService(db, config, movies, series);
+    const movies = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
+    const series = new SeriesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
+    const svc = new MetadataService(db, config, movies, series, new AutoTagsService(db));
     vi.spyOn(svc, "provider").mockResolvedValue(stubProvider("2099-01-01"));
 
     const { id } = await svc.addFromDiscover("movie", 42);
@@ -248,9 +249,9 @@ describe("MetadataService.addFromDiscover() — smart minimumAvailability defaul
     const db = await freshDb();
     const config = new ConfigService(db);
     await config.upsert({ "metadata.tmdbApiKey": "test-key" });
-    const movies = new MoviesService(db, new EventsService(new EventBus()));
-    const series = new SeriesService(db, new EventsService(new EventBus()));
-    const svc = new MetadataService(db, config, movies, series);
+    const movies = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
+    const series = new SeriesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
+    const svc = new MetadataService(db, config, movies, series, new AutoTagsService(db));
     vi.spyOn(svc, "provider").mockResolvedValue(stubProvider("2020-01-01"));
 
     const { id } = await svc.addFromDiscover("movie", 43);
@@ -262,9 +263,9 @@ describe("MetadataService.addFromDiscover() — smart minimumAvailability defaul
     const db = await freshDb();
     const config = new ConfigService(db);
     await config.upsert({ "metadata.tmdbApiKey": "test-key" });
-    const movies = new MoviesService(db, new EventsService(new EventBus()));
-    const series = new SeriesService(db, new EventsService(new EventBus()));
-    const svc = new MetadataService(db, config, movies, series);
+    const movies = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
+    const series = new SeriesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
+    const svc = new MetadataService(db, config, movies, series, new AutoTagsService(db));
     vi.spyOn(svc, "provider").mockResolvedValue(stubProvider(undefined));
 
     const { id } = await svc.addFromDiscover("movie", 44);

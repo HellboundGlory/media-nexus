@@ -2,7 +2,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, ListTree, ScrollText, LogOut, Download, CalendarDays, FileText, Filter } from "lucide-react";
+import { Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, ListTree, ScrollText, LogOut, Download, CalendarDays, FileText, Filter, Tags } from "lucide-react";
 import { useAppStore, applyTheme } from "../store/useAppStore";
 import { api } from "../api/client";
 import type { SystemStatus, UpdateCheckState } from "../api/types";
@@ -17,6 +17,7 @@ const nav = [
   { to: "/indexers", label: "Indexers", icon: ListTree },
   { to: "/clients", label: "Clients & Servers", icon: Download },
   { to: "/release-profiles", label: "Release Profiles", icon: Filter },
+  { to: "/auto-tags", label: "Auto Tags", icon: Tags },
 ];
 
 export default function Layout() {

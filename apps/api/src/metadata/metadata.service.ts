@@ -10,6 +10,7 @@ import { TmdbProvider, TvdbProvider, type TvdbEpisodeRecord } from "@medianexus/
 import type { MediaSummary, DiscoverCategory } from "@medianexus/integrations";
 import { MoviesService } from "../movies/movies.service";
 import { SeriesService } from "../series/series.service";
+import { AutoTagsService } from "../auto-tags/auto-tags.service";
 
 /**
  * Metadata import (metadata): TMDB provides movie/series enrichment and — critically —
@@ -23,6 +24,7 @@ export class MetadataService {
     private readonly config: ConfigService,
     private readonly movies: MoviesService,
     private readonly series: SeriesService,
+    private readonly autoTags: AutoTagsService,
   ) {}
 
   async provider(): Promise<TmdbProvider | null> {
@@ -60,11 +62,22 @@ export class MetadataService {
     if (!movie[0].tmdbId) throw new ApiError({ code: "UNPROCESSABLE", message: "movie has no tmdbId" });
     const d = await p.getDetails("movie", String(movie[0].tmdbId));
     const now = new Date().toISOString();
+    const releaseDate = d.releaseDate ?? movie[0].releaseDate;
+    const tags = await this.autoTags.appliedTags({
+      tags: movie[0].tags ?? [],
+      genres: d.genres ?? [],
+      status: movie[0].status,
+      monitored: movie[0].monitored,
+      rootFolderPath: movie[0].rootFolderPath ?? "",
+      qualityProfileId: movie[0].qualityProfileId,
+      year: releaseDate ? Number(releaseDate.slice(0, 4)) : null,
+    });
     await this.db.update(schema.movie).set({
       overview: d.overview ?? movie[0].overview ?? "",
       genres: d.genres ?? [],
       images: d.images ?? [],
-      releaseDate: d.releaseDate ?? movie[0].releaseDate,
+      releaseDate,
+      tags,
       updatedAt: now,
       lastRefreshedAt: now,
     }).where(eq(schema.movie.id, movieId));
@@ -83,11 +96,23 @@ export class MetadataService {
     const d = await p.getDetails("series", tmdbId);
     const seasons = await p.seriesSeasons(Number(tmdbId));
     const now = new Date().toISOString();
+    const tags = await this.autoTags.appliedTags({
+      tags: series[0].tags ?? [],
+      genres: d.genres ?? [],
+      status: series[0].status,
+      monitored: series[0].monitored,
+      rootFolderPath: series[0].rootFolderPath ?? "",
+      qualityProfileId: series[0].qualityProfileId,
+      year: d.year ?? series[0].firstAirYear,
+      network: series[0].network,
+      seriesType: series[0].seriesType,
+    });
     await this.db.update(schema.series).set({
       overview: d.overview ?? series[0].overview ?? "",
       genres: d.genres ?? [],
       images: d.images ?? [],
       firstAirYear: d.year ?? series[0].firstAirYear,
+      tags,
       updatedAt: now,
       lastRefreshedAt: now,
     }).where(eq(schema.series.id, seriesId));

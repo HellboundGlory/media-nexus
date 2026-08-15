@@ -4,9 +4,10 @@ import { SeriesService } from "./series.service";
 import { SeriesController } from "./series.controller";
 import { WantedController } from "./wanted.controller";
 import { MoviesModule } from "../movies/movies.module";
+import { AutoTagsModule } from "../auto-tags/auto-tags.module";
 
 @Module({
-  imports: [MoviesModule],
+  imports: [MoviesModule, AutoTagsModule],
   providers: [SeriesService],
   controllers: [SeriesController, WantedController],
   exports: [SeriesService],

@@ -11,6 +11,7 @@ import type { CreateMovie, MinimumAvailability, UpdateMovieBody } from "@mediane
 import { hasMinimumAvailability } from "@medianexus/domain";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
+import { AutoTagsService } from "../auto-tags/auto-tags.service";
 
 export interface ListQuery { search?: string; monitored?: string; sort?: string; page?: number; pageSize?: number }
 
@@ -29,6 +30,7 @@ export class MoviesService {
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly events: EventsService,
+    private readonly autoTags: AutoTagsService,
   ) {}
 
   async list(q: ListQuery) {
@@ -59,8 +61,17 @@ export class MoviesService {
       tags: input.tags ?? existing.tags,
     };
     const updatedAt = new Date().toISOString();
-    await this.db.update(schema.movie).set({ ...merged, updatedAt }).where(eq(schema.movie.id, id));
-    return { ...existing, ...merged, updatedAt };
+    const tags = await this.autoTags.appliedTags({
+      tags: merged.tags,
+      genres: existing.genres ?? [],
+      status: existing.status,
+      monitored: merged.monitored,
+      rootFolderPath: merged.rootFolderPath,
+      qualityProfileId: merged.qualityProfileId,
+      year: existing.releaseDate ? Number(existing.releaseDate.slice(0, 4)) : null,
+    });
+    await this.db.update(schema.movie).set({ ...merged, tags, updatedAt }).where(eq(schema.movie.id, id));
+    return { ...existing, ...merged, tags, updatedAt };
   }
 
   async create(input: CreateMovie) {
@@ -90,6 +101,17 @@ export class MoviesService {
       addedAt: now,
       updatedAt: now,
     };
+    // Auto-tag (roadmap P3, gap C6): fold rule-based tag changes into the same insert, so a new
+    // movie gets its auto tags in one atomic write (no second write/event).
+    row.tags = await this.autoTags.appliedTags({
+      tags: row.tags,
+      genres: row.genres ?? [],
+      status: row.status,
+      monitored: row.monitored,
+      rootFolderPath: row.rootFolderPath,
+      qualityProfileId: row.qualityProfileId,
+      year: row.releaseDate ? Number(row.releaseDate.slice(0, 4)) : null,
+    });
     await this.db.insert(schema.movie).values(row);
     await this.upsertAvailability("movie", id);
     this.events.publish(EventTypes.MovieAdded, { movieId: id, title: row.title }, { aggType: "movie", aggId: id });

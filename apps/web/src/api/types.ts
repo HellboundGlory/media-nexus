@@ -263,6 +263,23 @@ export interface ReleaseProfile {
   updatedAt?: string | null;
 }
 
+export interface AutoTagSpec {
+  type: string;
+  value: string | number | boolean;
+  negate: boolean;
+  required: boolean;
+}
+
+export interface AutoTag {
+  id: string;
+  name: string;
+  removeTagsAutomatically: boolean;
+  tags: string[];
+  specifications: AutoTagSpec[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
 export type DiscoverMediaType = "movie" | "series";
 export type DiscoverCategory = "trending" | "popular" | "upcoming" | "top_rated";
 

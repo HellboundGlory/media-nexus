@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 /** P2 item 8 — compat write surfaces: PUT series/movie + episode monitor end-to-end
  *  through the real CompatService → native services → DB. */
+import { AutoTagsService } from "../src/auto-tags/auto-tags.service";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,8 +24,8 @@ beforeAll(async () => {
   handle.runMigrations();
   db = handle.db;
   const events = new EventsService(new EventBus());
-  const series = new SeriesService(db, events);
-  const movies = new MoviesService(db, events);
+  const series = new SeriesService(db, events, new AutoTagsService(db));
+  const movies = new MoviesService(db, events, new AutoTagsService(db));
   svc = new CompatService(
     db,
     { status: () => ({ version: "0.8.0", name: "MediaNexus", started: "2026-01-01T00:00:00Z", db: "1" }) } as never,

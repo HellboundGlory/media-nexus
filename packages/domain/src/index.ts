@@ -16,3 +16,4 @@ export * from "./provider-status";
 export * from "./media-info";
 export * from "./tags";
 export * from "./release-profile";
+export * from "./auto-tag";

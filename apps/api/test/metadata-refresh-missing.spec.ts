@@ -8,6 +8,7 @@
  * types) by `lastRefreshedAt` ASC, NULLs first (never-refreshed), so repeated runs advance
  * instead of stalling, and refresh bumps `lastRefreshedAt` to a real timestamp.
  */
+import { AutoTagsService } from "../src/auto-tags/auto-tags.service";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { mkdtempSync } from "node:fs";
@@ -64,7 +65,7 @@ async function seedSeries(id: string, ids: { tvdbId: number; tmdbId: number }, t
 }
 
 function makeService(): MetadataService {
-  const svc = new MetadataService(db, new ConfigService(db), {} as never, {} as never) as MetadataService;
+  const svc = new MetadataService(db, new ConfigService(db), {} as never, {} as never, new AutoTagsService(db)) as MetadataService;
   (svc as unknown as { provider: () => Promise<unknown> }).provider = async () => fakeProvider;
   (svc as unknown as { tvdbProvider: () => Promise<unknown> }).tvdbProvider = async () => fakeTvdb;
   return svc;

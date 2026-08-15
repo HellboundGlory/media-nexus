@@ -13,6 +13,7 @@ import Clients from "./pages/Clients";
 import SeriesDetail from "./pages/SeriesDetail";
 import Calendar from "./pages/Calendar";
 import ReleaseProfiles from "./pages/ReleaseProfiles";
+import AutoTags from "./pages/AutoTags";
 import System from "./pages/System";
 import Logs from "./pages/Logs";
 import Login from "./pages/Login";
@@ -103,6 +104,7 @@ export default function App() {
             <Route path="calendar" element={<Calendar />} />
             <Route path="clients" element={<Clients />} />
             <Route path="release-profiles" element={<ReleaseProfiles />} />
+            <Route path="auto-tags" element={<AutoTags />} />
             <Route path="system" element={<System />} />
             <Route path="logs" element={<Logs />} />
           </Route>
