@@ -45,6 +45,47 @@ describe("PUT /system/config — media.naming validation", () => {
   });
 });
 
+describe("PUT /system/config — Media Management tab save (NAV-1 Phase 5 regression)", () => {
+  // The full body the MediaManagementTab save sends. media.naming MUST be one nested key:
+  // putConfig() validates every key against runtimeSettingsSchema's flat key list first, so the
+  // old frontend shape ("media.naming.movies" / "media.naming.episodes" as flat keys) rejected
+  // the ENTIRE PUT and none of the scalar fields saved either.
+  function mediaBody() {
+    return {
+      "media.naming": { movies: "{Quality Full} - {Movie Title}", episodes: "{Series Title} S{season:00}E{episode:00}" },
+      "media.preferredProtocol": "usenet",
+      "media.downloadStallMinutes": 30,
+      "media.minimumFreeSpaceMb": 200,
+      "media.recycleBinPath": "/tmp/recycle",
+      "media.recycleBinRetentionDays": 14,
+      "paths.downloads": "/tmp/downloads",
+    };
+  }
+
+  it("accepts the nested media.naming + scalar keys together and persists them", async () => {
+    const c = controller();
+    await c.putConfig(mediaBody());
+    const saved = (await c.getConfig()) as never as {
+      "media.naming": { movies: string; episodes: string };
+      "media.preferredProtocol": string;
+      "media.downloadStallMinutes": number;
+      "paths.downloads": string;
+    };
+    expect(saved["media.naming"].movies).toBe("{Quality Full} - {Movie Title}");
+    expect(saved["media.naming"].episodes).toBe("{Series Title} S{season:00}E{episode:00}");
+    expect(saved["media.preferredProtocol"]).toBe("usenet");
+    expect(saved["media.downloadStallMinutes"]).toBe(30);
+    expect(saved["paths.downloads"]).toBe("/tmp/downloads");
+  });
+
+  it("rejects the old flat media.naming.movies/episodes keys (guards the Phase 5 regression)", async () => {
+    const c = controller();
+    await expect(
+      c.putConfig({ "media.naming.movies": "{Quality Full}", "media.preferredProtocol": "usenet" } as never),
+    ).rejects.toThrow(/Unknown setting keys/i);
+  });
+});
+
 describe("GET /system/naming/preview", () => {
   it("builds sample filenames from the currently saved templates by default", async () => {
     const c = controller();

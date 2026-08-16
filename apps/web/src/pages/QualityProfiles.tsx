@@ -9,7 +9,7 @@
 // 409 is surfaced verbatim rather than swallowed.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Gauge, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { QualityProfile, QualityRegistryItem, CustomFormat } from "../api/types";
 import { ErrorState, Badge } from "../lib/ui";
@@ -118,16 +118,6 @@ export default function QualityProfiles() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="flex items-center gap-2 font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">
-          <Gauge className="h-5 w-5" /> Quality Profiles
-        </h2>
-        <p className="text-sm text-ink-dim">
-          Ordered lists of allowed release qualities plus cutoff/upgrade rules and custom-format scores.
-          A profile assigned to a movie or series gates what the decision engine will grab.
-        </p>
-      </div>
-
       {profiles.isError ? <ErrorState error={profiles.error} onRetry={() => profiles.refetch()} /> : profiles.isLoading ? (
         <p className="text-sm text-ink-dim">Loading…</p>
       ) : (

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCw, ScrollText } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import { Badge, ErrorState, formatDate } from "../lib/ui";
 
@@ -36,15 +36,10 @@ export default function Logs() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="flex items-center gap-2 font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">
-          <ScrollText className="h-5 w-5" /> Logs
-        </h2>
-        <p className="text-sm text-ink-dim">
-          Recent in-memory log lines. Redacted. In-memory only — a restart clears the buffer;
-          <code className="ml-1 rounded bg-neutral-bg px-1 text-ink">docker logs</code> holds the full, unredacted history.
-        </p>
-      </div>
+      <p className="text-xs text-ink-dim">
+        Recent in-memory log lines. Redacted. In-memory only — a restart clears the buffer;
+        <code className="ml-1 rounded bg-neutral-bg px-1 text-ink">docker logs</code> holds the full, unredacted history.
+      </p>
 
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-rule bg-surface p-4">
         <label className="block">

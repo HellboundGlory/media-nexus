@@ -7,7 +7,7 @@
 // Delete-when-editing live in the footer.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Layers, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { CustomFormat, CustomFormatSpec, IndexerRow } from "../api/types";
 import { Badge, ErrorState } from "../lib/ui";
@@ -118,16 +118,6 @@ export default function CustomFormats() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="flex items-center gap-2 font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">
-          <Layers className="h-5 w-5" /> Custom Formats
-        </h2>
-        <p className="text-sm text-ink-dim">
-          Named release-matching rules (terms/regex, size, language, indexer) that Quality Profiles score
-          against to rank and gate releases. A format matches when every one of its conditions passes.
-        </p>
-      </div>
-
       {formats.isError ? <ErrorState error={formats.error} onRetry={() => formats.refetch()} /> : formats.isLoading ? (
         <p className="text-sm text-ink-dim">Loading…</p>
       ) : (

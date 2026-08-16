@@ -85,11 +85,7 @@ export default function Indexers() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">Indexers</h2>
-          <p className="text-sm text-ink-dim">Configure search sources (Newznab/Torznab via HTTP, Cardigann custom). Test health, view grab stats, then Search & grab below.</p>
-        </div>
+      <div className="flex flex-wrap items-center justify-end gap-3">
         <button onClick={() => setShowCustom((v) => !v)} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90">
           {showCustom ? "Hide custom form" : "New custom (Cardigann)"}
         </button>

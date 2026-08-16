@@ -103,11 +103,6 @@ export default function Clients() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">Clients &amp; Servers</h2>
-        <p className="text-sm text-ink-dim">Download clients (SABnzbd, qBittorrent) and media servers (Jellyfin, Plex) via their HTTP APIs.</p>
-      </div>
-
       {clients.isError ? <ErrorState error={clients.error} onRetry={() => clients.refetch()} /> : null}
 
       <div className="grid gap-6 lg:grid-cols-2">

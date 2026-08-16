@@ -88,19 +88,12 @@ export default function LibraryImport() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">Library Import</h2>
-        <p className="text-sm text-ink-dim">
-          Browse a root folder for titles on disk that aren&apos;t in the library yet, then add and scan them.
-        </p>
-      </div>
-
       {rootFolders.isError ? (
         <ErrorState error={rootFolders.error} onRetry={() => rootFolders.refetch()} />
       ) : !rootFolders.isLoading && roots.length === 0 ? (
         <EmptyState
           title="No root folders yet"
-          hint="Add a root folder under Clients & Servers before importing titles."
+          hint="Add a root folder under Settings → Download Clients before importing titles."
         />
       ) : (
         <>

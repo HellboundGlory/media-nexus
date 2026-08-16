@@ -5,21 +5,16 @@ import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/reac
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Discover from "./pages/Discover";
-import LibraryImport from "./pages/LibraryImport";
 import Movies from "./pages/Movies";
 import Series from "./pages/Series";
 import Activity from "./pages/Activity";
-import Indexers from "./pages/Indexers";
-import Clients from "./pages/Clients";
+import Downloads from "./pages/Downloads";
+import Wanted from "./pages/Wanted";
+import Settings from "./pages/Settings";
 import SeriesDetail from "./pages/SeriesDetail";
 import MovieDetail from "./pages/MovieDetail";
 import Calendar from "./pages/Calendar";
-import ReleaseProfiles from "./pages/ReleaseProfiles";
-import AutoTags from "./pages/AutoTags";
-import QualityProfiles from "./pages/QualityProfiles";
-import CustomFormats from "./pages/CustomFormats";
 import System from "./pages/System";
-import Logs from "./pages/Logs";
 import Login from "./pages/Login";
 import Setup from "./pages/Setup";
 import { applyTheme, useAppStore } from "./store/useAppStore";
@@ -100,21 +95,16 @@ export default function App() {
           >
             <Route index element={<Dashboard />} />
             <Route path="discover" element={<Discover />} />
-            <Route path="import" element={<LibraryImport />} />
             <Route path="movies" element={<Movies />} />
             <Route path="movies/:id" element={<MovieDetail />} />
             <Route path="series" element={<Series />} />
             <Route path="series/:id" element={<SeriesDetail />} />
-            <Route path="activity" element={<Activity />} />
-            <Route path="indexers" element={<Indexers />} />
+            <Route path="downloads" element={<Downloads />} />
             <Route path="calendar" element={<Calendar />} />
-            <Route path="clients" element={<Clients />} />
-            <Route path="release-profiles" element={<ReleaseProfiles />} />
-            <Route path="auto-tags" element={<AutoTags />} />
-            <Route path="quality-profiles" element={<QualityProfiles />} />
-            <Route path="custom-formats" element={<CustomFormats />} />
+            <Route path="activity" element={<Activity />} />
+            <Route path="wanted" element={<Wanted />} />
+            <Route path="settings" element={<Settings />} />
             <Route path="system" element={<System />} />
-            <Route path="logs" element={<Logs />} />
           </Route>
         </Routes>
       </HashRouter>

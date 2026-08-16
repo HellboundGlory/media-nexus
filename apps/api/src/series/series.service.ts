@@ -3,13 +3,13 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { extname, join } from "node:path";
 import { LocalStorageProvider } from "@medianexus/integrations";
-import { ensureAvailability, getMediaCredits, getMediaFiles, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition } from "../media/library.helpers";
+import { ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition } from "../media/library.helpers";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import type { RuntimeSettings } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import { episodeQueryTag, parseEpisodeRelease } from "@medianexus/domain";
+import { episodeQueryTag, parseEpisodeRelease, meetsCutoff } from "@medianexus/domain";
 import type { CreateSeries, Quality, Release, SeriesType, UpdateSeriesBody } from "@medianexus/domain";
 import { episodeFileName, resolvedSeriesFolderName } from "../media/naming.helpers";
 import { selectMediaFiles, runWrite, type MediaFileRow } from "../media/media-file.types";
@@ -463,6 +463,45 @@ export class SeriesService {
       .orderBy(asc(schema.episode.airDateUtc))
       .limit(limit);
     return rows.map((r) => ({ ...r.episode, seasonNumber: r.seasonNumber, seriesTitle: r.series.title, seriesType: r.series.seriesType, seriesAlternateTitles: r.series.alternateTitles ?? [] }));
+  }
+
+  /** Cutoff Unmet (NAV-1 Phase 0): monitored episodes that already have a file whose quality is
+   *  below their series' quality profile cutoff (or outside its allowed qualities). Uses the
+   *  shared `meetsCutoff()` — the file quality comes from the episode's media_file via the
+   *  `media_file_id` FK (J3). Episodes with no series profile have no cutoff and are never
+   *  "unmet". Overfetches past `limit` to absorb per-row rejects, then slices. */
+  async cutoffUnmet(limit = 50): Promise<{
+    id: string; mediaType: "series"; seriesId: string; episodeNumber: number; title: string;
+    airDateUtc: string | null; monitored: boolean; hasFile: boolean; seasonNumber: number;
+    seriesTitle: string; seriesType: string; seriesAlternateTitles: string[];
+    quality: Quality | null; cutoffQualityId: number | null;
+  }[]> {
+    const rows = await this.db
+      .select({
+        episode: schema.episode,
+        seasonNumber: schema.season.seasonNumber,
+        series: { id: schema.series.id, title: schema.series.title, seriesType: schema.series.seriesType, alternateTitles: schema.series.alternateTitles, qualityProfileId: schema.series.qualityProfileId },
+      })
+      .from(schema.episode)
+      .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
+      .innerJoin(schema.series, eq(schema.episode.seriesId, schema.series.id))
+      .where(and(eq(schema.episode.monitored, true), eq(schema.episode.hasFile, true)))
+      .orderBy(asc(schema.episode.airDateUtc))
+      .limit(Math.max(limit * 4, 200));
+    const out: { id: string; mediaType: "series"; seriesId: string; episodeNumber: number; title: string; airDateUtc: string | null; monitored: boolean; hasFile: boolean; seasonNumber: number; seriesTitle: string; seriesType: string; seriesAlternateTitles: string[]; quality: Quality | null; cutoffQualityId: number | null }[] = [];
+    for (const r of rows) {
+      const profile = await getQualityProfile(this.db, r.series.qualityProfileId);
+      if (!profile || !r.episode.mediaFileId) continue;
+      const file = await this.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.id, r.episode.mediaFileId)).limit(1);
+      if (!file[0]?.quality) continue;
+      const quality = file[0].quality as Quality;
+      if (meetsCutoff(profile, quality)) continue;
+      out.push({
+        ...r.episode, mediaType: "series", seriesId: r.series.id, quality, cutoffQualityId: profile.cutoffQualityId,
+        seasonNumber: r.seasonNumber, seriesTitle: r.series.title, seriesType: r.series.seriesType, seriesAlternateTitles: r.series.alternateTitles ?? [],
+      });
+    }
+    return out.slice(0, limit);
   }
 
   /**

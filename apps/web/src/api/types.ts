@@ -461,3 +461,79 @@ export interface CustomFormat {
   createdAt?: string | null;
   updatedAt?: string | null;
 }
+
+// ---------- Activity split (NAV-1 Phase 2): Blocklist + Wanted Cutoff Unmet ----------
+
+/** A blocklist_entry row as returned by GET /blocklist (paginated). */
+export interface BlocklistRow {
+  id: string;
+  mediaType: string;
+  mediaId: string;
+  indexerId: string | null;
+  title: string;
+  torrentInfohash: string | null;
+  reason: string | null;
+  createdAt: string | null;
+}
+
+/** A GET /wanted/cutoff-unmet row — same merged movie/series shape as wanted/missing, plus the
+ *  held file's quality and the assigned profile's cutoff id so the UI can render current-vs-cutoff. */
+export interface CutoffUnmetItem {
+  id: string;
+  mediaType: "movie" | "series";
+  title?: string;
+  seriesTitle?: string;
+  episodeNumber?: number;
+  seasonNumber?: number;
+  airDateUtc?: string | null;
+  releaseDate?: string | null;
+  monitored: boolean;
+  hasFile: boolean;
+  quality: { source: string; resolution: string; edition: string } | null;
+  cutoffQualityId: number | null;
+}
+
+// ---------- Settings (NAV-1 Phase 3): tags + quality definitions ----------
+
+/** A tag catalog row as returned by GET /api/v1/tags. Entity `tags` arrays reference the id. */
+export interface TagRow {
+  id: string;
+  label: string;
+  color: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+/** A GET /quality-definitions row — per-quality size limits (MB per runtime-minute; null = none). */
+export interface QualityDefinitionRow {
+  id: number;
+  title: string;
+  minSize: number | null;
+  maxSize: number | null;
+  preferredSize: number | null;
+  updatedAt?: string | null;
+}
+
+// ---------- Settings (NAV-1 Phase 5): import lists ----------
+
+/** An import_list row (watchlist source). Provider is "tmdb" first-pass; config holds e.g. { listId }. */
+export interface ImportList {
+  id: string;
+  provider: string;
+  name: string;
+  enabled: boolean;
+  config: Record<string, unknown>;
+  lastSyncAt: string | null;
+  lastError: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+/** An import_exclusion row — a title never re-added by an import list. */
+export interface ImportExclusion {
+  id: string;
+  mediaType: string;
+  externalId: string;
+  reason: string | null;
+  createdAt: string | null;
+}

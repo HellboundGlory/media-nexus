@@ -45,6 +45,30 @@ export class WantedController {
     return merged.slice(0, q.limit);
   }
 
+  /** Cutoff Unmet (NAV-1 Phase 0): monitored titles/episodes that have a file below their
+   *  quality profile's cutoff — merged across both media types like `wanted/missing`, using
+   *  `meetsCutoff()` from the domain (not a reimplementation). Each row carries a `quality`
+   *  (the best held file's, movie; the episode's file's, series) and `cutoffQualityId` so the
+   *  UI can render "current vs. cutoff". */
+  @Get("wanted/cutoff-unmet")
+  @ApiOperation({ summary: "Cutoff Unmet: monitored movies/episodes with a file below their profile cutoff" })
+  async cutoffUnmet(@Query(new ZodValidationPipe(wantedQuery)) q: { limit: number }) {
+    const [episodes, movies] = await Promise.all([
+      this.series.cutoffUnmet(q.limit),
+      this.movies.cutoffUnmet(q.limit),
+    ]);
+    const merged = [
+      ...episodes.map((e) => ({ ...e, mediaType: "series" as const })),
+      ...movies,
+    ];
+    merged.sort((a, b) => {
+      const da = a.mediaType === "series" ? a.airDateUtc : a.releaseDate;
+      const db = b.mediaType === "series" ? b.airDateUtc : b.releaseDate;
+      return (da ?? "").localeCompare(db ?? "");
+    });
+    return merged.slice(0, q.limit);
+  }
+
   @Get("calendar")
   @ApiOperation({ summary: "Calendar: movie release dates + episode air dates in a window (media-neutral, date-sorted)" })
   calendar(@Query(new ZodValidationPipe(calendarQuery)) q: { start?: string; end?: string }) {

@@ -2,27 +2,22 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, ListTree, ScrollText, LogOut, Download, CalendarDays, FileText, Filter, Tags, FolderOpen, Gauge, Layers } from "lucide-react";
+import {
+  Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, LogOut, Download, CalendarDays,
+  AlertTriangle, Settings as SettingsIcon, Server,
+} from "lucide-react";
 import { useAppStore, applyTheme } from "../store/useAppStore";
 import { api } from "../api/client";
-import type { SystemStatus, UpdateCheckState, HealthStatus } from "../api/types";
+import type { SystemStatus, UpdateCheckState, HealthStatus, Paged, Movie, Series, QueueRow } from "../api/types";
 import { StatusLamp, type LampTone } from "../lib/ui";
 
-const nav = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/discover", label: "Discover", icon: Compass },
-  { to: "/import", label: "Import", icon: FolderOpen },
-  { to: "/movies", label: "Movies", icon: Film },
-  { to: "/series", label: "Series", icon: Tv },
-  { to: "/calendar", label: "Calendar", icon: CalendarDays },
-  { to: "/activity", label: "Activity", icon: Activity },
-  { to: "/indexers", label: "Indexers", icon: ListTree },
-  { to: "/clients", label: "Clients & Servers", icon: Download },
-  { to: "/release-profiles", label: "Release Profiles", icon: Filter },
-  { to: "/auto-tags", label: "Auto Tags", icon: Tags },
-  { to: "/quality-profiles", label: "Quality Profiles", icon: Gauge },
-  { to: "/custom-formats", label: "Custom Formats", icon: Layers },
-];
+type NavItem = {
+  to: string;
+  label: string;
+  icon: typeof Film;
+  badge?: number;
+  lamp?: boolean;
+};
 
 /** Map the real overall-health signal onto a lamp tone. */
 function healthTone(overall?: string): LampTone {
@@ -41,10 +36,31 @@ export default function Layout() {
   // Version sourced from the API (derives from root package.json at runtime), not a literal.
   const status = useQuery({ queryKey: ["system-status"], queryFn: () => api.get<SystemStatus>("/system/status") });
   const update = useQuery({ queryKey: ["update-check"], queryFn: () => api.get<UpdateCheckState>("/system/update-check") });
-  // Genuine status signal: overall system health (ok / warning / error) — drives the
-  // StatusLamp on the System item. No dot elsewhere: no other nav item has a real
-  // signal wired to it yet, and a lamp without real data is a fake control.
+  // Genuine status signal: overall system health — drives the StatusLamp on the System item.
   const health = useQuery({ queryKey: ["health"], queryFn: () => api.get<HealthStatus>("/system/health") });
+  // Nav badges — real numbers from the list endpoints' `total` and the live queue, keyed off the
+  // same query keys the event bus refreshes so they stay live (never hardcoded).
+  const movies = useQuery({ queryKey: ["movies"], queryFn: () => api.get<Paged<Movie>>("/movies?page=1&pageSize=1") });
+  const series = useQuery({ queryKey: ["series"], queryFn: () => api.get<Paged<Series>>("/series?page=1&pageSize=1") });
+  const queue = useQuery({ queryKey: ["queue"], queryFn: () => api.get<{ items: QueueRow[] }>("/queue") });
+
+  // Mostly-flat nav plus two tabbed admin destinations and a hairline divider, per the approved
+  // mockup / upstream's real structure. Downloads/Activity/Wanted stay flat (checked constantly);
+  // Settings and System are the two destinations with sub-pages.
+  const nav: (NavItem | "divider")[] = [
+    { to: "/", label: "Dashboard", icon: LayoutDashboard },
+    { to: "/discover", label: "Discover", icon: Compass },
+    { to: "/movies", label: "Movies", icon: Film, badge: movies.data?.total },
+    { to: "/series", label: "Series", icon: Tv, badge: series.data?.total },
+    { to: "/downloads", label: "Downloads", icon: Download, badge: queue.data?.items.length },
+    { to: "/calendar", label: "Calendar", icon: CalendarDays },
+    { to: "/activity", label: "Activity", icon: Activity },
+    { to: "/wanted", label: "Wanted", icon: AlertTriangle },
+    "divider",
+    { to: "/settings", label: "Settings", icon: SettingsIcon },
+    { to: "/system", label: "System", icon: Server, lamp: true },
+  ];
+
   const logout = async () => {
     await api.post("/auth/logout").catch(() => {});
     navigate("/login", { replace: true });
@@ -67,20 +83,23 @@ export default function Layout() {
           </div>
           <span className="font-display text-lg font-bold uppercase tracking-[0.05em] text-accent">MediaNexus</span>
         </div>
-        <nav className="flex-1 space-y-1 px-3 py-2">
-          {nav.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.to === "/"} className={navClass}>
-              <item.icon className="h-4 w-4" />
-              {item.label}
-            </NavLink>
-          ))}
-          <NavLink to="/system" className={navClass}>
-            <ScrollText className="h-4 w-4" /> System
-            <StatusLamp tone={healthTone(health.data?.overall)} className="ml-auto" />
-          </NavLink>
-          <NavLink to="/logs" className={navClass}>
-            <FileText className="h-4 w-4" /> Logs
-          </NavLink>
+        <nav className="flex-1 space-y-1 px-3 py-2 overflow-y-auto">
+          {nav.map((item) =>
+            item === "divider" ? (
+              <div key="divider" className="mx-2 my-2 border-t border-rule opacity-70" />
+            ) : (
+              <NavLink key={item.to} to={item.to} end={item.to === "/"} className={navClass}>
+                <item.icon className="h-4 w-4" />
+                <span>{item.label}</span>
+                {typeof item.badge === "number" && item.badge > 0 && (
+                  <span className="ml-auto rounded-full bg-neutral-bg px-1.5 py-px font-mono text-[10px] font-semibold text-neutral-ink tabular-nums">
+                    {item.badge}
+                  </span>
+                )}
+                {item.lamp && <StatusLamp tone={healthTone(health.data?.overall)} className="ml-auto" />}
+              </NavLink>
+            ),
+          )}
         </nav>
         <div className="border-t border-rule p-3">
           <button

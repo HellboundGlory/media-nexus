@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Filter, Trash2, Pencil } from "lucide-react";
+import { Trash2, Pencil } from "lucide-react";
 import { api } from "../api/client";
 import { Badge, ErrorState } from "../lib/ui";
 import type { ReleaseProfile } from "../api/types";
@@ -64,20 +64,6 @@ export default function ReleaseProfiles() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="flex items-center gap-2 font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">
-          <Filter className="h-5 w-5" /> Release Profiles
-        </h2>
-        <p className="text-sm text-ink-dim">
-          Tag-scoped hard restrictions for the decision engine. A release must contain at least one
-          <code className="mx-1 rounded bg-neutral-bg px-1 text-ink">required</code> term and no
-          <code className="mx-1 rounded bg-neutral-bg px-1 text-ink">ignored</code> term for each
-          applicable profile. Terms are plain substrings or
-          <code className="mx-1 rounded bg-neutral-bg px-1 text-ink">/regex/</code>. Profiles are reject-only;
-          scored matching lives in Custom Formats.
-        </p>
-      </div>
-
       <div className="flex items-end gap-3 rounded-xl border border-rule bg-surface p-4">
         <label className="block grow">
           <span className="mb-1 block text-xs text-ink-dim">Required terms (one per line)</span>

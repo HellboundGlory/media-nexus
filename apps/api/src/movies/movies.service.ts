@@ -6,7 +6,7 @@ import { newEntityId } from "@medianexus/shared";
 import { ApiError } from "@medianexus/shared";
 import type { RuntimeSettings } from "@medianexus/shared";
 import { LocalStorageProvider } from "@medianexus/integrations";
-import { combine, ensureAvailability, getMediaCredits, getMediaFiles, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition } from "../media/library.helpers";
+import { combine, ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition } from "../media/library.helpers";
 import { movieFileName, resolvedMovieFolderName } from "../media/naming.helpers";
 import { runWrite, type MediaFileRow } from "../media/media-file.types";
 import { RecycleBinService } from "../media/recycle-bin.service";
@@ -16,7 +16,7 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import { parseEpisodeRelease, titleMatches } from "@medianexus/domain";
 import type { CreateMovie, MinimumAvailability, Quality, Release, UpdateMovieBody } from "@medianexus/domain";
-import { hasMinimumAvailability } from "@medianexus/domain";
+import { hasMinimumAvailability, meetsCutoff, compareQuality } from "@medianexus/domain";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 import { AutoTagsService } from "../auto-tags/auto-tags.service";
@@ -293,6 +293,38 @@ export class MoviesService {
         id: m.id, mediaType: "movie" as const, title: m.title, releaseDate: m.releaseDate,
         minimumAvailability: m.minimumAvailability as MinimumAvailability, monitored: m.monitored, hasFile: m.hasFile,
       }));
+  }
+
+  /** Cutoff Unmet (NAV-1 Phase 0): monitored movies that already have a file whose quality is
+   *  below their quality profile's cutoff (or outside its allowed qualities). Uses the shared
+   *  `meetsCutoff()` — no reimplementation. `hasFile` is a stored flag, so the real per-file
+   *  quality comes from the media_file rows; the best-quality file is the one judged (upgrades
+   *  key on the best held file elsewhere too). Titles with no assigned profile have no cutoff
+   *  and are never "unmet". Overfetches past `limit` to absorb per-row rejects, then slices. */
+  async cutoffUnmet(limit = 50): Promise<{
+    id: string; mediaType: "movie"; title: string; releaseDate: string | null;
+    monitored: boolean; hasFile: boolean; quality: Quality | null; cutoffQualityId: number | null;
+  }[]> {
+    const rows = await this.db.select().from(schema.movie)
+      .where(and(eq(schema.movie.monitored, true), eq(schema.movie.hasFile, true)))
+      .orderBy(asc(schema.movie.releaseDate))
+      .limit(Math.max(limit * 4, 200));
+    const out: { id: string; mediaType: "movie"; title: string; releaseDate: string | null; monitored: boolean; hasFile: boolean; quality: Quality | null; cutoffQualityId: number | null }[] = [];
+    for (const m of rows) {
+      const profile = await getQualityProfile(this.db, m.qualityProfileId);
+      if (!profile) continue;
+      const files = await this.db.select().from(schema.mediaFile)
+        .where(and(eq(schema.mediaFile.mediaType, "movie"), eq(schema.mediaFile.mediaId, m.id)));
+      const withQuality = files.filter((f) => f.quality != null) as { quality: Quality; relativePath: string }[];
+      if (withQuality.length === 0) continue;
+      const best = withQuality.reduce((a, b) => (compareQuality(b.quality, a.quality) > 0 ? b : a));
+      if (meetsCutoff(profile, best.quality)) continue;
+      out.push({
+        id: m.id, mediaType: "movie", title: m.title, releaseDate: m.releaseDate,
+        monitored: m.monitored, hasFile: true, quality: best.quality, cutoffQualityId: profile.cutoffQualityId,
+      });
+    }
+    return out.slice(0, limit);
   }
 }
 

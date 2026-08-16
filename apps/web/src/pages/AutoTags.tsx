@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Tags, Trash2, Pencil, Plus } from "lucide-react";
+import { Trash2, Pencil, Plus } from "lucide-react";
 import { api } from "../api/client";
 import { Badge, ErrorState } from "../lib/ui";
 import type { AutoTag, AutoTagSpec } from "../api/types";
@@ -76,17 +76,6 @@ export default function AutoTags() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="flex items-center gap-2 font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">
-          <Tags className="h-5 w-5" /> Auto Tags
-        </h2>
-        <p className="text-sm text-ink-dim">
-          Rules that automatically add (or, when enabled, remove) tags on movies/series that match their
-          conditions. A rule matches when <em>every</em> condition type-group passes; specify tags these
-          rules manage as comma-separated tag ids. Applies on create, edit, and metadata refresh.
-        </p>
-      </div>
-
       <div className="rounded-xl border border-rule bg-surface p-4">
         <div className="flex items-end gap-3">
           <label className="block grow">
