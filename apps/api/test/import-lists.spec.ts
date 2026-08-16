@@ -129,8 +129,8 @@ describe("C2 list sync", () => {
   });
 });
 
-describe("C2 auto-exclusion on library removal", () => {
-  it("movie.remove() records an exclusion so the title isn't re-added", async () => {
+describe("C2 auto-exclusion on library removal (FILEMGMT-1: now opt-in)", () => {
+  it("movie.remove() records an exclusion ONLY when addImportExclusion is passed", async () => {
     const db = freshDb();
     const nowIso = now();
     db.insert(schema.movie).values({
@@ -139,8 +139,19 @@ describe("C2 auto-exclusion on library removal", () => {
       genres: [], images: [], tags: [], hasFile: false, addedAt: nowIso, updatedAt: nowIso,
     }).run();
     const svc = new MoviesService(db, { publish: () => {} } as never, new AutoTagsService(db));
+
+    // Bare delete (default) no longer records an exclusion.
     await svc.remove("m1");
-    const exc = (await db.select().from(schema.importExclusion).where(eq(schema.importExclusion.externalId, "777")).all())[0] as any;
+    expect(await db.select().from(schema.importExclusion).all()).toHaveLength(0);
+
+    // Explicit opt-in does.
+    db.insert(schema.movie).values({
+      id: "m2", tmdbId: 778, imdbId: null, title: "Removed Movie 2", originalTitle: null, overview: "", status: "released",
+      releaseDate: null, monitored: true, qualityProfileId: null, rootFolderPath: "/m", minimumAvailability: "announced",
+      genres: [], images: [], tags: [], hasFile: false, addedAt: nowIso, updatedAt: nowIso,
+    }).run();
+    await svc.remove("m2", { addImportExclusion: true });
+    const exc = (await db.select().from(schema.importExclusion).where(eq(schema.importExclusion.externalId, "778")).all())[0] as any;
     expect(exc.mediaType).toBe("movie");
     expect(exc.reason).toContain("removed");
   });

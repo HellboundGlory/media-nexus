@@ -29,6 +29,13 @@
       "when": 1786828196183,
       "tag": "0003_thankful_bloodstrike",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1786845644504,
+      "tag": "0004_handy_major_mapleleaf",
+      "breakpoints": true
     }
   ]
 }

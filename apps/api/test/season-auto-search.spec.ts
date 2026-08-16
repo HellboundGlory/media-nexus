@@ -22,6 +22,7 @@ import { createDb, schema, type Db } from "@medianexus/database";
 import type { Release } from "@medianexus/domain";
 import { SeriesController } from "../src/series/series.controller";
 import { SeriesService } from "../src/series/series.service";
+import { LibraryScanService } from "../src/library-scan/library-scan.service";
 import { GlobalExceptionFilter } from "../src/common/errors.filter";
 import type { IndexersService } from "../src/indexers/indexers.service";
 import type { EventsService } from "../src/events/events.service";
@@ -115,7 +116,12 @@ describe("DETAILPAGE-FE2 — season-level auto-search over the real controller/s
     grabbed = built.grabbed;
     const moduleRef = await Test.createTestingModule({
       controllers: [SeriesController],
-      providers: [{ provide: SeriesService, useValue: built.service }],
+      providers: [
+        { provide: SeriesService, useValue: built.service },
+        // SeriesController gained a LibraryScanService dependency for the manage-files
+        // endpoints (FILEMGMT-2); this spec only drives auto-search, so a stub suffices.
+        { provide: LibraryScanService, useValue: {} as unknown as LibraryScanService },
+      ],
     }).compile();
     app = moduleRef.createNestApplication();
     app.useGlobalFilters(new GlobalExceptionFilter());

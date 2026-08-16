@@ -222,3 +222,174 @@ describe("LibraryScanService — closes the upstream-importer gap (gap report B3
     expect(existsSync(seasonDir)).toBe(true);
   });
 });
+
+describe("LibraryScanService — FILEMGMT-2 interactive Manage Files/Episodes (preview + apply)", () => {
+  it("movie: preview reports an untracked on-disk file; apply imports it only when selected", async () => {
+    const h = await harness();
+    await seedMovie(h.db, h.mediaRoot);
+    const folder = join(h.mediaRoot, movieFolderName("Scan Movie", "2021-05-01"));
+    const rel = `${movieFolderName("Scan Movie", "2021-05-01")}/Scan Movie (2021) 1080p BluRay.mkv`;
+    stageFile(join(folder, "Scan Movie (2021) 1080p BluRay.mkv"));
+
+    const preview = await h.scan.previewMovie("m1");
+    expect(preview.stale).toEqual([]);
+    expect(preview.untracked).toHaveLength(1);
+    expect(preview.untracked[0].relativePath).toBe(rel);
+
+    // Unselected -> nothing imported.
+    const skip = await h.scan.applyMovie("m1", { removeStale: [], importUntracked: [] });
+    expect(skip.filesAdded).toBe(0);
+    expect(await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaId, "m1"))).toHaveLength(0);
+
+    // Selected -> imported and the movie flips to hasFile.
+    const apply = await h.scan.applyMovie("m1", { removeStale: [], importUntracked: [rel] });
+    expect(apply.filesAdded).toBe(1);
+    const movie = (await h.db.select().from(schema.movie).where(eq(schema.movie.id, "m1")))[0];
+    expect(movie.hasFile).toBe(true);
+    expect(await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaId, "m1"))).toHaveLength(1);
+  });
+
+  it("movie: preview reports a stale tracked row (disk gone); apply removes it only when selected", async () => {
+    const h = await harness();
+    await seedMovie(h.db, h.mediaRoot);
+    const staleRel = `${movieFolderName("Scan Movie", "2021-05-01")}/Gone.mkv`;
+    await h.db.insert(schema.mediaFile).values({
+      id: "mfm_stale", mediaType: "movie", mediaId: "m1", episodeIds: [], relativePath: staleRel,
+      size: 1, quality: { source: "bluray", resolution: "1080p", edition: "" }, dateAdded: new Date().toISOString(),
+    });
+    // The file is NOT created on disk -> stale.
+
+    const preview = await h.scan.previewMovie("m1");
+    expect(preview.untracked).toEqual([]);
+    expect(preview.stale).toEqual([{ mediaFileId: "mfm_stale", relativePath: staleRel }]);
+
+    // Unselected -> left alone.
+    await h.scan.applyMovie("m1", { removeStale: [], importUntracked: [] });
+    expect(await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.id, "mfm_stale"))).toHaveLength(1);
+
+    // Selected -> removed, hasFile flips to false.
+    await h.scan.applyMovie("m1", { removeStale: ["mfm_stale"], importUntracked: [] });
+    expect(await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.id, "mfm_stale"))).toHaveLength(0);
+    const movie = (await h.db.select().from(schema.movie).where(eq(schema.movie.id, "m1")))[0];
+    expect(movie.hasFile).toBe(false);
+  });
+
+  it("series: preview reports an untracked episode file w/ episodeIds; apply imports only the selected one and sets hasFile", async () => {
+    const h = await harness();
+    await seedSeries(h.db, h.mediaRoot);
+    const seasonDir = join(h.mediaRoot, seriesFolderName("Scan Show"), "Season 1");
+    const rel = `${seriesFolderName("Scan Show")}/Season 1/Scan.Show.S01E01.1080p.WEB-DL.mkv`;
+    stageFile(join(seasonDir, "Scan.Show.S01E01.1080p.WEB-DL.mkv"));
+
+    const preview = await h.scan.previewSeries("s1");
+    expect(preview.stale).toEqual([]);
+    expect(preview.untracked).toHaveLength(1);
+    expect(preview.untracked[0].relativePath).toBe(rel);
+    expect(preview.untracked[0].episodeIds).toEqual(["s1e1"]);
+
+    // Unselected -> no import, episode still missing.
+    await h.scan.applySeries("s1", { removeStale: [], importUntracked: [] });
+    let ep = (await h.db.select().from(schema.episode).where(eq(schema.episode.id, "s1e1")))[0];
+    expect(ep.hasFile).toBe(false);
+
+    // Selected -> imported, episode hasFile flips true.
+    const apply = await h.scan.applySeries("s1", { removeStale: [], importUntracked: [rel] });
+    expect(apply.filesAdded).toBe(1);
+    ep = (await h.db.select().from(schema.episode).where(eq(schema.episode.id, "s1e1")))[0];
+    expect(ep.hasFile).toBe(true);
+    expect(ep.mediaFileId).not.toBeNull();
+    const rows = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaId, "s1"));
+    expect(rows).toHaveLength(1);
+    expect(ep.mediaFileId).toBe(rows[0].id);
+  });
+
+  it("series: preview reports a stale episode row (disk gone); apply removes it only when selected", async () => {
+    const h = await harness();
+    await seedSeries(h.db, h.mediaRoot);
+    const staleRel = `${seriesFolderName("Scan Show")}/Season 1/Scan.Show.S01E01.1080p.WEB-DL.mkv`;
+    await h.db.insert(schema.mediaFile).values({
+      id: "mfs_stale", mediaType: "series", mediaId: "s1", episodeIds: ["s1e1"], relativePath: staleRel,
+      size: 1, quality: { source: "web", resolution: "1080p", edition: "" }, dateAdded: new Date().toISOString(),
+    });
+    // Keep hasFile true but no disk file -> stale.
+    await h.db.update(schema.episode).set({ hasFile: true, mediaFileId: "mfs_stale" }).where(eq(schema.episode.id, "s1e1")).run();
+
+    const preview = await h.scan.previewSeries("s1");
+    expect(preview.untracked).toEqual([]);
+    expect(preview.stale).toEqual([{ mediaFileId: "mfs_stale", relativePath: staleRel }]);
+
+    // Unselected -> left alone.
+    await h.scan.applySeries("s1", { removeStale: [], importUntracked: [] });
+    expect(await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.id, "mfs_stale"))).toHaveLength(1);
+
+    // Selected -> removed, episode becomes missing and its media_file_id cleared.
+    await h.scan.applySeries("s1", { removeStale: ["mfs_stale"], importUntracked: [] });
+    expect(await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.id, "mfs_stale"))).toHaveLength(0);
+    const ep = (await h.db.select().from(schema.episode).where(eq(schema.episode.id, "s1e1")))[0];
+    expect(ep.hasFile).toBe(false);
+    expect(ep.mediaFileId).toBeNull();
+  });
+
+  it("series: season-scoped preview returns only that season's files", async () => {
+    const h = await harness();
+    await seedSeries(h.db, h.mediaRoot);
+    // Add a second season + episode.
+    await h.db.insert(schema.season).values([{ id: "sea2", seriesId: "s1", seasonNumber: 2, monitored: true }]);
+    await h.db.insert(schema.episode).values([{
+      id: "s1e20", seriesId: "s1", seasonId: "sea2", episodeNumber: 1, absoluteNumber: null, title: "", overview: "",
+      airDateUtc: null, monitored: true, hasFile: false, sceneSeasonNumber: null, sceneEpisodeNumber: null,
+    }]);
+    const s1dir = join(h.mediaRoot, seriesFolderName("Scan Show"), "Season 1");
+    const s2dir = join(h.mediaRoot, seriesFolderName("Scan Show"), "Season 2");
+    stageFile(join(s1dir, "Scan.Show.S01E01.1080p.WEB-DL.mkv"));
+    stageFile(join(s2dir, "Scan.Show.S02E01.1080p.WEB-DL.mkv"));
+
+    const all = await h.scan.previewSeries("s1");
+    expect(all.untracked).toHaveLength(2);
+    const s1 = await h.scan.previewSeries("s1", 1);
+    expect(s1.untracked).toHaveLength(1);
+    expect(s1.untracked[0].relativePath).toContain("Season 1");
+    const s2 = await h.scan.previewSeries("s1", 2);
+    expect(s2.untracked).toHaveLength(1);
+    expect(s2.untracked[0].relativePath).toContain("Season 2");
+  });
+
+  it("series: apply reports supersedes for an upgrade and removes the replaced file only when the upgrade is selected", async () => {
+    const h = await harness();
+    await seedSeries(h.db, h.mediaRoot);
+    const seasonDir = join(h.mediaRoot, seriesFolderName("Scan Show"), "Season 1");
+    const oldRel = `${seriesFolderName("Scan Show")}/Season 1/Scan.Show.S01E01.1080p.WEB-DL.mkv`;
+    const newRel = `${seriesFolderName("Scan Show")}/Season 1/Scan.Show.S01E01.1080p.BluRay.mkv`;
+    // Existing tracked (surviving) 1080p WEB-DL file for ep1.
+    stageFile(join(seasonDir, "Scan.Show.S01E01.1080p.WEB-DL.mkv"));
+    await h.db.insert(schema.mediaFile).values({
+      id: "mfs_old", mediaType: "series", mediaId: "s1", episodeIds: ["s1e1"], relativePath: oldRel,
+      size: 1, quality: { source: "web", resolution: "1080p", edition: "" }, dateAdded: new Date().toISOString(),
+    });
+    await h.db.update(schema.episode).set({ hasFile: true, mediaFileId: "mfs_old" }).where(eq(schema.episode.id, "s1e1")).run();
+    // Higher-quality untracked file on disk for the same episode.
+    stageFile(join(seasonDir, "Scan.Show.S01E01.1080p.BluRay.mkv"));
+
+    const preview = await h.scan.previewSeries("s1");
+    expect(preview.stale).toEqual([]);
+    const upgrade = preview.untracked.find((u) => u.relativePath === newRel)!;
+    expect(upgrade.episodeIds).toEqual(["s1e1"]);
+    expect(upgrade.supersedes).toEqual([{ mediaFileId: "mfs_old", relativePath: oldRel }]);
+
+    // Not selected -> the old file stays.
+    await h.scan.applySeries("s1", { removeStale: [], importUntracked: [] });
+    const rowsAfterSkip = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaId, "s1")).orderBy(schema.mediaFile.id);
+    expect(rowsAfterSkip.map((r) => r.id)).toEqual(["mfs_old"]);
+
+    // Selected -> the upgrade is imported and the file it replaces is removed in the same write.
+    const apply = await h.scan.applySeries("s1", { removeStale: [], importUntracked: [newRel] });
+    expect(apply.filesAdded).toBe(1);
+    const rows = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaId, "s1"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).not.toBe("mfs_old");
+    expect(rows[0].relativePath).toBe(newRel);
+    const ep = (await h.db.select().from(schema.episode).where(eq(schema.episode.id, "s1e1")))[0];
+    expect(ep.hasFile).toBe(true);
+    expect(ep.mediaFileId).toBe(rows[0].id);
+  });
+});

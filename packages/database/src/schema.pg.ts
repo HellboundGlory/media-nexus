@@ -207,6 +207,7 @@ export const mediaFile = pgTable("media_file", {
   quality: json<{ source: string; resolution: string; edition: string }>("quality"),
   mediaInfo: json<Record<string, unknown>>("media_info"),
   languages: json<string[]>("languages"),
+  releaseGroup: text("release_group"),
   dateAdded: iso("date_added"),
 }, (t) => [index("media_file_media_idx").on(t.mediaType, t.mediaId)]);
 

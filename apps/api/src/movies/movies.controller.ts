@@ -8,6 +8,7 @@ import {
 } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { MoviesService, type ListQuery } from "./movies.service";
+import { LibraryScanService } from "../library-scan/library-scan.service";
 
 const listQuerySchema = z.object({
   search: z.string().optional(),
@@ -16,10 +17,20 @@ const listQuerySchema = z.object({
   pageSize: z.coerce.number().int().positive().max(100).optional(),
 });
 
+const renameBodySchema = z.object({ mediaFileIds: z.array(z.string()).default([]) });
+
+const manageApplyBodySchema = z.object({
+  removeStale: z.array(z.string()).default([]),
+  importUntracked: z.array(z.string()).default([]),
+});
+
 @ApiTags("movies")
 @Controller("api/v1/movies")
 export class MoviesController {
-  constructor(private readonly movies: MoviesService) {}
+  constructor(
+    private readonly movies: MoviesService,
+    private readonly scan: LibraryScanService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: "List movies (paginated/filterable)" })
@@ -51,10 +62,28 @@ export class MoviesController {
     return this.movies.renamePreview(id);
   }
 
+  @Post(":id/rename")
+  @ApiOperation({ summary: "Execute a rename: move the requested files on disk and update their paths" })
+  rename(@Param("id") id: string, @Body(new ZodValidationPipe(renameBodySchema)) body: { mediaFileIds: string[] }) {
+    return this.movies.rename(id, body.mediaFileIds);
+  }
+
   @Get(":id/files")
   @ApiOperation({ summary: "Media files of a movie" })
   files(@Param("id") id: string) {
     return this.movies.files(id);
+  }
+
+  @Get(":id/manage-files")
+  @ApiOperation({ summary: "Scan-preview a movie's folder: untracked files on disk vs stale rows the DB tracks but disk is missing" })
+  managePreview(@Param("id") id: string) {
+    return this.scan.previewMovie(id);
+  }
+
+  @Post(":id/manage-files/apply")
+  @ApiOperation({ summary: "Apply the user's Manage Files selection: import the checked untracked files and remove the checked stale rows (only what's ticked)" })
+  manageApply(@Param("id") id: string, @Body(new ZodValidationPipe(manageApplyBodySchema)) body: { removeStale: string[]; importUntracked: string[] }) {
+    return this.scan.applyMovie(id, body);
   }
 
   @Post()
@@ -70,8 +99,13 @@ export class MoviesController {
   }
 
   @Delete(":id")
-  @ApiOperation({ summary: "Remove a movie" })
-  remove(@Param("id") id: string) {
-    return this.movies.remove(id);
+  @ApiOperation({ summary: "Remove a movie (opt-in: deleteFiles disposes files+folder, addImportExclusion adds a list-exclusion row)" })
+  remove(@Param("id") id: string, @Body(new ZodValidationPipe(
+    z.object({
+      deleteFiles: z.boolean().optional(),
+      addImportExclusion: z.boolean().optional(),
+    }).default({}),
+  )) body: { deleteFiles?: boolean; addImportExclusion?: boolean }) {
+    return this.movies.remove(id, body);
   }
 }

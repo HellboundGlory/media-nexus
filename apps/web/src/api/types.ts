@@ -266,6 +266,7 @@ export interface MediaFileRow {
     subtitles: { language: string | null }[];
   } | null;
   languages: string[];
+  releaseGroup: string | null;
   dateAdded: string | null;
 }
 
@@ -275,6 +276,35 @@ export interface RenamePreviewItem {
   currentPath: string;
   newPath: string;
   changed: boolean;
+}
+
+/** The wrapped rename-preview response (FILEMGMT-1) — the title's resolved folder path and its
+ *  naming template, so the panel can render its info lines. */
+export interface RenamePreviewEnvelope {
+  rootPath: string;
+  namingPattern: string;
+  items: RenamePreviewItem[];
+}
+
+/** One untracked file in a Manage Files/Episodes scan preview (FILEMGMT-2). For series,
+ *  `episodeIds` is set when the file matched (its import checkbox is enabled), `rejections` when
+ *  it didn't match/quality-gate (shown instead), and `supersedes` lists the tracked files it
+ *  would replace when imported (an explicit, visible consequence before the user opts in). */
+export interface ScanUntrackedFile {
+  path: string;
+  relativePath: string;
+  size: number;
+  quality: { source: string; resolution: string; edition: string };
+  episodeIds?: string[];
+  rejections?: { reason: string; message: string }[];
+  supersedes?: { mediaFileId: string; relativePath: string }[];
+}
+
+/** GET /movies|series/:id/manage-files — what differs between disk and the DB, the input to the
+ *  Manage Files/Episodes modal. */
+export interface ScanPreview {
+  stale: { mediaFileId: string; relativePath: string }[];
+  untracked: ScanUntrackedFile[];
 }
 
 export interface RemotePathMapping {

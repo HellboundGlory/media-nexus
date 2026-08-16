@@ -99,10 +99,14 @@ describe("rename-preview (DETAILPAGE-BE4)", () => {
     ]);
 
     const moviePrev = await movies.renamePreview("m1");
-    expect(moviePrev).toEqual([{ mediaFileId: "mf_m1", currentPath: movieFilePath("Fight Club", "1999"), newPath: movieFilePath("Fight Club", "1999"), changed: false }]);
+    expect(moviePrev.rootPath).toBe("Fight Club (1999)");
+    expect(moviePrev.namingPattern).toBe("{Movie Title} ({Release Year})");
+    expect(moviePrev.items).toEqual([{ mediaFileId: "mf_m1", currentPath: movieFilePath("Fight Club", "1999"), newPath: movieFilePath("Fight Club", "1999"), changed: false }]);
 
     const seriesPrev = await series.renamePreview("s1");
-    expect(seriesPrev).toEqual([{ mediaFileId: "mf_s1", currentPath: episodeFilePath("Game of Thrones", 1, 1, "Winter Is Coming"), newPath: episodeFilePath("Game of Thrones", 1, 1, "Winter Is Coming"), changed: false }]);
+    expect(seriesPrev.rootPath).toBe("Game of Thrones");
+    expect(seriesPrev.namingPattern).toBe("{Series Title} - S{season:00}E{episode:00} - {Episode Title}");
+    expect(seriesPrev.items).toEqual([{ mediaFileId: "mf_s1", currentPath: episodeFilePath("Game of Thrones", 1, 1, "Winter Is Coming"), newPath: episodeFilePath("Game of Thrones", 1, 1, "Winter Is Coming"), changed: false }]);
   });
 
   it("movie + series: changed to true and newPath reflects a new template after a config change", async () => {
@@ -123,11 +127,13 @@ describe("rename-preview (DETAILPAGE-BE4)", () => {
     } as never);
 
     const moviePrev = await movies.renamePreview("m1");
-    expect(moviePrev).toEqual([{ mediaFileId: "mf_m1", currentPath: movieFilePath("Fight Club", "1999"), newPath: "Fight Club (1999)/Fight Club.mkv", changed: true }]);
+    expect(moviePrev.items).toEqual([{ mediaFileId: "mf_m1", currentPath: movieFilePath("Fight Club", "1999"), newPath: "Fight Club (1999)/Fight Club.mkv", changed: true }]);
+    expect(moviePrev.namingPattern).toBe("{Movie Title}");
 
     // Series: folder (fixed convention) unchanged, filename now S01E01 without the title.
     const seriesPrev = await series.renamePreview("s1");
-    expect(seriesPrev).toEqual([{ mediaFileId: "mf_s1", currentPath: episodeFilePath("Game of Thrones", 1, 1, "Winter Is Coming"), newPath: "Game of Thrones/Season 1/Game of Thrones S01E01.mkv", changed: true }]);
+    expect(seriesPrev.items).toEqual([{ mediaFileId: "mf_s1", currentPath: episodeFilePath("Game of Thrones", 1, 1, "Winter Is Coming"), newPath: "Game of Thrones/Season 1/Game of Thrones S01E01.mkv", changed: true }]);
+    expect(seriesPrev.namingPattern).toBe("{Series Title} S{season:00}E{episode:00}");
   });
 
   it("series: a file with no episodeIds (unmatched pack member) is always reported unchanged", async () => {
@@ -140,7 +146,7 @@ describe("rename-preview (DETAILPAGE-BE4)", () => {
     // Regardless of the template, no episode identity means no template name to build from.
     await config.upsert({ "media.naming": { episodes: "completely different template" } } as never);
     const prev = await series.renamePreview("s1");
-    expect(prev).toEqual([{ mediaFileId: "mf_unmatched", currentPath: "Game of Thrones/Season 1/unmatched-0.mkv", newPath: "Game of Thrones/Season 1/unmatched-0.mkv", changed: false }]);
+    expect(prev.items).toEqual([{ mediaFileId: "mf_unmatched", currentPath: "Game of Thrones/Season 1/unmatched-0.mkv", newPath: "Game of Thrones/Season 1/unmatched-0.mkv", changed: false }]);
   });
 
   it("series: multi-episode file renders the Sonarr range style (S01E01-02)", async () => {
@@ -152,11 +158,11 @@ describe("rename-preview (DETAILPAGE-BE4)", () => {
     ]);
 
     const prev = await series.renamePreview("s1");
-    expect(prev).toEqual([{ mediaFileId: "mf_pack", currentPath: "Game of Thrones/Season 1/Game of Thrones - S01E01-02 - Winter Is Coming + The Kingsroad.mkv", newPath: "Game of Thrones/Season 1/Game of Thrones - S01E01-02 - Winter Is Coming + The Kingsroad.mkv", changed: false }]);
+    expect(prev.items).toEqual([{ mediaFileId: "mf_pack", currentPath: "Game of Thrones/Season 1/Game of Thrones - S01E01-02 - Winter Is Coming + The Kingsroad.mkv", newPath: "Game of Thrones/Season 1/Game of Thrones - S01E01-02 - Winter Is Coming + The Kingsroad.mkv", changed: false }]);
 
     // Flip the template to prove the range rendering tracks it (episode tokens only -> S01E01-02).
     await config.upsert({ "media.naming": { episodes: "{Series Title} S{season:00}E{episode:00}" } } as never);
     const changed = await series.renamePreview("s1");
-    expect(changed).toEqual([{ mediaFileId: "mf_pack", currentPath: "Game of Thrones/Season 1/Game of Thrones - S01E01-02 - Winter Is Coming + The Kingsroad.mkv", newPath: "Game of Thrones/Season 1/Game of Thrones S01E01-02.mkv", changed: true }]);
+    expect(changed.items).toEqual([{ mediaFileId: "mf_pack", currentPath: "Game of Thrones/Season 1/Game of Thrones - S01E01-02 - Winter Is Coming + The Kingsroad.mkv", newPath: "Game of Thrones/Season 1/Game of Thrones S01E01-02.mkv", changed: true }]);
   });
 });

@@ -42,8 +42,8 @@ export const api = {
     const res = await fetch(`${API_BASE}${path}`, { method: "PUT", headers, body: body === undefined ? undefined : JSON.stringify(body) });
     return handle<T>(res);
   },
-  async del<T>(path: string): Promise<T> {
-    const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers });
+  async del<T>(path: string, body?: unknown): Promise<T> {
+    const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers, body: body === undefined ? undefined : JSON.stringify(body) });
     return handle<T>(res);
   },
 };

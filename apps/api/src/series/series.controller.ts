@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createSeriesSchema, updateSeriesSchema, type CreateSeries, type UpdateSeriesBody } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { SeriesService } from "./series.service";
+import { LibraryScanService } from "../library-scan/library-scan.service";
 
 const episodesQuery = z.object({ season: z.coerce.number().int().min(0).optional() });
 const createEpisodesBody = z.object({
@@ -21,10 +22,25 @@ const listQuerySchema = z.object({
   pageSize: z.coerce.number().int().positive().max(100).optional(),
 });
 
+const deleteSeriesSchema = z.object({
+  deleteFiles: z.boolean().optional(),
+  addImportExclusion: z.boolean().optional(),
+}).default({});
+
+const renameBodySchema = z.object({ mediaFileIds: z.array(z.string()).default([]) });
+
+const manageApplyBodySchema = z.object({
+  removeStale: z.array(z.string()).default([]),
+  importUntracked: z.array(z.string()).default([]),
+});
+
 @ApiTags("series")
 @Controller("api/v1/series")
 export class SeriesController {
-  constructor(private readonly series: SeriesService) {}
+  constructor(
+    private readonly series: SeriesService,
+    private readonly scan: LibraryScanService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: "List series (paginated/filterable)" })
@@ -63,9 +79,9 @@ export class SeriesController {
   }
 
   @Delete(":id")
-  @ApiOperation({ summary: "Remove a series" })
-  remove(@Param("id") id: string) {
-    return this.series.remove(id);
+  @ApiOperation({ summary: "Remove a series (opt-in: deleteFiles disposes files+folder, addImportExclusion adds a list-exclusion row)" })
+  remove(@Param("id") id: string, @Body(new ZodValidationPipe(deleteSeriesSchema)) body: { deleteFiles?: boolean; addImportExclusion?: boolean }) {
+    return this.series.remove(id, body);
   }
 
   @Get(":id/episodes")
@@ -81,15 +97,33 @@ export class SeriesController {
   }
 
   @Get(":id/rename-preview")
-  @ApiOperation({ summary: "Read-only preview of a rename under the current naming template" })
-  renamePreview(@Param("id") id: string) {
-    return this.series.renamePreview(id);
+  @ApiOperation({ summary: "Read-only preview of a rename under the current naming template (optional ?season=N scopes to one season)" })
+  renamePreview(@Param("id") id: string, @Query(new ZodValidationPipe(episodesQuery)) q: { season?: number }) {
+    return this.series.renamePreview(id, q.season);
+  }
+
+  @Post(":id/rename")
+  @ApiOperation({ summary: "Execute a rename: move the requested files on disk and update their paths (optional ?season=N scopes the candidate set to one season)" })
+  rename(@Param("id") id: string, @Query(new ZodValidationPipe(episodesQuery)) q: { season?: number }, @Body(new ZodValidationPipe(renameBodySchema)) body: { mediaFileIds: string[] }) {
+    return this.series.rename(id, body.mediaFileIds, q.season);
   }
 
   @Get(":id/files")
   @ApiOperation({ summary: "Media files of a series" })
   files(@Param("id") id: string) {
     return this.series.files(id);
+  }
+
+  @Get(":id/manage-files")
+  @ApiOperation({ summary: "Scan-preview a series' folder: untracked episodes on disk vs stale rows (optional ?season=N scopes to one season)" })
+  managePreview(@Param("id") id: string, @Query(new ZodValidationPipe(episodesQuery)) q: { season?: number }) {
+    return this.scan.previewSeries(id, q.season);
+  }
+
+  @Post(":id/manage-files/apply")
+  @ApiOperation({ summary: "Apply the user's Manage Episodes selection: import the checked untracked episodes and remove the checked stale rows (only what's ticked; optional ?season=N scopes to one season)" })
+  manageApply(@Param("id") id: string, @Query(new ZodValidationPipe(episodesQuery)) q: { season?: number }, @Body(new ZodValidationPipe(manageApplyBodySchema)) body: { removeStale: string[]; importUntracked: string[] }) {
+    return this.scan.applySeries(id, body, q.season);
   }
 
   @Post(":id/episodes")

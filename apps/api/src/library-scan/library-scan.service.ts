@@ -2,7 +2,7 @@
 import { Inject, Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { and, eq } from "drizzle-orm";
 import { join, relative } from "node:path";
-import { existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
@@ -10,6 +10,7 @@ import type { Db } from "@medianexus/database";
 import {
   movieTarget, episodeTarget, parseQualityFromTitle, parseEpisodeRelease, compareQuality,
   decideImportFile, type MediaType, type Quality, type KnownEpisode, type SeriesType,
+  type ImportRejection,
 } from "@medianexus/domain";
 import { LocalStorageProvider, findAllVideos } from "@medianexus/integrations";
 import { MediaRepository } from "../media/media.repository";
@@ -26,6 +27,62 @@ export interface ScanResult {
 
 const EMPTY_RESULT: ScanResult = { filesFound: 0, filesAdded: 0, filesRemoved: 0 };
 
+/** A video file found on disk that no DB row tracks. For series, `episodeIds` is set when the
+ *  file matched episodes (approved to import), `rejections` when it didn't (shown instead of an
+ *  import checkbox), and `supersedes` lists the existing tracked files it would replace (an
+ *  upgrade) — all derived by the server, never taken from a client. Movies have no matching
+ *  step, so only `quality` is set. */
+export interface ScanUntrackedFile {
+  path: string;
+  relativePath: string;
+  size: number;
+  quality: Quality;
+  episodeIds?: string[];
+  rejections?: ImportRejection[];
+  supersedes?: { mediaFileId: string; relativePath: string }[];
+}
+
+/** The pure "what differs between disk and DB" computation powering both the silent scheduled
+ *  scan and the interactive Manage Files/Episodes screen (FILEMGMT-2). */
+export interface ScanPreview {
+  stale: { mediaFileId: string; relativePath: string }[];
+  untracked: ScanUntrackedFile[];
+}
+
+const EMPTY_PREVIEW: ScanPreview = { stale: [], untracked: [] };
+
+/** An existing tracked row, as `existingFiles` returns it — the pieces the compute needs. */
+interface ExistingFile {
+  id: string;
+  relativePath: string;
+  episodeIds: string[];
+  quality: Quality;
+}
+
+/** One file to insert during a scan/apply. `mediaFileId` is pre-assigned at plan-build time so
+ *  the same id feeds the insert, the episode `media_file_id` FK wiring and the `supersedes`
+ *  removal list. */
+interface PlannedImport {
+  mediaFileId: string;
+  relativePath: string;
+  size: number;
+  quality: Quality;
+  episodeIds: string[];
+}
+
+/** Per-season write plan. `episodeUpdates` mirrors `seasonEpisodes` order; `mediaFileId` is
+ *  omitted (undefined) when the episode's file must be left to the FK (auto path) and set when
+ *  it must be (re)pointed explicitly (interactive path). */
+interface SeasonPlan {
+  removeIds: string[];
+  imports: PlannedImport[];
+  episodeUpdates: {
+    episodeId: string;
+    hasFile: boolean;
+    mediaFileId: string | undefined;
+  }[];
+}
+
 /**
  * Disk scan (roadmap P0.6, gap report B3): before this, the app only knew about files it
  * imported itself. Point it at an existing library — including one brought across by the
@@ -40,10 +97,13 @@ const EMPTY_RESULT: ScanResult = { filesFound: 0, filesAdded: 0, filesRemoved: 0
  * for entirely new, unadded titles nobody told the app about — that needs a real root-folder
  * entity (gap report B8, still open) and is out of scope here.
  *
- * Series scanning reuses `decideImportFile()` (P0.5) exactly as import does — a file
- * already sitting on disk is decided the same way a freshly-downloaded one is (episode
- * matching, upgrade/cutoff), just without a transfer step. An old row is only deleted once
- * every episode it covered has a newly-found replacement, the same rule P0.5 uses.
+ * FILEMGMT-2 (gap C7 follow-up): computation is split from application. The shared `preview*`
+ * methods compute a plain `ScanPreview` (what differs between disk and DB); the existing
+ * `scanMovie`/`scanSeries` are rebuilt on top of it — compute the preview, build the changing
+ * plan, apply it, observable behavior identical — and the interactive `apply*` methods reuse the
+ * same compute + the same single write implementation, applying only the user-selected subset.
+ * No scan/match logic is duplicated. Series scanning reuses `decideImportFile()` (P0.5) exactly
+ * as import does.
  */
 @Injectable()
 export class LibraryScanService implements OnModuleInit {
@@ -101,229 +161,426 @@ export class LibraryScanService implements OnModuleInit {
     return { movies: movies.length, series: seriesRows.length, filesAdded, filesRemoved };
   }
 
+  // ------------------------------------------------------------------
+  // AUTOMATIC SCAN — behavior identical to pre-refactor; now expressed as
+  // `compute preview -> build the full plan -> the single shared write`.
+  // ------------------------------------------------------------------
+
   async scanMovie(movieId: string): Promise<ScanResult> {
-    const rows = await this.db.select().from(schema.movie).where(eq(schema.movie.id, movieId)).limit(1);
-    const movie = rows[0];
-    if (!movie || !movie.rootFolderPath) return EMPTY_RESULT;
+    const movie = await this.getMovie(movieId);
+    if (!movie?.rootFolderPath) return EMPTY_RESULT;
+    const { survivingCount, stale, untracked, filesFound } = await this.computeMovie(movie);
 
-    const target = movieTarget(movie.id);
-    const existing = await this.media.existingFiles(target);
-    const surviving: typeof existing = [];
-    const stale: typeof existing = [];
-    for (const f of existing) {
-      const abs = join(movie.rootFolderPath, f.relativePath);
-      (existsSync(abs) ? surviving : stale).push(f);
-    }
-
-    const folder = join(movie.rootFolderPath, movieFolderName(movie.title, movie.releaseDate));
-    const files = await findAllVideos(this.storage, folder);
-    const trackedPaths = new Set(surviving.map((f) => join(movie.rootFolderPath, f.relativePath)));
-    const untracked = files.filter((f) => !trackedPaths.has(f.path));
-
+    const filesRemoved = stale.length;
     // Scan reconciles; it doesn't proactively reorganize. If a valid tracked file already
     // exists, an untracked sibling (a leftover extra, a sample) is left alone rather than
     // guessed at — grabbing an upgrade is a decision-engine (P0.3) job, not a scan job.
-    let newFile: { mediaFileId: string; relativePath: string; size: number; quality: Quality } | null = null;
-    if (surviving.length === 0 && untracked.length > 0) {
-      const best = untracked[0]; // findAllVideos returns largest first
-      newFile = {
-        mediaFileId: newEntityId("mf"),
-        relativePath: relative(movie.rootFolderPath, best.path),
-        size: statSyncSafe(best.path),
-        quality: parseQualityFromTitle(baseNameOf(best.path)),
-      };
-    }
-
-    const filesAdded = newFile ? 1 : 0;
-    const filesRemoved = stale.length;
-    const hasFile = surviving.length > 0 || filesAdded > 0;
+    const importSingle = survivingCount === 0 && untracked.length > 0;
+    const imports: PlannedImport[] = importSingle
+      ? [{ mediaFileId: newEntityId("mf"), relativePath: untracked[0].relativePath, size: untracked[0].size, quality: untracked[0].quality, episodeIds: [] }]
+      : [];
+    const filesAdded = imports.length;
+    const hasFile = survivingCount > 0 || filesAdded > 0;
     const now = new Date().toISOString();
 
-    // One transaction for the whole title: the stale-row deletes, the new-file insert, the
-    // hasFile flip and the availability update either all land or none do.
+    await this.writeMovie(movie, { removeIds: stale.map((s) => s.id), imports }, hasFile, now);
+    return { filesFound, filesAdded, filesRemoved };
+  }
+
+  async scanSeries(seriesId: string): Promise<ScanResult> {
+    const series = await this.getSeries(seriesId);
+    if (!series?.rootFolderPath) return EMPTY_RESULT;
+
+    const seasons = await this.db.select().from(schema.season).where(eq(schema.season.seriesId, seriesId));
+    const profile = await getQualityProfile(this.db, series.qualityProfileId);
+    let filesFound = 0, filesAdded = 0, filesRemoved = 0;
+
+    for (const season of seasons) {
+      const compute = await this.computeSeriesSeason(series, season.seasonNumber, profile);
+      if (compute.seasonEpisodes.length === 0) continue;
+      filesFound += compute.filesFound;
+      filesAdded += compute.approved.length;
+      filesRemoved += compute.stale.length; // superseded-old removals are not counted (as before)
+
+      const plan = this.buildSeriesAutoPlan(compute);
+      await this.writeSeriesSeason(series.id, compute.seasonEpisodes, plan);
+    }
+
+    if (filesAdded > 0 || filesRemoved > 0) {
+      await this.updateAvailability(seriesId, "series", new Date().toISOString());
+    }
+    return { filesFound, filesAdded, filesRemoved };
+  }
+
+  // ------------------------------------------------------------------
+  // INTERACTIVE Manage Files/Episodes (FILEMGMT-2): read-only preview,
+  // then apply ONLY the user-selected subset. Nothing is recomputed from
+  // client input — selection is a list of relative paths; everything else
+  // (quality, episodeIds, supersedes) is re-derived server-side.
+  // ------------------------------------------------------------------
+
+  async previewMovie(movieId: string): Promise<ScanPreview> {
+    const movie = await this.getMovie(movieId);
+    if (!movie?.rootFolderPath) return EMPTY_PREVIEW;
+    const { stale, untracked } = await this.computeMovie(movie);
+    return {
+      stale: stale.map((s) => ({ mediaFileId: s.id, relativePath: s.relativePath })),
+      untracked,
+    };
+  }
+
+  async previewSeries(seriesId: string, seasonNumber?: number): Promise<ScanPreview> {
+    const series = await this.getSeries(seriesId);
+    if (!series?.rootFolderPath) return EMPTY_PREVIEW;
+    const profile = await getQualityProfile(this.db, series.qualityProfileId);
+    const seasons = (await this.db.select().from(schema.season).where(eq(schema.season.seriesId, seriesId)))
+      .filter((s) => seasonNumber === undefined || s.seasonNumber === seasonNumber);
+
+    const stale: { mediaFileId: string; relativePath: string }[] = [];
+    const untracked: ScanUntrackedFile[] = [];
+    for (const season of seasons) {
+      const compute = await this.computeSeriesSeason(series, season.seasonNumber, profile);
+      if (compute.seasonEpisodes.length === 0) continue;
+      for (const s of compute.stale) stale.push({ mediaFileId: s.id, relativePath: s.relativePath });
+      untracked.push(...compute.untracked);
+    }
+    return { stale, untracked };
+  }
+
+  async applyMovie(movieId: string, opts: { removeStale: string[]; importUntracked: string[] }): Promise<ScanResult> {
+    const movie = await this.getMovie(movieId);
+    if (!movie?.rootFolderPath) return EMPTY_RESULT;
+    const { survivingCount, stale, untracked } = await this.computeMovie(movie);
+
+    const selectedStale = new Set(opts.removeStale);
+    const selectedImports = new Set(opts.importUntracked);
+    const removeIds = stale.filter((s) => selectedStale.has(s.id)).map((s) => s.id);
+    const imports: PlannedImport[] = untracked
+      .filter((u) => selectedImports.has(u.relativePath))
+      .map((u) => ({ mediaFileId: newEntityId("mf"), relativePath: u.relativePath, size: u.size, quality: u.quality, episodeIds: [] }));
+    if (removeIds.length === 0 && imports.length === 0) return EMPTY_RESULT;
+
+    const hasFile = survivingCount - removeIds.length + imports.length > 0;
+    await this.writeMovie(movie, { removeIds, imports }, hasFile, new Date().toISOString());
+    return { filesFound: untracked.length, filesAdded: imports.length, filesRemoved: removeIds.length };
+  }
+
+  async applySeries(
+    seriesId: string,
+    opts: { removeStale: string[]; importUntracked: string[] },
+    seasonNumber?: number,
+  ): Promise<ScanResult> {
+    const series = await this.getSeries(seriesId);
+    if (!series?.rootFolderPath) return EMPTY_RESULT;
+    const profile = await getQualityProfile(this.db, series.qualityProfileId);
+    const seasons = (await this.db.select().from(schema.season).where(eq(schema.season.seriesId, seriesId)))
+      .filter((s) => seasonNumber === undefined || s.seasonNumber === seasonNumber);
+
+    const selectedStale = new Set(opts.removeStale);
+    const selectedImports = new Set(opts.importUntracked);
+    let filesAdded = 0, filesRemoved = 0, untrackedTotal = 0;
+
+    for (const season of seasons) {
+      const compute = await this.computeSeriesSeason(series, season.seasonNumber, profile);
+      if (compute.seasonEpisodes.length === 0) continue;
+      untrackedTotal += compute.untracked.length;
+
+      // Only approved (matched) files are importable; selection is by relative path, everything
+      // else re-derived here. `supersedes` is recomputed from THIS selection only — a superseded
+      // file is removed solely as a consequence of the user ticking the file that replaces it
+      // (never automatically for a merely-approved-but-unselected candidate), and `removeStale`
+      // removes only the explicitly-checked stale rows.
+      const chosenImports = compute.untracked.filter((u) => selectedImports.has(u.relativePath) && (u.episodeIds?.length ?? 0) > 0);
+      // `supersedes` is computed over `surviving`, so the files it names are always surviving rows
+      // (a superseded file is one still on disk — never one already counted as stale).
+      const supersededIds = new Set(chosenImports.flatMap((u) => (u.supersedes ?? []).map((s) => s.mediaFileId)));
+      const removeIds = new Set<string>([
+        ...compute.stale.filter((s) => selectedStale.has(s.id)).map((s) => s.id),
+        ...compute.surviving.filter((f) => supersededIds.has(f.id)).map((f) => f.id),
+      ]);
+      if (chosenImports.length === 0 && removeIds.size === 0) continue;
+
+      const imports: PlannedImport[] = chosenImports.map((u) => ({
+        mediaFileId: newEntityId("mf"), relativePath: u.relativePath, size: u.size, quality: u.quality, episodeIds: u.episodeIds!,
+      }));
+      filesAdded += imports.length;
+      filesRemoved += removeIds.size;
+
+      const plan = this.buildSeriesInteractivePlan(compute, [...removeIds], imports);
+      await this.writeSeriesSeason(series.id, compute.seasonEpisodes, plan);
+    }
+
+    if (filesAdded > 0 || filesRemoved > 0) {
+      await this.updateAvailability(seriesId, "series", new Date().toISOString());
+    }
+    return { filesFound: untrackedTotal, filesAdded, filesRemoved };
+  }
+
+  // ------------------------------------------------------------------
+  // Compute (pure) — shared by the auto scan and the interactive apply.
+  // ------------------------------------------------------------------
+
+  private async computeMovie(movie: typeof schema.movie.$inferSelect) {
+    const existing = await this.media.existingFiles(movieTarget(movie.id));
+    const surviving: ExistingFile[] = [];
+    const stale: ExistingFile[] = [];
+    for (const f of existing) (existsSync(join(movie.rootFolderPath!, f.relativePath)) ? surviving : stale).push(f);
+
+    const folder = join(movie.rootFolderPath!, movieFolderName(movie.title, movie.releaseDate));
+    const files = await findAllVideos(this.storage, folder);
+    const trackedPaths = new Set(surviving.map((f) => join(movie.rootFolderPath!, f.relativePath)));
+    const untracked: ScanUntrackedFile[] = files
+      .filter((f) => !trackedPaths.has(f.path))
+      .map((f) => ({
+        path: f.path,
+        relativePath: relative(movie.rootFolderPath!, f.path),
+        size: f.size,
+        quality: parseQualityFromTitle(baseNameOf(f.path)),
+      }));
+
+    return { surviving, stale, untracked, filesFound: files.length, survivingCount: surviving.length };
+  }
+
+  /** Per-season series compute — mirrors scanSeries's pre-refactor loop body, split out so it
+   *  feeds both the auto scan and the interactive preview/apply. */
+  private async computeSeriesSeason(
+    series: typeof schema.series.$inferSelect,
+    seasonNumber: number,
+    profile: Awaited<ReturnType<typeof getQualityProfile>>,
+  ) {
+    const seasonEpisodes = await this.media.episodesInSeason(series.id, seasonNumber);
+    const root = series.rootFolderPath!;
+    const existing = await this.media.existingFiles(episodeTarget(series.id, seasonNumber, seasonEpisodes, true));
+    const surviving: ExistingFile[] = [];
+    const stale: ExistingFile[] = [];
+    for (const f of existing) (existsSync(join(root, f.relativePath)) ? surviving : stale).push(f);
+
+    const bestExistingByEpisode = new Map<string, Quality>();
+    for (const f of surviving) {
+      for (const epId of f.episodeIds) {
+        const cur = bestExistingByEpisode.get(epId);
+        if (!cur || compareQuality(f.quality, cur) > 0) bestExistingByEpisode.set(epId, f.quality);
+      }
+    }
+    const knownEpisodes = new Map<number, KnownEpisode>(
+      seasonEpisodes.map((e) => [e.episodeNumber, { id: e.id, existingQuality: bestExistingByEpisode.get(e.id) ?? null }]),
+    );
+
+    const seasonDir = join(root, seriesFolderName(series.title), `Season ${seasonNumber}`);
+    const files = await findAllVideos(this.storage, seasonDir);
+    const trackedPaths = new Set(surviving.map((f) => join(root, f.relativePath)));
+    const untrackedFiles = files.filter((f) => !trackedPaths.has(f.path));
+
+    const untracked: ScanUntrackedFile[] = [];
+    const approved: ScanUntrackedFile[] = [];
+    for (const file of untrackedFiles) {
+      const fname = baseNameOf(file.path);
+      const match = parseEpisodeRelease(fname);
+      let episodesInFile = match.episodes;
+      // Daily/anime files name a date or absolute number instead of S&E (episodes stay
+      // empty in the pure parse). Resolve them against the series' own numbering and
+      // keep only episodes belonging to the season dir currently being scanned.
+      if (series.seriesType !== "standard" && episodesInFile.length === 0
+        && (match.dailyDate !== undefined || match.absoluteNumber !== undefined)) {
+        const resolved = await this.media.resolveEpisodeTargets(series.seriesType as SeriesType, series.id, match);
+        episodesInFile = (resolved?.episodes ?? [])
+          .filter((e) => e.seasonNumber === seasonNumber)
+          .map((e) => e.episodeNumber);
+      }
+      const quality = parseQualityFromTitle(fname);
+      const decision = decideImportFile(file, episodesInFile, knownEpisodes, quality, profile);
+      const entry: ScanUntrackedFile = { path: file.path, relativePath: relative(root, file.path), size: file.size, quality };
+      if (decision.approved && decision.episodeIds.length > 0) {
+        entry.episodeIds = decision.episodeIds;
+        // This file fully replaces an existing tracked file when it covers every episode that
+        // file covers (the same "fully superseded" rule the auto scan uses once applied).
+        entry.supersedes = surviving
+          .filter((f) => f.episodeIds.length > 0 && f.episodeIds.every((id) => entry.episodeIds!.includes(id)))
+          .map((f) => ({ mediaFileId: f.id, relativePath: f.relativePath }));
+        approved.push(entry);
+      } else {
+        entry.rejections = decision.rejections;
+      }
+      untracked.push(entry);
+    }
+
+    // The auto-scan's season-wide "every covered episode has a replacement" supersession set.
+    const newlyCovered = new Set(approved.flatMap((a) => a.episodeIds!));
+    const supersededOld = surviving.filter((f) => f.episodeIds.length > 0 && f.episodeIds.every((id) => newlyCovered.has(id)));
+
+    return { seasonNumber, seasonEpisodes, surviving, stale, untracked, approved, supersededOld, filesFound: files.length };
+  }
+
+  // ------------------------------------------------------------------
+  // Plan building — the only place where auto vs interactive differ.
+  // ------------------------------------------------------------------
+
+  /** The auto scan's per-season plan: remove every stale + every fully-superseded row, import
+   *  every approved file, set each episode's hasFile from the covered set and point newly-covered
+   *  episodes at their new file — the exact semantics of the pre-refactor scanSeries transaction. */
+  private buildSeriesAutoPlan(compute: Awaited<ReturnType<LibraryScanService["computeSeriesSeason"]>>): SeasonPlan {
+    const imports: PlannedImport[] = compute.approved.map((a) => ({
+      mediaFileId: newEntityId("mf"), relativePath: a.relativePath, size: a.size, quality: a.quality, episodeIds: a.episodeIds!,
+    }));
+    const episodeToNewFile = new Map<string, string>();
+    for (const im of imports) for (const epId of im.episodeIds) episodeToNewFile.set(epId, im.mediaFileId);
+
+    const coveredEpisodeIds = new Set<string>();
+    for (const im of imports) for (const epId of im.episodeIds) coveredEpisodeIds.add(epId);
+    const supersededIds = new Set(compute.supersededOld.map((f) => f.id));
+    for (const f of compute.surviving) {
+      if (supersededIds.has(f.id)) continue;
+      for (const id of f.episodeIds) coveredEpisodeIds.add(id);
+    }
+
+    const removeIds = [...compute.stale.map((f) => f.id), ...compute.supersededOld.map((f) => f.id)];
+    const episodeUpdates = compute.seasonEpisodes.map((ep) => ({
+      episodeId: ep.id,
+      hasFile: coveredEpisodeIds.has(ep.id),
+      mediaFileId: episodeToNewFile.get(ep.id),
+    }));
+    return { removeIds, imports, episodeUpdates };
+  }
+
+  /** The interactive per-season plan: import only the chosen files, remove only the chosen stale
+   *  rows plus the explicit supersessions of the chosen imports (never automatic), and recompute
+   *  every episode's hasFile/mediaFileId from the real post-apply covering set — NOT from the
+   *  auto-scan's assumption that everything approved was applied. */
+  private buildSeriesInteractivePlan(
+    compute: Awaited<ReturnType<LibraryScanService["computeSeriesSeason"]>>,
+    removeIds: string[],
+    imports: PlannedImport[],
+  ): SeasonPlan {
+    const removeSet = new Set(removeIds);
+    const imported = imports.map((i) => ({ id: i.mediaFileId, episodeIds: i.episodeIds }));
+    const covering = [...compute.surviving.filter((f) => !removeSet.has(f.id)), ...imported];
+    const byEpisode = new Map<string, string>();
+    for (const f of covering) for (const epId of f.episodeIds) {
+      if (!byEpisode.has(epId)) byEpisode.set(epId, f.id);
+    }
+    const episodeUpdates = compute.seasonEpisodes.map((ep) => ({
+      episodeId: ep.id,
+      hasFile: byEpisode.has(ep.id),
+      mediaFileId: byEpisode.get(ep.id),
+    }));
+    return { removeIds, imports, episodeUpdates };
+  }
+
+  // ------------------------------------------------------------------
+  // SHARED WRITE — the ONE implementation both the auto scan and the
+  // interactive apply go through per media type (dialect-branched; never
+  // call `.run()` on a possibly-Postgres query).
+  // ------------------------------------------------------------------
+
+  private async writeMovie(
+    movie: typeof schema.movie.$inferSelect,
+    plan: { removeIds: string[]; imports: PlannedImport[] },
+    hasFile: boolean,
+    now: string,
+  ): Promise<void> {
+    const changed = plan.removeIds.length > 0 || plan.imports.length > 0;
     if (this.db.dbDialect === "postgres") {
-      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
-      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
       await this.db.transaction(async (tx) => {
-        for (const f of stale) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id));
-        if (newFile) {
+        for (const id of plan.removeIds) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, id));
+        for (const im of plan.imports) {
           await tx.insert(schema.mediaFile).values({
-            id: newFile.mediaFileId, mediaType: "movie", mediaId: movie.id, episodeIds: [],
-            relativePath: newFile.relativePath, size: newFile.size, quality: newFile.quality, dateAdded: now,
+            id: im.mediaFileId, mediaType: "movie", mediaId: movie.id, episodeIds: [],
+            relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: now,
           });
         }
         if (hasFile !== movie.hasFile) {
           await tx.update(schema.movie).set({ hasFile, updatedAt: now }).where(eq(schema.movie.id, movie.id));
         }
-        if (filesAdded > 0 || filesRemoved > 0) await this.markAvailability(tx, "movie", movie.id, now);
+        if (changed) await this.markAvailability(tx, "movie", movie.id, now);
       });
     } else {
       this.db.transaction((tx) => {
-        for (const f of stale) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
-        if (newFile) {
+        for (const id of plan.removeIds) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, id)).run();
+        for (const im of plan.imports) {
           tx.insert(schema.mediaFile).values({
-            id: newFile.mediaFileId, mediaType: "movie", mediaId: movie.id, episodeIds: [],
-            relativePath: newFile.relativePath, size: newFile.size, quality: newFile.quality, dateAdded: now,
+            id: im.mediaFileId, mediaType: "movie", mediaId: movie.id, episodeIds: [],
+            relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: now,
           }).run();
         }
         if (hasFile !== movie.hasFile) {
           tx.update(schema.movie).set({ hasFile, updatedAt: now }).where(eq(schema.movie.id, movie.id)).run();
         }
-        if (filesAdded > 0 || filesRemoved > 0) this.markAvailabilitySync(tx, "movie", movie.id, now);
+        if (changed) this.markAvailabilitySync(tx, "movie", movie.id, now);
       });
     }
-    return { filesFound: files.length, filesAdded, filesRemoved };
   }
 
-  async scanSeries(seriesId: string): Promise<ScanResult> {
+  /** One transaction per season, matching the granularity the reconciliation loop already treats
+   *  each season at: a failure writing a later season must not roll back an earlier season's
+   *  already-applied changes. */
+  private async writeSeriesSeason(seriesId: string, seasonEpisodes: { id: string; hasFile: boolean }[], plan: SeasonPlan): Promise<void> {
+    if (this.db.dbDialect === "postgres") {
+      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+      await this.db.transaction(async (tx) => {
+        for (const id of plan.removeIds) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, id));
+        for (const im of plan.imports) {
+          await tx.insert(schema.mediaFile).values({
+            id: im.mediaFileId, mediaType: "series", mediaId: seriesId, episodeIds: im.episodeIds,
+            relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: new Date().toISOString(),
+          });
+        }
+        // J3 dual-write: point newly/re-pointed episodes at their file via media_file_id.
+        for (let i = 0; i < plan.episodeUpdates.length; i++) {
+          const up = plan.episodeUpdates[i];
+          const current = seasonEpisodes[i];
+          const set: { hasFile?: boolean; mediaFileId?: string } = {};
+          if (up.hasFile !== current.hasFile) set.hasFile = up.hasFile;
+          if (up.mediaFileId !== undefined) set.mediaFileId = up.mediaFileId;
+          if (Object.keys(set).length > 0) {
+            await tx.update(schema.episode).set(set).where(eq(schema.episode.id, up.episodeId));
+          }
+        }
+      });
+    } else {
+      this.db.transaction((tx) => {
+        for (const id of plan.removeIds) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, id)).run();
+        for (const im of plan.imports) {
+          tx.insert(schema.mediaFile).values({
+            id: im.mediaFileId, mediaType: "series", mediaId: seriesId, episodeIds: im.episodeIds,
+            relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: new Date().toISOString(),
+          }).run();
+        }
+        // J3 dual-write (sync body — SQLite path): same episode->file FK wiring as the pg body.
+        for (let i = 0; i < plan.episodeUpdates.length; i++) {
+          const up = plan.episodeUpdates[i];
+          const current = seasonEpisodes[i];
+          const set: { hasFile?: boolean; mediaFileId?: string } = {};
+          if (up.hasFile !== current.hasFile) set.hasFile = up.hasFile;
+          if (up.mediaFileId !== undefined) set.mediaFileId = up.mediaFileId;
+          if (Object.keys(set).length > 0) {
+            tx.update(schema.episode).set(set).where(eq(schema.episode.id, up.episodeId)).run();
+          }
+        }
+      });
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Small shared helpers.
+  // ------------------------------------------------------------------
+
+  private async getMovie(movieId: string) {
+    const rows = await this.db.select().from(schema.movie).where(eq(schema.movie.id, movieId)).limit(1);
+    return rows[0];
+  }
+
+  private async getSeries(seriesId: string) {
     const rows = await this.db.select().from(schema.series).where(eq(schema.series.id, seriesId)).limit(1);
-    const series = rows[0];
-    if (!series || !series.rootFolderPath) return EMPTY_RESULT;
+    return rows[0];
+  }
 
-    const seasons = await this.db.select().from(schema.season).where(eq(schema.season.seriesId, seriesId));
-    const profile = await getQualityProfile(this.db, series.qualityProfileId);
-    const safeSeries = seriesFolderName(series.title);
-    const root = series.rootFolderPath;
-
-    let filesFound = 0, filesAdded = 0, filesRemoved = 0;
-
-    for (const season of seasons) {
-      const seasonEpisodes = await this.media.episodesInSeason(seriesId, season.seasonNumber);
-      if (seasonEpisodes.length === 0) continue;
-
-      const target = episodeTarget(seriesId, season.seasonNumber, seasonEpisodes, true);
-      const existing = await this.media.existingFiles(target);
-      const surviving: typeof existing = [];
-      const staleThisSeason: typeof existing = [];
-      for (const f of existing) {
-        const abs = join(root, f.relativePath);
-        (existsSync(abs) ? surviving : staleThisSeason).push(f);
-      }
-      filesRemoved += staleThisSeason.length;
-
-      const bestExistingByEpisode = new Map<string, Quality>();
-      for (const f of surviving) {
-        for (const epId of f.episodeIds) {
-          const cur = bestExistingByEpisode.get(epId);
-          if (!cur || compareQuality(f.quality, cur) > 0) bestExistingByEpisode.set(epId, f.quality);
-        }
-      }
-      const knownEpisodes = new Map<number, KnownEpisode>(
-        seasonEpisodes.map((e) => [e.episodeNumber, { id: e.id, existingQuality: bestExistingByEpisode.get(e.id) ?? null }]),
-      );
-
-      const seasonDir = join(root, safeSeries, `Season ${season.seasonNumber}`);
-      const files = await findAllVideos(this.storage, seasonDir);
-      filesFound += files.length;
-      const trackedPaths = new Set(surviving.map((f) => join(root, f.relativePath)));
-      const untracked = files.filter((f) => !trackedPaths.has(f.path));
-
-      const approved: { path: string; size: number; episodeIds: string[]; quality: Quality }[] = [];
-      for (const file of untracked) {
-        const fname = baseNameOf(file.path);
-        const match = parseEpisodeRelease(fname);
-        let episodesInFile = match.episodes;
-        // Daily/anime files name a date or absolute number instead of S&E (episodes stay
-        // empty in the pure parse). Resolve them against the series' own numbering and
-        // keep only episodes belonging to the season dir currently being scanned.
-        if (series.seriesType !== "standard" && episodesInFile.length === 0
-          && (match.dailyDate !== undefined || match.absoluteNumber !== undefined)) {
-          const resolved = await this.media.resolveEpisodeTargets(series.seriesType as SeriesType, seriesId, match);
-          episodesInFile = (resolved?.episodes ?? [])
-            .filter((e) => e.seasonNumber === season.seasonNumber)
-            .map((e) => e.episodeNumber);
-        }
-        const quality = parseQualityFromTitle(fname);
-        const decision = decideImportFile(file, episodesInFile, knownEpisodes, quality, profile);
-        if (decision.approved && decision.episodeIds.length > 0) {
-          approved.push({ path: file.path, size: file.size, episodeIds: decision.episodeIds, quality });
-        }
-      }
-      filesAdded += approved.length;
-
-      const newlyCovered = new Set(approved.flatMap((a) => a.episodeIds));
-      // Same upgrade-replace rule as P0.5's import: an old file is removed only once every
-      // episode it covered has a newly-found replacement this scan.
-      const supersededOld = surviving.filter((f) => f.episodeIds.length > 0 && f.episodeIds.every((id) => newlyCovered.has(id)));
-
-      const coveredEpisodeIds = new Set(newlyCovered);
-      const supersededIds = new Set(supersededOld.map((f) => f.id));
-      for (const f of surviving) {
-        if (supersededIds.has(f.id)) continue; // superseded above
-        for (const id of f.episodeIds) coveredEpisodeIds.add(id);
-      }
-
-      // One transaction per season, matching the granularity the reconciliation loop
-      // already treats each season at: a failure scanning a later season must not roll
-      // back an earlier season's already-applied changes.
-      if (this.db.dbDialect === "postgres") {
-        // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
-        // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
-        await this.db.transaction(async (tx) => {
-          for (const f of staleThisSeason) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id));
-          for (const f of supersededOld) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id));
-          // J3 dual-write: capture each approved file's id so the episodes it newly covers can be
-          // pointed at it via the media_file_id FK (kept in sync with episode_ids). Episodes whose
-          // file is removed are NULLed by the FK ON DELETE SET NULL from the deletes above.
-          const episodeToNewFile = new Map<string, string>();
-          for (const a of approved) {
-            const mfId = newEntityId("mf");
-            for (const epId of a.episodeIds) episodeToNewFile.set(epId, mfId);
-            await tx.insert(schema.mediaFile).values({
-              id: mfId, mediaType: "series", mediaId: seriesId, episodeIds: a.episodeIds,
-              relativePath: relative(root, a.path), size: a.size, quality: a.quality, dateAdded: new Date().toISOString(),
-            });
-          }
-          for (const ep of seasonEpisodes) {
-            const set: { hasFile?: boolean; mediaFileId?: string } = {};
-            const hasFile = coveredEpisodeIds.has(ep.id);
-            if (hasFile !== ep.hasFile) set.hasFile = hasFile;
-            const newFileId = episodeToNewFile.get(ep.id);
-            if (newFileId) set.mediaFileId = newFileId;
-            if (Object.keys(set).length > 0) {
-              await tx.update(schema.episode).set(set).where(eq(schema.episode.id, ep.id));
-            }
-          }
-        });
-      } else {
-        this.db.transaction((tx) => {
-          for (const f of staleThisSeason) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
-          for (const f of supersededOld) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).run();
-          // J3 dual-write (sync body — SQLite path): same episode->new-file FK wiring as the pg body.
-          const episodeToNewFile = new Map<string, string>();
-          for (const a of approved) {
-            const mfId = newEntityId("mf");
-            for (const epId of a.episodeIds) episodeToNewFile.set(epId, mfId);
-            tx.insert(schema.mediaFile).values({
-              id: mfId, mediaType: "series", mediaId: seriesId, episodeIds: a.episodeIds,
-              relativePath: relative(root, a.path), size: a.size, quality: a.quality, dateAdded: new Date().toISOString(),
-            }).run();
-          }
-          for (const ep of seasonEpisodes) {
-            const set: { hasFile?: boolean; mediaFileId?: string } = {};
-            const hasFile = coveredEpisodeIds.has(ep.id);
-            if (hasFile !== ep.hasFile) set.hasFile = hasFile;
-            const newFileId = episodeToNewFile.get(ep.id);
-            if (newFileId) set.mediaFileId = newFileId;
-            if (Object.keys(set).length > 0) {
-              tx.update(schema.episode).set(set).where(eq(schema.episode.id, ep.id)).run();
-            }
-          }
-        });
-      }
+  private async updateAvailability(mediaId: string, mediaType: MediaType, now: string): Promise<void> {
+    if (this.db.dbDialect === "postgres") {
+      await this.db.transaction(async (tx) => this.markAvailability(tx, mediaType, mediaId, now));
+    } else {
+      this.db.transaction((tx) => this.markAvailabilitySync(tx, mediaType, mediaId, now));
     }
-
-    if (filesAdded > 0 || filesRemoved > 0) {
-      const now = new Date().toISOString();
-      if (this.db.dbDialect === "postgres") {
-        // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
-        // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
-        await this.db.transaction(async (tx) => this.markAvailability(tx, "series", seriesId, now));
-      } else {
-        this.db.transaction((tx) => this.markAvailabilitySync(tx, "series", seriesId, now));
-      }
-    }
-    return { filesFound, filesAdded, filesRemoved };
   }
 
   private markAvailabilitySync(tx: Tx, mediaType: MediaType, mediaId: string, now: string): void {
@@ -363,8 +620,4 @@ export class LibraryScanService implements OnModuleInit {
 function baseNameOf(path: string): string {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] || path;
-}
-
-function statSyncSafe(path: string): number {
-  try { return statSync(path).size; } catch { return 0; }
 }

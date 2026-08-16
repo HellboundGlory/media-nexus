@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { and, asc, eq } from "drizzle-orm";
-import { extname } from "node:path";
+import { extname, join } from "node:path";
 import { newEntityId } from "@medianexus/shared";
 import { ApiError } from "@medianexus/shared";
+import type { RuntimeSettings } from "@medianexus/shared";
+import { LocalStorageProvider } from "@medianexus/integrations";
 import { combine, deletePolymorphicRows, deletePolymorphicRowsAsync, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
 import { movieFolderName, movieFileName } from "../media/naming.helpers";
-import { selectMediaFiles, type MediaFileRow } from "../media/media-file.types";
+import { selectMediaFiles, runWrite, type MediaFileRow } from "../media/media-file.types";
+import { RecycleBinService } from "../media/recycle-bin.service";
 import { ConfigService } from "../system/config.service";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
@@ -27,6 +30,14 @@ export interface RenamePreviewItem {
   currentPath: string;
   newPath: string;
   changed: boolean;
+}
+
+/** The wrapped rename-preview response (FILEMGMT-1): the title's resolved folder path and its
+ *  naming template are returned so the frontend can render the modal's info panel. */
+export interface RenamePreviewEnvelope {
+  rootPath: string;
+  namingPattern: string;
+  items: RenamePreviewItem[];
 }
 
 /** A media_file row as exposed by GET /movies|series/:id/files (DETAILPAGE-FE1). Re-exported
@@ -52,6 +63,7 @@ export class MoviesService {
     private readonly autoTags: AutoTagsService,
     private readonly config: ConfigService,
     private readonly indexers: IndexersService,
+    private readonly recycleBin: RecycleBinService,
   ) {}
 
   /** Read-only rename preview (DETAILPAGE-BE4): for each media_file of this movie, recompute
@@ -60,18 +72,71 @@ export class MoviesService {
    *  import. Mirrors acquisition.service's movie assembly exactly: folder =
    *  movieFolderName(title, releaseDate), filename = movieFileName(cfg, ...), joined with the
    *  existing extension, made relative the same way import does. */
-  async renamePreview(id: string): Promise<RenamePreviewItem[]> {
+  async renamePreview(id: string): Promise<RenamePreviewEnvelope> {
     const movie = await this.get(id);
     const cfg = await this.config.get();
-    const files = await this.db
-      .select().from(schema.mediaFile)
-      .where(and(eq(schema.mediaFile.mediaType, "movie"), eq(schema.mediaFile.mediaId, id)));
-    return files.map((f) => {
-      const folder = movieFolderName(movie.title, movie.releaseDate);
-      const fileName = `${movieFileName(cfg, movie.title, movie.releaseDate, f.quality as Quality)}${extname(f.relativePath)}`;
-      const newPath = `${folder}/${fileName}`;
+    const folderName = movieFolderName(movie.title, movie.releaseDate);
+    const items = (await this.files(id)).map((f) => {
+      const newPath = this.computeNewRelativePath(cfg, movie, f);
       return { mediaFileId: f.id, currentPath: f.relativePath, newPath, changed: newPath !== f.relativePath };
     });
+    return {
+      rootPath: join(movie.rootFolderPath ?? "", folderName),
+      namingPattern: cfg["media.naming"].movies,
+      items,
+    };
+  }
+
+  /** Execute a real rename: move the requested files on disk and update their relativePath.
+   *  Only files whose id is in `mediaFileIds` are touched; any requested file that is already
+   *  `changed: false` (nothing to do) is skipped. Uses the same computeNewRelativePath the
+   *  preview derives from, so execute always matches what the preview showed. */
+  async rename(id: string, mediaFileIds: string[]): Promise<{
+    renamed: number;
+    results: { mediaFileId: string; renamed: boolean; error?: string }[];
+  }> {
+    const movie = await this.get(id);
+    const cfg = await this.config.get();
+    const root = movie.rootFolderPath ?? "";
+    const asked = new Set(mediaFileIds);
+    const storage = new LocalStorageProvider();
+    const results: { mediaFileId: string; renamed: boolean; error?: string }[] = [];
+    let renamed = 0;
+    for (const f of (await this.files(id))) {
+      if (!asked.has(f.id)) continue; // requested-only — a file not in the list is left alone
+      const newRelative = this.computeNewRelativePath(cfg, movie, f);
+      if (newRelative === f.relativePath) {
+        // already correct — nothing to move or update (matches preview's changed:false)
+        results.push({ mediaFileId: f.id, renamed: false });
+        continue;
+      }
+      // Both absolute paths are root-relative + title-folder prefix (relativePath/newRelative),
+      // so join against the root folder, not a pre-appended title folder.
+      const oldAbs = join(root, f.relativePath);
+      const newAbs = join(root, newRelative);
+      try {
+        await storage.move(oldAbs, newAbs); // rename-with-copy-fallback built in, don't reimplement
+        await runWrite(this.db, this.db.update(schema.mediaFile).set({ relativePath: newRelative }).where(eq(schema.mediaFile.id, f.id)));
+        renamed++;
+        results.push({ mediaFileId: f.id, renamed: true });
+      } catch (err) {
+        results.push({ mediaFileId: f.id, renamed: false, error: (err as Error).message });
+      }
+    }
+    return { renamed, results };
+  }
+
+  /** The single source of truth for what a movie file's relative path WOULD be under the
+   *  current naming template — used by both renamePreview and the rename execute so they
+   *  can never derive two different answers for the same file. */
+  private computeNewRelativePath(
+    cfg: RuntimeSettings,
+    movie: typeof schema.movie.$inferSelect,
+    f: MediaFileRow,
+  ): string {
+    const folder = movieFolderName(movie.title, movie.releaseDate);
+    const fileName = `${movieFileName(cfg, movie.title, movie.releaseDate, f.quality as Quality)}${extname(f.relativePath)}`;
+    return `${folder}/${fileName}`;
   }
 
   /** The movie's media_file rows (DETAILPAGE-FE1) — feeds the movie File panel. Read-only,
@@ -203,15 +268,20 @@ export class MoviesService {
     return row;
   }
 
-  async remove(id: string) {
+  async remove(id: string, opts: { deleteFiles?: boolean; addImportExclusion?: boolean } = {}) {
     const row = await this.get(id);
+    const { deleteFiles = false, addImportExclusion = false } = opts;
+    // Before the DB cascade: physically delete each file and the title's folder when requested
+    // (opt-in — a bare DELETE on its own does nothing to disk, matching upstream).
+    if (deleteFiles) await this.deleteFilesFromDisk(row);
     if (this.db.dbDialect === "postgres") {
       // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
       // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
       await this.db.transaction(async (tx) => {
         await deletePolymorphicRowsAsync(tx, "movie", id);
         await tx.delete(schema.movie).where(eq(schema.movie.id, id));
-        if (row.tmdbId != null) {
+        // C2 import lists: only exclude from re-import when explicitly requested (opt-in).
+        if (addImportExclusion && row.tmdbId != null) {
           await tx.insert(schema.importExclusion).values({
             id: `excl-movie-${row.tmdbId}`, mediaType: "movie", externalId: String(row.tmdbId),
             reason: "removed from library", createdAt: new Date().toISOString(),
@@ -222,9 +292,8 @@ export class MoviesService {
       this.db.transaction((tx) => {
         deletePolymorphicRows(tx, "movie", id);
         tx.delete(schema.movie).where(eq(schema.movie.id, id)).run();
-        // C2 import lists: a manually-removed title is excluded from re-import by the next
-        // list sync (idempotent; best-effort, only when it has a stable external id).
-        if (row.tmdbId != null) {
+        // C2 import lists: only exclude from re-import when explicitly requested (opt-in).
+        if (addImportExclusion && row.tmdbId != null) {
           tx.insert(schema.importExclusion).values({
             id: `excl-movie-${row.tmdbId}`, mediaType: "movie", externalId: String(row.tmdbId),
             reason: "removed from library", createdAt: new Date().toISOString(),
@@ -234,6 +303,29 @@ export class MoviesService {
     }
     this.events.publish(EventTypes.MovieRemoved, { movieId: id }, { aggType: "movie", aggId: id });
     return { removed: id };
+  }
+
+  /** Move every movie file into the recycle bin, then remove the title's folder itself
+   *  (recursive, matching upstream's literal "delete the folder" — this also removes untracked
+   *  extras/subtitles inside it). A file already missing on disk is disposed via a wrapped +
+   *  logged call so it can't block the rest of the delete; a folder-delete failure surfaces
+   *  normally. */
+  private async deleteFilesFromDisk(movie: typeof schema.movie.$inferSelect): Promise<void> {
+    const files = await this.db.select().from(schema.mediaFile)
+      .where(and(eq(schema.mediaFile.mediaType, "movie"), eq(schema.mediaFile.mediaId, movie.id)));
+    const root = movie.rootFolderPath ?? "";
+    const folder = join(root, movieFolderName(movie.title, movie.releaseDate));
+    const storage = new LocalStorageProvider();
+    for (const f of files) {
+      // relativePath is root-relative and includes the title-folder prefix — no double join.
+      const abs = join(root, f.relativePath);
+      try {
+        await this.recycleBin.dispose(abs);
+      } catch (err) {
+        this.logger.warn(`Failed to dispose movie file ${abs}: ${(err as Error).message}`);
+      }
+    }
+    await storage.delete(folder);
   }
 
   async upsertAvailability(mediaType: "movie" | "series", mediaId: string): Promise<void> {

@@ -6,9 +6,10 @@ import { WantedController } from "./wanted.controller";
 import { MoviesModule } from "../movies/movies.module";
 import { AutoTagsModule } from "../auto-tags/auto-tags.module";
 import { IndexersModule } from "../indexers/indexers.module";
+import { LibraryScanModule } from "../library-scan/library-scan.module";
 
 @Module({
-  imports: [MoviesModule, AutoTagsModule, IndexersModule],
+  imports: [MoviesModule, AutoTagsModule, IndexersModule, LibraryScanModule],
   providers: [SeriesService],
   controllers: [SeriesController, WantedController],
   exports: [SeriesService],

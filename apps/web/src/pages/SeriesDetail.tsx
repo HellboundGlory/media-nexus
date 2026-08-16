@@ -10,18 +10,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Crosshair, MonitorDown, Database, FileText, Trash2, ChevronDown, ChevronRight, Search, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, Crosshair, FolderOpen, MonitorDown, Database, FileText, Trash2, ChevronDown, ChevronRight, Search, Eye, EyeOff } from "lucide-react";
 import { clsx } from "clsx";
 import { api } from "../api/client";
 import type { Series as SeriesRow, Episode, MediaFileRow, Release } from "../api/types";
-import { Badge, ErrorState, formatDate } from "../lib/ui";
+import { Badge, ErrorState, formatDate, formatBytes } from "../lib/ui";
 import { DetailHeader, type ReadoutCell } from "../components/detail/DetailHeader";
 import { CastCrewStrip } from "../components/detail/CastCrewStrip";
 import { HistoryPanel } from "../components/detail/HistoryPanel";
 import { InteractiveSearchModal, type SearchScope } from "../components/detail/InteractiveSearchModal";
 import { RenamePreviewPanel } from "../components/detail/RenamePreviewPanel";
+import { ManageFilesModal } from "../components/detail/ManageFilesModal";
 import { MonitoredLamp } from "../components/detail/MonitoredLamp";
 import { SeasonPill, type SeasonStats } from "../components/detail/SeasonPill";
+import { DeleteConfirmModal } from "../components/detail/DeleteConfirmModal";
+import { MediaFileActions } from "../components/detail/MediaFileActions";
 
 interface EpisodeView {
   episode: Episode;
@@ -34,6 +37,9 @@ export default function SeriesDetail() {
   const qc = useQueryClient();
   const [searching, setSearching] = useState<SearchScope | null>(null);
   const [renaming, setRenaming] = useState(false);
+  const [renamingSeason, setRenamingSeason] = useState<number | null>(null);
+  const [managing, setManaging] = useState<{ season?: number } | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<number> | null>(null);
   const [epAuto, setEpAuto] = useState<{ epId: string; tone: "ok" | "none" | "error"; text: string } | null>(null);
   const [seasonAuto, setSeasonAuto] = useState<{ seasonNum: number; tone: "ok" | "none" | "error"; text: string } | null>(null);
@@ -59,7 +65,7 @@ export default function SeriesDetail() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["series", id] }); qc.invalidateQueries({ queryKey: ["series-episodes", id] }); },
   });
   const remove = useMutation({
-    mutationFn: () => api.del(`/series/${id}`),
+    mutationFn: (opts?: { deleteFiles?: boolean; addImportExclusion?: boolean }) => api.del(`/series/${id}`, opts ?? {}),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["series"] }); navigate("/series"); },
   });
   const autoSearchEpisode = useMutation({
@@ -141,6 +147,14 @@ export default function SeriesDetail() {
   const s = series.data;
   if (!s) return null;
 
+  // Delete-confirm info derived from the already-fetched file list (root-relative path's first
+  // segment IS the title-folder name — the same seriesFolderName the importer writes on disk).
+  const firstRel = files.data?.[0]?.relativePath;
+  const folderName = firstRel ? firstRel.split("/")[0] : "";
+  const folderPath = s.rootFolderPath ? `${s.rootFolderPath.replace(/\/+$/, "")}/${folderName}` : folderName;
+  const fileCount = files.data?.length ?? 0;
+  const totalBytes = (files.data ?? []).reduce((acc, f) => acc + f.size, 0);
+
   const toggleSeason = (n: number) => {
     setCollapsed((prev) => {
       const base = prev ?? defaultCollapsedSet;
@@ -217,7 +231,14 @@ export default function SeriesDetail() {
               <FileText className="h-3.5 w-3.5" /> Preview Rename
             </button>
             <button
-              onClick={() => { if (window.confirm(`Delete "${s.title}" and everything under it? This cannot be undone.`)) remove.mutate(); }}
+              onClick={() => setManaging({})}
+              title="Scan every season's folder and reconcile disk vs database"
+              className="inline-flex items-center gap-1.5 rounded bg-bg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule"
+            >
+              <FolderOpen className="h-3.5 w-3.5" /> Manage Episodes
+            </button>
+            <button
+              onClick={() => setConfirming(true)}
               disabled={remove.isPending}
               className="inline-flex items-center gap-1.5 rounded bg-err/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-err hover:bg-err/20 disabled:opacity-50"
             >
@@ -280,6 +301,20 @@ export default function SeriesDetail() {
                           title={`Interactive search: whole Season ${seasonNum}`}
                         >
                           <Crosshair className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => setRenamingSeason(seasonNum)}
+                          className="rounded p-1.5 text-ink-dim hover:bg-rule hover:text-ink"
+                          title={`Preview rename for Season ${seasonNum} only`}
+                        >
+                          <FileText className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => setManaging({ season: seasonNum })}
+                          className="rounded p-1.5 text-ink-dim hover:bg-rule hover:text-ink"
+                          title={`Manage episodes in Season ${seasonNum}`}
+                        >
+                          <FolderOpen className="h-4 w-4" />
                         </button>
                       </div>
                     </div>
@@ -361,11 +396,70 @@ export default function SeriesDetail() {
           )}
       </section>
 
+      {/* Files panel — real media_file rows, same shape/treatment as the movie detail page. */}
+      <section className="space-y-2">
+        <h4 className="font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink-dim">Files</h4>
+        {files.isLoading ? <p className="text-sm text-ink-dim">Loading…</p>
+          : files.isError ? <ErrorState error={files.error} onRetry={() => files.refetch()} />
+          : files.data?.length === 0 ? <p className="text-sm text-ink-dim">No files yet.</p>
+          : (
+            // No overflow-hidden here: MediaFileActions' hover popover must be able to escape the
+            // panel (same clipping fix previously applied to SeasonPill).
+            <div className="rounded-lg border border-rule">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-bg text-[10px] font-semibold uppercase tracking-wide text-ink-dim">
+                  <tr>
+                    <th className="px-3 py-2">Path</th>
+                    <th className="px-3 py-2">Size</th>
+                    <th className="px-3 py-2">Quality</th>
+                    <th className="px-3 py-2">Codec</th>
+                    <th className="px-3 py-2">Resolution</th>
+                    <th className="px-3 py-2">Languages</th>
+                    <th className="px-3 py-2">Added</th>
+                    <th className="px-3 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-rule">
+                  {files.data?.map((f) => (
+                    <tr key={f.id}>
+                      <td className="max-w-[26rem] truncate px-3 py-2" title={f.relativePath}>{f.relativePath}</td>
+                      <td className="px-3 py-2 tabular-nums text-ink-dim">{formatBytes(f.size)}</td>
+                      <td className="px-3 py-2 text-ink-dim">{f.quality ? `${f.quality.source} · ${f.quality.resolution}` : "—"}</td>
+                      <td className="px-3 py-2 text-ink-dim">{f.mediaInfo?.videoCodec ?? "—"}</td>
+                      <td className="px-3 py-2 text-ink-dim">{f.mediaInfo?.resolution ?? "—"}</td>
+                      <td className="px-3 py-2 text-ink-dim">{f.languages.length ? f.languages.join(", ") : "—"}</td>
+                      <td className="px-3 py-2 text-ink-dim">{f.dateAdded ? formatDate(f.dateAdded).slice(0, 10) : "—"}</td>
+                      <td className="px-3 py-2 text-right">
+                        <MediaFileActions file={f} onChanged={() => { qc.invalidateQueries({ queryKey: ["files", "series", id] }); qc.invalidateQueries({ queryKey: ["series", id] }); qc.invalidateQueries({ queryKey: ["series-episodes", id] }); }} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+      </section>
+
       <CastCrewStrip mediaType="series" mediaId={id} />
       <HistoryPanel mediaType="series" mediaId={id} />
 
       {searching && <InteractiveSearchModal scope={searching} onClose={() => setSearching(null)} />}
       {renaming && <RenamePreviewPanel mediaType="series" mediaId={id} onClose={() => setRenaming(false)} />}
+      {renamingSeason !== null && <RenamePreviewPanel mediaType="series" mediaId={id} seasonNumber={renamingSeason} onClose={() => setRenamingSeason(null)} />}
+      {managing && <ManageFilesModal mediaType="series" mediaId={id} seasonNumber={managing.season} onClose={() => setManaging(null)} />}
+      {confirming && (
+        <DeleteConfirmModal
+          title={s.title}
+          mediaType="series"
+          folderPath={folderPath}
+          folderName={folderName}
+          fileCount={fileCount}
+          totalBytes={totalBytes}
+          busy={remove.isPending}
+          onConfirm={(o) => remove.mutate(o)}
+          onClose={() => setConfirming(false)}
+        />
+      )}
     </div>
   );
 }

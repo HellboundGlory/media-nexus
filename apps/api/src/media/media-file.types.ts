@@ -11,6 +11,18 @@ import type { MediaInfo } from "@medianexus/domain";
 import { schema } from "@medianexus/database";
 import type { Db } from "@medianexus/database";
 
+/** Execute a drizzle write query on the given DB. `.run()` is SQLite-only (better-sqlite3);
+ *  a Postgres-backed instance is a NodePgDatabase with no `.run()` at all (P2 item 12 Stage 2).
+ *  The `Db` type is SQLite-shaped so typecheck passes either way — this branch is what keeps a
+ *  write from throwing `TypeError: .run is not a function` on a real Postgres connection. */
+export async function runWrite(db: Db, q: { run: () => unknown }): Promise<void> {
+  if (db.dbDialect === "postgres") {
+    await (q as unknown as Promise<unknown>);
+  } else {
+    q.run();
+  }
+}
+
 export interface MediaFileRow {
   id: string;
   mediaType: "movie" | "series";
@@ -21,6 +33,7 @@ export interface MediaFileRow {
   quality: { source: string; resolution: string; edition: string } | null;
   mediaInfo: MediaInfo | null;
   languages: string[];
+  releaseGroup: string | null;
   dateAdded: string | null;
 }
 
@@ -34,6 +47,7 @@ type RawMediaFileRow = {
   quality: unknown;
   mediaInfo: unknown;
   languages: unknown;
+  releaseGroup: string | null;
   dateAdded: string | null;
 };
 
@@ -49,6 +63,7 @@ export function toMediaFileRow<T extends RawMediaFileRow>(row: T): MediaFileRow 
     quality: (row.quality && typeof row.quality === "object" ? row.quality : null) as MediaFileRow["quality"],
     mediaInfo: (row.mediaInfo && typeof row.mediaInfo === "object" ? row.mediaInfo : null) as MediaFileRow["mediaInfo"],
     languages: Array.isArray(row.languages) ? (row.languages as string[]) : [],
+    releaseGroup: row.releaseGroup ?? null,
     dateAdded: row.dateAdded,
   };
 }
