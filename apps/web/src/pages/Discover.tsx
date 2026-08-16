@@ -54,17 +54,17 @@ export default function Discover() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Discover</h2>
-        <p className="text-sm text-zinc-500">Browse TMDB for new, upcoming, and popular movies and TV shows.</p>
+        <h2 className="font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">Discover</h2>
+        <p className="text-sm text-ink-dim">Browse TMDB for new, upcoming, and popular movies and TV shows.</p>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-1 rounded-lg border border-zinc-300 p-1 dark:border-zinc-700">
+        <div className="flex gap-1 rounded-lg border border-rule bg-surface p-1">
           {MEDIA_TABS.map((t) => (
             <button
               key={t.key}
               onClick={() => setMediaType(t.key)}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium ${mediaType === t.key ? "bg-violet-600 text-white" : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"}`}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-display font-semibold uppercase tracking-wide transition-colors ${mediaType === t.key ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-bg hover:text-ink"}`}
             >
               {t.key === "movie" ? <Film className="h-3.5 w-3.5" /> : <Tv className="h-3.5 w-3.5" />} {t.label}
             </button>
@@ -75,7 +75,7 @@ export default function Discover() {
             <button
               key={c.key}
               onClick={() => setCategory(c.key)}
-              className={`rounded-full px-3 py-1 text-xs font-medium ${category === c.key ? "bg-violet-600 text-white" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"}`}
+              className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide transition-colors ${category === c.key ? "bg-accent text-accent-ink" : "bg-neutral-bg text-neutral-ink hover:bg-rule hover:text-ink"}`}
             >
               {mediaType === "series" && c.tvLabel ? c.tvLabel : c.label}
             </button>
@@ -88,7 +88,7 @@ export default function Discover() {
           title="TMDB isn't configured yet"
           hint="Set a TMDB API key in System → Metadata to browse and add titles from Discover."
           action={
-            <Link to="/system" className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500">
+            <Link to="/system" className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90">
               <Settings className="h-3.5 w-3.5" /> Go to System settings
             </Link>
           }
@@ -116,7 +116,7 @@ export default function Discover() {
               <button
                 onClick={() => discover.fetchNextPage()}
                 disabled={discover.isFetchingNextPage}
-                className="rounded-lg border border-zinc-300 px-4 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                className="rounded-lg border border-rule bg-surface px-4 py-1.5 text-sm font-medium text-ink hover:bg-rule disabled:opacity-50"
               >
                 {discover.isFetchingNextPage ? "Loading…" : "Load more"}
               </button>
@@ -130,22 +130,22 @@ export default function Discover() {
 
 function DiscoverCard({ item, onAdd, adding }: { item: DiscoverItem; onAdd: () => void; adding: boolean }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="aspect-[2/3] w-full bg-zinc-100 dark:bg-zinc-800">
+    <div className="overflow-hidden rounded-xl border border-rule bg-surface">
+      <div className="aspect-[2/3] w-full bg-track">
         {item.posterUrl ? (
           <img src={item.posterUrl} alt={item.title} loading="lazy" className="h-full w-full object-cover" />
         ) : (
-          <div className="flex h-full items-center justify-center text-zinc-400">
+          <div className="flex h-full items-center justify-center text-ink-dim">
             {item.mediaType === "movie" ? <Film className="h-8 w-8" /> : <Tv className="h-8 w-8" />}
           </div>
         )}
       </div>
       <div className="space-y-1.5 p-2.5">
-        <p className="truncate text-sm font-medium" title={item.title}>{item.title}</p>
-        <div className="flex items-center justify-between text-xs text-zinc-500">
+        <p className="truncate text-sm font-medium text-ink" title={item.title}>{item.title}</p>
+        <div className="flex items-center justify-between text-xs text-ink-dim">
           <span>{item.year ?? "—"}</span>
           {item.rating != null && item.rating > 0 && (
-            <span className="flex items-center gap-0.5"><Star className="h-3 w-3 fill-amber-400 text-amber-400" />{item.rating.toFixed(1)}</span>
+            <span className="flex items-center gap-0.5"><Star className="h-3 w-3 fill-accent text-accent" />{item.rating.toFixed(1)}</span>
           )}
         </div>
         {item.inLibrary ? (
@@ -156,7 +156,7 @@ function DiscoverCard({ item, onAdd, adding }: { item: DiscoverItem; onAdd: () =
           <button
             onClick={onAdd}
             disabled={adding}
-            className="flex w-full items-center justify-center gap-1 rounded-lg bg-violet-600 px-2 py-1 text-xs font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-1 rounded-lg bg-accent px-2 py-1 text-xs font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50"
           >
             <Plus className="h-3.5 w-3.5" /> {adding ? "Adding…" : "Add"}
           </button>

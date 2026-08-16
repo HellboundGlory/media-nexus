@@ -24,6 +24,10 @@ const IMPL_FIELDS: Record<string, { host: string; apiKey: string; extra?: { key:
 const implKinds: Record<string, "usenet" | "torrent"> = { sabnzbd: "usenet", qbittorrent: "torrent" };
 const SERVER_TOKEN_LABEL: Record<string, string> = { jellyfin: "API key", plex: "Token (X-Plex-Token)" };
 
+const inputCls = "w-full rounded-lg border border-rule bg-transparent px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
+const monoCls = "w-full rounded-lg border border-rule bg-transparent px-3 py-1.5 font-mono text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
+const selectCls = "w-full rounded-lg border border-rule bg-surface px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
+
 export default function Clients() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
@@ -100,17 +104,17 @@ export default function Clients() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Clients &amp; Servers</h2>
-        <p className="text-sm text-zinc-500">Download clients (SABnzbd, qBittorrent) and media servers (Jellyfin, Plex) via their HTTP APIs.</p>
+        <h2 className="font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">Clients &amp; Servers</h2>
+        <p className="text-sm text-ink-dim">Download clients (SABnzbd, qBittorrent) and media servers (Jellyfin, Plex) via their HTTP APIs.</p>
       </div>
 
       {clients.isError ? <ErrorState error={clients.error} onRetry={() => clients.refetch()} /> : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <section className="rounded-xl border border-rule bg-surface p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="font-medium">Configured</h3>
-            <button onClick={() => setShowAdd((v) => !v)} className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-500">
+            <h3 className="font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink-dim">Configured</h3>
+            <button onClick={() => setShowAdd((v) => !v)} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90">
               <Plus className="h-3.5 w-3.5" /> Add client
             </button>
           </div>
@@ -120,15 +124,15 @@ export default function Clients() {
           ) : (
             <ul className="space-y-2 text-sm">
               {clients.data?.map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+                <li key={c.id} className="flex items-center justify-between gap-3 rounded-lg border border-rule px-3 py-2">
                   <div className="min-w-0">
-                    <p className="font-medium">{c.name}</p>
-                    <p className="truncate font-mono text-xs text-zinc-500">{c.implementation} · {c.kind}</p>
+                    <p className="font-medium text-ink">{c.name}</p>
+                    <p className="truncate font-mono text-xs text-ink-dim">{c.implementation} · {c.kind}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
                     <Badge tone="ok">{c.enabled ? "enabled" : "disabled"}</Badge>
-                    <button onClick={() => testClient.mutate(c.id)} className="rounded p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" title="Health check"><Stethoscope className="h-4 w-4" /></button>
-                    <button onClick={() => removeClient.mutate(c.id)} className="rounded p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950" title="Remove"><Trash2 className="h-4 w-4" /></button>
+                    <button onClick={() => testClient.mutate(c.id)} className="rounded p-1.5 text-ink-dim hover:bg-rule hover:text-ink" title="Health check"><Stethoscope className="h-4 w-4" /></button>
+                    <button onClick={() => removeClient.mutate(c.id)} className="rounded p-1.5 text-ink-dim hover:bg-err-bg hover:text-err" title="Remove"><Trash2 className="h-4 w-4" /></button>
                   </div>
                 </li>
               ))}
@@ -136,68 +140,68 @@ export default function Clients() {
           )}
 
           {showAdd && (
-            <div className="mt-4 space-y-3 rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
+            <div className="mt-4 space-y-3 rounded-xl border border-rule p-4">
               <label className="block">
-                <span className="mb-1 block text-xs text-zinc-500">Implementation</span>
-                <select value={impl} onChange={(e) => setImpl(e.target.value as never)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
+                <span className="mb-1 block text-xs text-ink-dim">Implementation</span>
+                <select value={impl} onChange={(e) => setImpl(e.target.value as never)} className={selectCls}>
                   <option value="sabnzbd">SABnzbd (usenet)</option>
                   <option value="qbittorrent">qBittorrent (torrent)</option>
                 </select>
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs text-zinc-500">Name</span>
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My SABnzbd" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+                <span className="mb-1 block text-xs text-ink-dim">Name</span>
+                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My SABnzbd" className={inputCls} />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs text-zinc-500">{fields.host}</span>
-                <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="http://192.168.1.10:8080" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+                <span className="mb-1 block text-xs text-ink-dim">{fields.host}</span>
+                <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="http://192.168.1.10:8080" className={inputCls} />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs text-zinc-500">{fields.apiKey}</span>
-                <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+                <span className="mb-1 block text-xs text-ink-dim">{fields.apiKey}</span>
+                <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} className={inputCls} />
               </label>
               {fields.extra?.map((f) => (
                 <label key={f.key} className="block">
-                  <span className="mb-1 block text-xs text-zinc-500">{f.label}</span>
-                  <input defaultValue={f.def} onChange={(e) => setExtras((x) => ({ ...x, [f.key]: e.target.value }))} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+                  <span className="mb-1 block text-xs text-ink-dim">{f.label}</span>
+                  <input defaultValue={f.def} onChange={(e) => setExtras((x) => ({ ...x, [f.key]: e.target.value }))} className={inputCls} />
                 </label>
               ))}
               <div className="flex items-center gap-2">
-                <button onClick={submitClient} disabled={addClient.isPending} className="rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
+                <button onClick={submitClient} disabled={addClient.isPending} className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">
                   {addClient.isPending ? "Saving…" : "Save client"}
                 </button>
-                <button onClick={() => setShowAdd(false)} className="text-sm text-zinc-500 hover:underline">Cancel</button>
+                <button onClick={() => setShowAdd(false)} className="text-sm text-ink-dim hover:underline">Cancel</button>
               </div>
-              {addClient.isError && <p className="text-xs text-red-600">{addClient.error instanceof Error ? addClient.error.message : "Failed"}</p>}
+              {addClient.isError && <p className="text-xs text-err">{addClient.error instanceof Error ? addClient.error.message : "Failed"}</p>}
             </div>
           )}
         </section>
 
-        <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-          <h3 className="mb-3 font-medium">Downloads staging</h3>
-          <p className="mb-3 text-xs text-zinc-500">The importer finds completed downloads here before hardlinking/copying the file into a root folder.</p>
+        <section className="rounded-xl border border-rule bg-surface p-4">
+          <h3 className="mb-3 font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink-dim">Downloads staging</h3>
+          <p className="mb-3 text-xs text-ink-dim">The importer finds completed downloads here before hardlinking/copying the file into a root folder.</p>
           <div className="space-y-3">
             <label className="block">
-              <span className="mb-1 block text-xs text-zinc-500">Downloads root (staging)</span>
-              <input defaultValue={downloads || (cfg.data?.["paths.downloads"] as string) || ""} onChange={(e) => setDownloads(e.target.value)} placeholder="/data/downloads" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" />
+              <span className="mb-1 block text-xs text-ink-dim">Downloads root (staging)</span>
+              <input defaultValue={downloads || (cfg.data?.["paths.downloads"] as string) || ""} onChange={(e) => setDownloads(e.target.value)} placeholder="/data/downloads" className={monoCls} />
             </label>
             <button
               disabled={savePaths.isPending}
               onClick={() => savePaths.mutate({ "paths.downloads": downloads })}
-              className="rounded-lg bg-zinc-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-200 dark:text-zinc-900"
+              className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50"
             >
               {savePaths.isPending ? "Saving…" : "Save"}
             </button>
-            {savePaths.isSuccess && <p className="text-xs text-emerald-600">Saved.</p>}
+            {savePaths.isSuccess && <p className="text-xs text-ok">Saved.</p>}
           </div>
         </section>
       </div>
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-xl border border-rule bg-surface p-4">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 font-medium"><FolderTree className="h-4 w-4" /> Root folders</h3>
+          <h3 className="flex items-center gap-2 font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink"><FolderTree className="h-4 w-4" /> Root folders</h3>
         </div>
-        <p className="mb-3 text-xs text-zinc-500">
+        <p className="mb-3 text-xs text-ink-dim">
           Where movies and series are stored. The starred folder is the default assigned to a new title when none is chosen explicitly.
         </p>
         {rootFolders.isError ? <ErrorState error={rootFolders.error} onRetry={() => rootFolders.refetch()} /> : null}
@@ -206,104 +210,104 @@ export default function Clients() {
         ) : (
           <ul className="mb-3 space-y-2 text-sm">
             {rootFolders.data?.map((rf) => (
-              <li key={rf.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+              <li key={rf.id} className="flex items-center justify-between gap-3 rounded-lg border border-rule px-3 py-2">
                 <div className="min-w-0">
                   <p className="flex items-center gap-1.5 font-mono text-xs">
-                    {rf.isDefault && <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400" />}
+                    {rf.isDefault && <Star className="h-3 w-3 shrink-0 fill-accent text-accent" />}
                     <span className="truncate">{rf.path}</span>
                   </p>
-                  <p className="text-xs text-zinc-500">{rf.name || rf.path} · {formatBytes(rf.freeBytes)} free of {formatBytes(rf.totalBytes)}</p>
+                  <p className="text-xs text-ink-dim">{rf.name || rf.path} · {formatBytes(rf.freeBytes)} free of {formatBytes(rf.totalBytes)}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Badge tone={rf.accessible ? "ok" : "danger"}>{rf.accessible ? "accessible" : "unreachable"}</Badge>
-                  <button onClick={() => removeRootFolder.mutate(rf.id)} className="rounded p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950" title="Remove"><Trash2 className="h-4 w-4" /></button>
+                  <button onClick={() => removeRootFolder.mutate(rf.id)} className="rounded p-1.5 text-ink-dim hover:bg-err-bg hover:text-err" title="Remove"><Trash2 className="h-4 w-4" /></button>
                 </div>
               </li>
             ))}
           </ul>
         )}
         <div className="flex flex-wrap items-end gap-2">
-          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-zinc-500">Path</span>
-            <input value={rootFolderPath} onChange={(e) => setRootFolderPath(e.target.value)} placeholder="/data/media" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
-          <label className="min-w-28"><span className="mb-1 block text-xs text-zinc-500">Name (optional)</span>
-            <input value={rootFolderName} onChange={(e) => setRootFolderName(e.target.value)} placeholder="Movies" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-ink-dim">Path</span>
+            <input value={rootFolderPath} onChange={(e) => setRootFolderPath(e.target.value)} placeholder="/data/media" className={monoCls} /></label>
+          <label className="min-w-28"><span className="mb-1 block text-xs text-ink-dim">Name (optional)</span>
+            <input value={rootFolderName} onChange={(e) => setRootFolderName(e.target.value)} placeholder="Movies" className={inputCls} /></label>
           <button disabled={!rootFolderPath || addRootFolder.isPending} onClick={() => addRootFolder.mutate()}
-            className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
+            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">
             {addRootFolder.isPending ? "Adding…" : "Add root folder"}
           </button>
         </div>
-        {addRootFolder.isError && <p className="mt-2 text-xs text-red-600">{addRootFolder.error instanceof Error ? addRootFolder.error.message : "Failed"}</p>}
-        {removeRootFolder.isError && <p className="mt-2 text-xs text-red-600">{removeRootFolder.error instanceof Error ? removeRootFolder.error.message : "Failed"}</p>}
+        {addRootFolder.isError && <p className="mt-2 text-xs text-err">{addRootFolder.error instanceof Error ? addRootFolder.error.message : "Failed"}</p>}
+        {removeRootFolder.isError && <p className="mt-2 text-xs text-err">{removeRootFolder.error instanceof Error ? removeRootFolder.error.message : "Failed"}</p>}
       </section>
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-xl border border-rule bg-surface p-4">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 font-medium"><Route className="h-4 w-4" /> Remote path mappings</h3>
+          <h3 className="flex items-center gap-2 font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink"><Route className="h-4 w-4" /> Remote path mappings</h3>
         </div>
-        <p className="mb-3 text-xs text-zinc-500">
+        <p className="mb-3 text-xs text-ink-dim">
           Translates a download client's self-reported content path (its own filesystem view, e.g. inside a container) into the path this app sees.
         </p>
         <ul className="mb-3 space-y-2 text-sm">
           {mappings.data?.map((m) => (
-            <li key={m.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+            <li key={m.id} className="flex items-center justify-between gap-3 rounded-lg border border-rule px-3 py-2">
               <p className="min-w-0 truncate font-mono text-xs">
-                {clients.data?.find((c) => c.id === m.downloadClientId)?.name ?? m.downloadClientId}: {m.remotePath} <span className="text-zinc-400">→</span> {m.localPath}
+                {clients.data?.find((c) => c.id === m.downloadClientId)?.name ?? m.downloadClientId}: {m.remotePath} <span className="text-ink-dim">→</span> {m.localPath}
               </p>
-              <button onClick={() => removeMapping.mutate(m.id)} className="shrink-0 rounded p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950" title="Remove"><Trash2 className="h-4 w-4" /></button>
+              <button onClick={() => removeMapping.mutate(m.id)} className="shrink-0 rounded p-1.5 text-ink-dim hover:bg-err-bg hover:text-err" title="Remove"><Trash2 className="h-4 w-4" /></button>
             </li>
           ))}
-          {mappings.data?.length === 0 && <li className="text-sm text-zinc-500">No remote path mappings configured.</li>}
+          {mappings.data?.length === 0 && <li className="text-sm text-ink-dim">No remote path mappings configured.</li>}
         </ul>
         <div className="flex flex-wrap items-end gap-2">
-          <label className="min-w-32"><span className="mb-1 block text-xs text-zinc-500">Download client</span>
-            <select value={mappingClientId} onChange={(e) => setMappingClientId(e.target.value)} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
+          <label className="min-w-32"><span className="mb-1 block text-xs text-ink-dim">Download client</span>
+            <select value={mappingClientId} onChange={(e) => setMappingClientId(e.target.value)} className={selectCls}>
               <option value="">Select…</option>
               {clients.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select></label>
-          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-zinc-500">Remote path (as the client reports it)</span>
-            <input value={remotePath} onChange={(e) => setRemotePath(e.target.value)} placeholder="/downloads" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
-          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-zinc-500">Local path (as this app sees it)</span>
-            <input value={localPath} onChange={(e) => setLocalPath(e.target.value)} placeholder="/mnt/downloads" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-ink-dim">Remote path (as the client reports it)</span>
+            <input value={remotePath} onChange={(e) => setRemotePath(e.target.value)} placeholder="/downloads" className={monoCls} /></label>
+          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-ink-dim">Local path (as this app sees it)</span>
+            <input value={localPath} onChange={(e) => setLocalPath(e.target.value)} placeholder="/mnt/downloads" className={monoCls} /></label>
           <button disabled={!mappingClientId || !remotePath || !localPath || addMapping.isPending} onClick={() => addMapping.mutate()}
-            className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">
+            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">
             {addMapping.isPending ? "Adding…" : "Add mapping"}
           </button>
         </div>
-        {addMapping.isError && <p className="mt-2 text-xs text-red-600">{addMapping.error instanceof Error ? addMapping.error.message : "Failed"}</p>}
+        {addMapping.isError && <p className="mt-2 text-xs text-err">{addMapping.error instanceof Error ? addMapping.error.message : "Failed"}</p>}
       </section>
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-xl border border-rule bg-surface p-4">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 font-medium"><Server className="h-4 w-4" /> Media servers</h3>
-          <button disabled={refreshServers.isPending} onClick={() => refreshServers.mutate()} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-200 dark:text-zinc-900">
+          <h3 className="flex items-center gap-2 font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink"><Server className="h-4 w-4" /> Media servers</h3>
+          <button disabled={refreshServers.isPending} onClick={() => refreshServers.mutate()} className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">
             {refreshServers.isPending ? "Refreshing…" : "Refresh availability"}
           </button>
         </div>
-        <p className="mb-3 text-xs text-zinc-500">Jellyfin or Plex (HTTP API). Availability sync marks library items as already available.</p>
+        <p className="mb-3 text-xs text-ink-dim">Jellyfin or Plex (HTTP API). Availability sync marks library items as already available.</p>
         <ul className="mb-3 space-y-2 text-sm">
           {servers.map((s, i) => (
-            <li key={i} className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
-              <span className="font-medium">{s.name}<span className="ml-2 font-mono text-xs text-zinc-500">{s.implementation}</span></span>
-              <button onClick={() => removeServer.mutate(s.id)} className="text-xs text-red-500 hover:underline">Remove</button>
+            <li key={i} className="flex items-center justify-between rounded-lg border border-rule px-3 py-2">
+              <span className="font-medium text-ink">{s.name}<span className="ml-2 font-mono text-xs text-ink-dim">{s.implementation}</span></span>
+              <button onClick={() => removeServer.mutate(s.id)} className="text-xs text-err hover:underline">Remove</button>
             </li>
           ))}
-          {servers.length === 0 && <li className="text-sm text-zinc-500">No media servers configured.</li>}
+          {servers.length === 0 && <li className="text-sm text-ink-dim">No media servers configured.</li>}
         </ul>
         <div className="flex flex-wrap items-end gap-2">
-          <label className="min-w-28"><span className="mb-1 block text-xs text-zinc-500">Name</span>
-            <input value={serverDraft.name} onChange={(e) => setServerDraft({ ...serverDraft, name: e.target.value })} placeholder="Plex#1" className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
-          <label className="min-w-28"><span className="mb-1 block text-xs text-zinc-500">Type</span>
-            <select value={serverDraft.implementation} onChange={(e) => setServerDraft({ ...serverDraft, implementation: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900">
+          <label className="min-w-28"><span className="mb-1 block text-xs text-ink-dim">Name</span>
+            <input value={serverDraft.name} onChange={(e) => setServerDraft({ ...serverDraft, name: e.target.value })} placeholder="Plex#1" className={inputCls} /></label>
+          <label className="min-w-28"><span className="mb-1 block text-xs text-ink-dim">Type</span>
+            <select value={serverDraft.implementation} onChange={(e) => setServerDraft({ ...serverDraft, implementation: e.target.value })} className={selectCls}>
               <option value="jellyfin">Jellyfin</option><option value="plex">Plex</option>
             </select></label>
-          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-zinc-500">Host</span>
-            <input value={serverDraft.host} onChange={(e) => setServerDraft({ ...serverDraft, host: e.target.value })} placeholder={serverDraft.implementation === "plex" ? "http://192.168.1.10:32400" : "http://192.168.1.10:8096"} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
-          <label className="min-w-32"><span className="mb-1 block text-xs text-zinc-500">{SERVER_TOKEN_LABEL[serverDraft.implementation] ?? "API key"}</span>
-            <input value={serverDraft.apiKey} onChange={(e) => setServerDraft({ ...serverDraft, apiKey: e.target.value })} className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700" /></label>
+          <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-ink-dim">Host</span>
+            <input value={serverDraft.host} onChange={(e) => setServerDraft({ ...serverDraft, host: e.target.value })} placeholder={serverDraft.implementation === "plex" ? "http://192.168.1.10:32400" : "http://192.168.1.10:8096"} className={inputCls} /></label>
+          <label className="min-w-32"><span className="mb-1 block text-xs text-ink-dim">{SERVER_TOKEN_LABEL[serverDraft.implementation] ?? "API key"}</span>
+            <input value={serverDraft.apiKey} onChange={(e) => setServerDraft({ ...serverDraft, apiKey: e.target.value })} className={inputCls} /></label>
           <button disabled={!serverDraft.name} onClick={() => saveServers.mutate({ name: serverDraft.name, implementation: serverDraft.implementation, enabled: true, settings: { host: serverDraft.host, apiKey: serverDraft.apiKey } })}
-            className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50">Add server</button>
+            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">Add server</button>
         </div>
-        {saveServers.isError && <p className="mt-2 text-xs text-red-600">{saveServers.error instanceof Error ? saveServers.error.message : "Failed"}</p>}
+        {saveServers.isError && <p className="mt-2 text-xs text-err">{saveServers.error instanceof Error ? saveServers.error.message : "Failed"}</p>}
       </section>
     </div>
   );
