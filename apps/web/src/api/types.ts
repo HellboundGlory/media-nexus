@@ -51,6 +51,7 @@ export interface Series {
   genres: string[];
   images: { coverType: string; url: string }[];
   tags: string[];
+  qualityProfileId: string | null;
   rootFolderPath: string;
   addedAt: string;
 }
@@ -414,4 +415,49 @@ export interface DiscoverPage {
   totalPages: number;
   totalResults: number;
   results: DiscoverItem[];
+}
+
+// ---------- Quality Profiles & Custom Formats (QUALITYPROFILES-1 / UNI-014, UNI-015) ----------
+
+/** One entry of GET /quality-profiles/registry — the static ordered quality ladder.
+ *  The registry is stored worst→best; the UI renders it reversed (best at top). */
+export interface QualityRegistryItem {
+  id: number;
+  key: string;
+  title: string;
+  source: string;
+  resolution: string;
+}
+
+/** A quality profile row as returned by GET /quality-profiles. `items` is an ordered
+ *  array of allowed quality registry ids (worst→best); `cutoffQualityId` is one of `items`. */
+export interface QualityProfile {
+  id: string;
+  name: string;
+  items: number[];
+  cutoffQualityId: number;
+  upgradeAllowed: boolean;
+  language: string;
+  isDefault: boolean;
+  /** Per-custom-format score keyed by custom format id (absent format = contributes 0). */
+  formatScores: Record<string, number>;
+  minFormatScore: number;
+  cutoffFormatScore: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+/** The discriminated union a custom format spec can be (mirrors customFormatSpecSchema). */
+export type CustomFormatSpec =
+  | { type: "term"; term: string; useRegex: boolean; negate: boolean; caseSensitive: boolean }
+  | { type: "size"; min?: number; max?: number; negate: boolean; caseSensitive: boolean }
+  | { type: "language"; language: string; negate: boolean; caseSensitive: boolean }
+  | { type: "indexer"; indexerId: string; negate: boolean; caseSensitive: boolean };
+
+export interface CustomFormat {
+  id: string;
+  name: string;
+  specs: CustomFormatSpec[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }

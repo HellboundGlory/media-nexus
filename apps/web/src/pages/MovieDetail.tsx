@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Crosshair, FolderOpen, RefreshCw, Trash2, FileText, Search } from "lucide-react";
+import { ArrowLeft, Crosshair, FolderOpen, RefreshCw, Trash2, FileText, Search, Pencil } from "lucide-react";
 import { api } from "../api/client";
 import type { Movie, MediaFileRow, Release } from "../api/types";
 import { ErrorState, formatBytes, formatDate } from "../lib/ui";
@@ -20,6 +20,7 @@ import { ManageFilesModal } from "../components/detail/ManageFilesModal";
 import { MonitoredLamp } from "../components/detail/MonitoredLamp";
 import { DeleteConfirmModal } from "../components/detail/DeleteConfirmModal";
 import { MediaFileActions } from "../components/detail/MediaFileActions";
+import { EditTitleModal, type EditTitleBody } from "../components/EditTitleModal";
 
 export default function MovieDetail() {
   const { id = "" } = useParams();
@@ -29,6 +30,7 @@ export default function MovieDetail() {
   const [renaming, setRenaming] = useState(false);
   const [managing, setManaging] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [autoResult, setAutoResult] = useState<{ tone: "ok" | "none" | "error"; text: string } | null>(null);
 
   const movie = useQuery({ queryKey: ["movie", id], queryFn: () => api.get<Movie>(`/movies/${id}`) });
@@ -45,6 +47,10 @@ export default function MovieDetail() {
   const remove = useMutation({
     mutationFn: (opts?: { deleteFiles?: boolean; addImportExclusion?: boolean }) => api.del(`/movies/${id}`, opts ?? {}),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["movies"] }); navigate("/movies"); },
+  });
+  const update = useMutation({
+    mutationFn: (body: EditTitleBody) => api.put(`/movies/${id}`, body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["movie", id] }); setEditing(false); },
   });
   const autoSearch = useMutation({
     mutationFn: () => api.post<{ grabbed: boolean; release?: Release; error?: string }>(`/movies/${id}/auto-search`),
@@ -149,6 +155,13 @@ export default function MovieDetail() {
               <RefreshCw className="h-3.5 w-3.5" /> Metadata
             </button>
             <button
+              onClick={() => setEditing(true)}
+              title="Edit movie settings (quality profile, monitored, path, tags)"
+              className="inline-flex items-center gap-1.5 rounded bg-bg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule"
+            >
+              <Pencil className="h-3.5 w-3.5" /> Edit
+            </button>
+            <button
               onClick={() => setConfirming(true)}
               disabled={remove.isPending}
               className="inline-flex items-center gap-1.5 rounded bg-err/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-err hover:bg-err/20 disabled:opacity-50"
@@ -225,6 +238,20 @@ export default function MovieDetail() {
           busy={remove.isPending}
           onConfirm={(o) => remove.mutate(o)}
           onClose={() => setConfirming(false)}
+        />
+      )}
+      {editing && (
+        <EditTitleModal
+          mediaType="movie"
+          initial={{
+            monitored: m.monitored,
+            qualityProfileId: m.qualityProfileId,
+            rootFolderPath: m.rootFolderPath,
+            minimumAvailability: m.minimumAvailability,
+            tags: m.tags,
+          }}
+          onSave={(body) => update.mutate(body)}
+          onClose={() => setEditing(false)}
         />
       )}
     </div>

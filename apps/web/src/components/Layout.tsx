@@ -2,7 +2,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, ListTree, ScrollText, LogOut, Download, CalendarDays, FileText, Filter, Tags, FolderOpen } from "lucide-react";
+import { Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, ListTree, ScrollText, LogOut, Download, CalendarDays, FileText, Filter, Tags, FolderOpen, Gauge, Layers } from "lucide-react";
 import { useAppStore, applyTheme } from "../store/useAppStore";
 import { api } from "../api/client";
 import type { SystemStatus, UpdateCheckState, HealthStatus } from "../api/types";
@@ -20,6 +20,8 @@ const nav = [
   { to: "/clients", label: "Clients & Servers", icon: Download },
   { to: "/release-profiles", label: "Release Profiles", icon: Filter },
   { to: "/auto-tags", label: "Auto Tags", icon: Tags },
+  { to: "/quality-profiles", label: "Quality Profiles", icon: Gauge },
+  { to: "/custom-formats", label: "Custom Formats", icon: Layers },
 ];
 
 /** Map the real overall-health signal onto a lamp tone. */

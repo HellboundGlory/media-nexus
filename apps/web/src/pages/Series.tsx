@@ -6,12 +6,17 @@ import { Search, Plus } from "lucide-react";
 import { api } from "../api/client";
 import type { Series as SeriesRow, Paged } from "../api/types";
 import { Badge, EmptyState, ErrorState } from "../lib/ui";
+import { AddTitleModal, type AddTitleBody } from "../components/AddTitleModal";
 
 export default function Series() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ title: "", tvdbId: "" });
+  // Holds the typed title until the AddTitleModal submits (QUALITYPROFILES-1): the quick-add's
+  // purpose is to capture the identity, then the modal collects root folder / quality profile /
+  // series type / tags before the actual POST /series.
+  const [draft, setDraft] = useState<{ title: string; tvdbId?: number } | null>(null);
 
   const series = useQuery({
     queryKey: ["series", search],
@@ -19,8 +24,9 @@ export default function Series() {
   });
 
   const add = useMutation({
-    mutationFn: (body: { title: string; tvdbId?: number }) => api.post<SeriesRow>("/series", body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["series"] }); setShowAdd(false); setForm({ title: "", tvdbId: "" }); },
+    mutationFn: (vars: { title: string; tvdbId?: number; body: AddTitleBody }) =>
+      api.post<SeriesRow>("/series", { title: vars.title, tvdbId: vars.tvdbId, ...vars.body }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["series"] }); setShowAdd(false); setForm({ title: "", tvdbId: "" }); setDraft(null); },
   });
 
   const remove = useMutation({ mutationFn: (id: string) => api.del(`/series/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ["series"] }) });
@@ -46,7 +52,7 @@ export default function Series() {
 
       {showAdd && (
         <form className="flex flex-wrap items-end gap-3 rounded-xl border border-rule bg-surface p-4"
-          onSubmit={(e) => { e.preventDefault(); add.mutate({ title: form.title, tvdbId: form.tvdbId ? Number(form.tvdbId) : undefined }); }}>
+          onSubmit={(e) => { e.preventDefault(); setDraft({ title: form.title, tvdbId: form.tvdbId ? Number(form.tvdbId) : undefined }); }}>
           <label className="flex-1 basis-52">
             <span className="mb-1 block text-xs text-ink-dim">Title</span>
             <input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
@@ -57,10 +63,9 @@ export default function Series() {
             <input value={form.tvdbId} onChange={(e) => setForm({ ...form, tvdbId: e.target.value })} type="number"
               className="w-full rounded-lg border border-rule bg-transparent px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40" />
           </label>
-          <button disabled={add.isPending} className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">
-            {add.isPending ? "Adding…" : "Add"}
+          <button type="submit" className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90">
+            Continue
           </button>
-          {add.isError && <p className="text-xs text-err">{add.error instanceof Error ? add.error.message : "Failed"}</p>}
         </form>
       )}
 
@@ -87,6 +92,17 @@ export default function Series() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {draft && (
+        <AddTitleModal
+          mediaType="series"
+          title={draft.title}
+          isPending={add.isPending}
+          error={add.error}
+          onClose={() => setDraft(null)}
+          onSubmit={(body) => add.mutate({ title: draft.title, tvdbId: draft.tvdbId, body })}
+        />
       )}
     </div>
   );

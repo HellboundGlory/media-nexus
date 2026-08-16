@@ -11,6 +11,19 @@ import type { MediaSummary, DiscoverCategory } from "@medianexus/integrations";
 import { MoviesService } from "../movies/movies.service";
 import { SeriesService } from "../series/series.service";
 import { AutoTagsService } from "../auto-tags/auto-tags.service";
+import type { SeriesType } from "@medianexus/domain";
+
+/** Optional non-smart fields the add flow can override (QUALITYPROFILES-1 / UNI-014). Every
+ *  field defaults to the same literal Discovery previously hardcoded ("" / [] / "standard" /
+ *  monitored:true), so callers that don't pass overrides get identical behaviour — only a field
+ *  actually being present changes anything, and that's the gap being closed. */
+export interface DiscoverAddOverrides {
+  qualityProfileId?: string;
+  rootFolderPath?: string;
+  tags?: string[];
+  seriesType?: SeriesType;
+  monitored?: boolean;
+}
 
 /**
  * Metadata import (metadata): TMDB provides movie/series enrichment and — critically —
@@ -359,8 +372,15 @@ export class MetadataService {
     };
   }
 
-  /** One-click add from discover: create the title, then best-effort enrich (images/genres/seasons). */
-  async addFromDiscover(mediaType: "movie" | "series", tmdbId: number): Promise<{ id: string; created: boolean }> {
+  /** One-click add from discover: create the title, then best-effort enrich (images/genres/seasons).
+   *  `overrides` (QUALITYPROFILES-1) carry the user's add-modal choices — quality profile, root
+   *  folder, tags, series type — through to the create; the TMDB-release-date-derived
+   *  minimumAvailability default stays non-overridable (a deliberate, existing smart default). */
+  async addFromDiscover(
+    mediaType: "movie" | "series",
+    tmdbId: number,
+    overrides: DiscoverAddOverrides = {},
+  ): Promise<{ id: string; created: boolean }> {
     const p = await this.provider();
 
     if (mediaType === "movie") {
@@ -374,7 +394,8 @@ export class MetadataService {
       const minimumAvailability = details.releaseDate && new Date(details.releaseDate) > new Date() ? "released" : "announced";
       const created = await this.movies.create({
         title: details.title, tmdbId, overview: details.overview ?? "", releaseDate: details.releaseDate,
-        monitored: true, rootFolderPath: "", tags: [], minimumAvailability,
+        monitored: overrides.monitored ?? true, rootFolderPath: overrides.rootFolderPath ?? "", tags: overrides.tags ?? [],
+        qualityProfileId: overrides.qualityProfileId, minimumAvailability,
       });
       await this.refreshMovie(created.id).catch((err) => this.logger.warn(`post-add movie enrich failed: ${(err as Error).message}`));
       return { id: created.id, created: true };
@@ -387,7 +408,9 @@ export class MetadataService {
     const details = await p.getDetails("series", String(tmdbId));
     const createdSeries = await this.series.create({
       title: details.title, tvdbId, tmdbId, overview: details.overview ?? "", firstAirYear: details.year,
-      monitored: true, rootFolderPath: "", seriesType: "standard", tags: [],
+      monitored: overrides.monitored ?? true, rootFolderPath: overrides.rootFolderPath ?? "",
+      seriesType: overrides.seriesType ?? "standard", tags: overrides.tags ?? [],
+      qualityProfileId: overrides.qualityProfileId,
     });
     await this.refreshSeries(createdSeries.id).catch((err) => this.logger.warn(`post-add series enrich failed: ${(err as Error).message}`));
     return { id: createdSeries.id, created: true };

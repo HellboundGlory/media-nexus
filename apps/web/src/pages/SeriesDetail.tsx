@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Crosshair, FolderOpen, MonitorDown, Database, FileText, Trash2, ChevronDown, ChevronRight, Search, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, Crosshair, FolderOpen, MonitorDown, Database, FileText, Trash2, ChevronDown, ChevronRight, Search, Eye, EyeOff, Pencil } from "lucide-react";
 import { clsx } from "clsx";
 import { api } from "../api/client";
 import type { Series as SeriesRow, Episode, MediaFileRow, Release } from "../api/types";
@@ -25,6 +25,7 @@ import { MonitoredLamp } from "../components/detail/MonitoredLamp";
 import { SeasonPill, type SeasonStats } from "../components/detail/SeasonPill";
 import { DeleteConfirmModal } from "../components/detail/DeleteConfirmModal";
 import { MediaFileActions } from "../components/detail/MediaFileActions";
+import { EditTitleModal, type EditTitleBody } from "../components/EditTitleModal";
 
 interface EpisodeView {
   episode: Episode;
@@ -40,6 +41,7 @@ export default function SeriesDetail() {
   const [renamingSeason, setRenamingSeason] = useState<number | null>(null);
   const [managing, setManaging] = useState<{ season?: number } | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<number> | null>(null);
   const [epAuto, setEpAuto] = useState<{ epId: string; tone: "ok" | "none" | "error"; text: string } | null>(null);
   const [seasonAuto, setSeasonAuto] = useState<{ seasonNum: number; tone: "ok" | "none" | "error"; text: string } | null>(null);
@@ -67,6 +69,10 @@ export default function SeriesDetail() {
   const remove = useMutation({
     mutationFn: (opts?: { deleteFiles?: boolean; addImportExclusion?: boolean }) => api.del(`/series/${id}`, opts ?? {}),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["series"] }); navigate("/series"); },
+  });
+  const update = useMutation({
+    mutationFn: (body: EditTitleBody) => api.put(`/series/${id}`, body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["series", id] }); setEditing(false); },
   });
   const autoSearchEpisode = useMutation({
     mutationFn: ({ epId }: { epId: string }) =>
@@ -236,6 +242,13 @@ export default function SeriesDetail() {
               className="inline-flex items-center gap-1.5 rounded bg-bg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule"
             >
               <FolderOpen className="h-3.5 w-3.5" /> Manage Episodes
+            </button>
+            <button
+              onClick={() => setEditing(true)}
+              title="Edit series settings (quality profile, monitored, series type, path, tags)"
+              className="inline-flex items-center gap-1.5 rounded bg-bg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule"
+            >
+              <Pencil className="h-3.5 w-3.5" /> Edit
             </button>
             <button
               onClick={() => setConfirming(true)}
@@ -458,6 +471,20 @@ export default function SeriesDetail() {
           busy={remove.isPending}
           onConfirm={(o) => remove.mutate(o)}
           onClose={() => setConfirming(false)}
+        />
+      )}
+      {editing && (
+        <EditTitleModal
+          mediaType="series"
+          initial={{
+            monitored: s.monitored,
+            qualityProfileId: s.qualityProfileId,
+            rootFolderPath: s.rootFolderPath,
+            seriesType: (s.seriesType as EditTitleBody["seriesType"]) ?? "standard",
+            tags: s.tags,
+          }}
+          onSave={(body) => update.mutate(body)}
+          onClose={() => setEditing(false)}
         />
       )}
     </div>

@@ -6,12 +6,14 @@ import { Search, Plus, Database } from "lucide-react";
 import { api } from "../api/client";
 import type { Movie, Paged } from "../api/types";
 import { Badge, EmptyState, ErrorState } from "../lib/ui";
+import { AddTitleModal, type AddTitleBody } from "../components/AddTitleModal";
 
 export default function Movies() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ title: "", tmdbId: "" });
+  const [draft, setDraft] = useState<{ title: string; tmdbId?: number } | null>(null);
 
   const movies = useQuery({
     queryKey: ["movies", search],
@@ -19,8 +21,9 @@ export default function Movies() {
   });
 
   const add = useMutation({
-    mutationFn: (body: { title: string; tmdbId?: number }) => api.post<Movie>("/movies", body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["movies"] }); setShowAdd(false); setForm({ title: "", tmdbId: "" }); },
+    mutationFn: (vars: { title: string; tmdbId?: number; body: AddTitleBody }) =>
+      api.post<Movie>("/movies", { title: vars.title, tmdbId: vars.tmdbId, ...vars.body }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["movies"] }); setShowAdd(false); setForm({ title: "", tmdbId: "" }); setDraft(null); },
   });
 
   const remove = useMutation({
@@ -59,7 +62,7 @@ export default function Movies() {
       {showAdd && (
         <form
           className="flex flex-wrap items-end gap-3 rounded-xl border border-rule bg-surface p-4"
-          onSubmit={(e) => { e.preventDefault(); add.mutate({ title: form.title, tmdbId: form.tmdbId ? Number(form.tmdbId) : undefined }); }}
+          onSubmit={(e) => { e.preventDefault(); setDraft({ title: form.title, tmdbId: form.tmdbId ? Number(form.tmdbId) : undefined }); }}
         >
           <label className="flex-1 basis-52">
             <span className="mb-1 block text-xs text-ink-dim">Title</span>
@@ -71,10 +74,9 @@ export default function Movies() {
             <input value={form.tmdbId} onChange={(e) => setForm({ ...form, tmdbId: e.target.value })} type="number"
               className="w-full rounded-lg border border-rule bg-transparent px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40" />
           </label>
-          <button disabled={add.isPending} className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">
-            {add.isPending ? "Adding…" : "Add"}
+          <button type="submit" className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90">
+            Continue
           </button>
-          {add.isError && <p className="text-xs text-err">{add.error instanceof Error ? add.error.message : "Failed"}</p>}
         </form>
       )}
 
@@ -112,6 +114,17 @@ export default function Movies() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {draft && (
+        <AddTitleModal
+          mediaType="movie"
+          title={draft.title}
+          isPending={add.isPending}
+          error={add.error}
+          onClose={() => setDraft(null)}
+          onSubmit={(body) => add.mutate({ title: draft.title, tmdbId: draft.tmdbId, body })}
+        />
       )}
     </div>
   );

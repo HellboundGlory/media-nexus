@@ -16,6 +16,13 @@ const discoverQuery = z.object({
 const discoverAddBody = z.object({
   mediaType: z.enum(["movie", "series"]),
   tmdbId: z.number().int().positive(),
+  // Add-modal choices threaded through to create (QUALITYPROFILES-1 / UNI-014) — all optional;
+  // the service defaults each to the historical literals when absent.
+  qualityProfileId: z.string().optional(),
+  rootFolderPath: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  seriesType: z.enum(["standard", "daily", "anime"]).optional(),
+  monitored: z.boolean().optional(),
 });
 
 @ApiTags("metadata")
@@ -51,6 +58,12 @@ export class MetadataController {
   @Post("api/v1/discover/add")
   @ApiOperation({ summary: "Add a movie/series to the library from a TMDB discover result" })
   addFromDiscover(@Body(new ZodValidationPipe(discoverAddBody)) body: z.infer<typeof discoverAddBody>) {
-    return this.metadata.addFromDiscover(body.mediaType, body.tmdbId);
+    return this.metadata.addFromDiscover(body.mediaType, body.tmdbId, {
+      qualityProfileId: body.qualityProfileId,
+      rootFolderPath: body.rootFolderPath,
+      tags: body.tags,
+      seriesType: body.seriesType,
+      monitored: body.monitored,
+    });
   }
 }

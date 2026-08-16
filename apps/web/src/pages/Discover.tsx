@@ -6,6 +6,7 @@ import { Film, Tv, Star, Plus, Check, Settings } from "lucide-react";
 import { api, ApiClientError } from "../api/client";
 import type { DiscoverItem, DiscoverPage, DiscoverMediaType, DiscoverCategory } from "../api/types";
 import { Badge, EmptyState, ErrorState, Spinner } from "../lib/ui";
+import { AddTitleModal, type AddTitleBody } from "../components/AddTitleModal";
 
 const MEDIA_TABS: { key: DiscoverMediaType; label: string }[] = [
   { key: "movie", label: "Movies" },
@@ -23,6 +24,7 @@ export default function Discover() {
   const qc = useQueryClient();
   const [mediaType, setMediaType] = useState<DiscoverMediaType>("movie");
   const [category, setCategory] = useState<DiscoverCategory>("trending");
+  const [addModal, setAddModal] = useState<DiscoverItem | null>(null);
 
   const discover = useInfiniteQuery({
     queryKey: ["discover", mediaType, category],
@@ -32,8 +34,14 @@ export default function Discover() {
   });
 
   const add = useMutation({
-    mutationFn: (item: DiscoverItem) => api.post<{ id: string; created: boolean }>("/discover/add", { mediaType: item.mediaType, tmdbId: item.tmdbId }),
-    onSuccess: (res, item) => {
+    // QUALITYPROFILES-1: the add modal's fields ride along on POST /discover/add, which now
+    // accepts qualityProfileId/rootFolderPath/tags/seriesType and threads them into create.
+    mutationFn: (vars: { item: DiscoverItem; body: AddTitleBody }) =>
+      api.post<{ id: string; created: boolean }>("/discover/add", {
+        mediaType: vars.item.mediaType, tmdbId: vars.item.tmdbId, ...vars.body,
+      }),
+    onSuccess: (res, vars) => {
+      const item = vars.item;
       qc.setQueryData<InfiniteData<DiscoverPage>>(["discover", mediaType, category], (old) => {
         if (!old) return old;
         return {
@@ -45,6 +53,7 @@ export default function Discover() {
         };
       });
       qc.invalidateQueries({ queryKey: [mediaType === "movie" ? "movies" : "series"] });
+      setAddModal(null);
     },
   });
 
@@ -106,8 +115,8 @@ export default function Discover() {
               <DiscoverCard
                 key={item.tmdbId}
                 item={item}
-                onAdd={() => add.mutate(item)}
-                adding={add.isPending && add.variables?.tmdbId === item.tmdbId}
+                onAdd={() => setAddModal(item)}
+                adding={false}
               />
             ))}
           </div>
@@ -123,6 +132,20 @@ export default function Discover() {
             </div>
           )}
         </>
+      )}
+
+      {addModal && (
+        <AddTitleModal
+          mediaType={addModal.mediaType}
+          title={addModal.title}
+          posterUrl={addModal.posterUrl}
+          overview={addModal.overview}
+          isPending={add.isPending}
+          error={add.error}
+          lockMinimumAvailability={addModal.mediaType === "movie"}
+          onClose={() => setAddModal(null)}
+          onSubmit={(body) => add.mutate({ item: addModal, body })}
+        />
       )}
     </div>
   );

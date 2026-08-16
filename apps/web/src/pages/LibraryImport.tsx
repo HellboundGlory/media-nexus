@@ -5,6 +5,7 @@ import { FolderOpen, Plus, Search, Check, Film, Tv, RefreshCw } from "lucide-rea
 import { api, ApiClientError } from "../api/client";
 import type { RootFolder, UnmappedFolders, UnmappedFolder, DiscoverItem } from "../api/types";
 import { Badge, EmptyState, ErrorState, Spinner } from "../lib/ui";
+import { AddTitleModal, type AddTitleBody } from "../components/AddTitleModal";
 
 /** Library Import (gap report B3): browse a root folder for on-disk titles the library
  *  doesn't know about yet, search TMDB for each, and add it with a stored folder-name
@@ -27,6 +28,7 @@ export default function LibraryImport() {
   const [active, setActive] = useState<UnmappedFolder | null>(null);
   const [type, setType] = useState<"movie" | "series">("movie");
   const [query, setQuery] = useState("");
+  const [addHit, setAddHit] = useState<DiscoverItem | null>(null);
 
   const unmapped = useQuery({
     queryKey: ["unmapped", rootId],
@@ -41,17 +43,23 @@ export default function LibraryImport() {
   });
 
   const add = useMutation({
-    mutationFn: async (hit: DiscoverItem) => {
-      const body = {
+    mutationFn: async ({ hit, body }: { hit: DiscoverItem; body: AddTitleBody }) => {
+      // QUALITYPROFILES-1: the add modal's quality profile / monitored / tags / seriesType merge
+      // into the scanned body. rootFolderPath stays exactly what the scan determined (the modal
+      // renders it locked/read-only, so it can't diverge).
+      const base = {
         title: hit.title,
         tmdbId: hit.tmdbId,
         rootFolderPath: unmapped.data?.path ?? "",
         folderName: active?.name,
+        qualityProfileId: body.qualityProfileId,
+        monitored: body.monitored,
+        tags: body.tags,
       };
       if (type === "movie") {
-        return api.post<{ id: string }>("/movies", body);
+        return api.post<{ id: string }>("/movies", { ...base, minimumAvailability: body.minimumAvailability });
       }
-      const seriesRow = await api.post<{ id: string }>("/series", { ...body, tmdbId: hit.tmdbId });
+      const seriesRow = await api.post<{ id: string }>("/series", { ...base, seriesType: body.seriesType });
       // Create episodes/seasons from TMDB, then scan this title so files under the override
       // folder are imported here and now (the on-add scan fired at create time, before any
       // episodes existed, so it had nothing to match — without this follow-up scan a series'
@@ -63,6 +71,7 @@ export default function LibraryImport() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [type === "movie" ? "movies" : "series"] });
       qc.invalidateQueries({ queryKey: ["unmapped"] });
+      setAddHit(null);
       setActive(null);
     },
   });
@@ -205,7 +214,7 @@ export default function LibraryImport() {
                                 </div>
                                 <button
                                   disabled={add.isPending}
-                                  onClick={() => add.mutate(hit)}
+                                  onClick={() => setAddHit(hit)}
                                   className="flex shrink-0 items-center gap-1 rounded-lg border border-rule bg-bg px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule disabled:opacity-50"
                                 >
                                   {add.isPending ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />} Add
@@ -222,6 +231,19 @@ export default function LibraryImport() {
             </div>
           )}
         </>
+      )}
+
+      {addHit && (
+        <AddTitleModal
+          mediaType={addHit.mediaType}
+          title={addHit.title}
+          posterUrl={addHit.posterUrl}
+          lockedRootFolderPath={unmapped.data?.path}
+          isPending={add.isPending}
+          error={add.error}
+          onClose={() => setAddHit(null)}
+          onSubmit={(body) => add.mutate({ hit: addHit, body })}
+        />
       )}
     </div>
   );
