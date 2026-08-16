@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { HistoryRow, QueueRow, WantedItem } from "../api/types";
 import { MonitorDown } from "lucide-react";
-import { Badge, EmptyState, ErrorState, formatDate, formatBytes, statusTone } from "../lib/ui";
+import { Badge, EmptyState, ErrorState, formatDate, formatBytes, statusTone, ProgressBar } from "../lib/ui";
 
 type Tab = "queue" | "history" | "wanted";
 
@@ -57,10 +57,8 @@ export default function Activity() {
                     <td className="px-4 py-2.5"><Badge tone={statusTone(q.status)}>{q.status}</Badge></td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2">
-                        <div className="h-1.5 w-24 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
-                          <div className="h-full bg-violet-500" style={{ width: `${q.progress}%` }} />
-                        </div>
-                        <span className="text-xs text-zinc-500">{q.progress}%</span>
+                        <ProgressBar value={q.progress} />
+                        <span className="text-xs text-ink-dim tabular-nums">{q.progress}%</span>
                       </div>
                     </td>
                     <td className="px-4 py-2.5 text-zinc-500">{formatBytes(q.size)}</td>

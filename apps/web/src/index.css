@@ -2,14 +2,102 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ------------------------------------------------------------------ *
+ * Design tokens — "Master Control" broadcast-control-room identity.
+ *
+ * Values live here as raw semantic CSS custom properties: the light
+ * companion on :root, the dark direction re-declared under .dark (the
+ * app toggles the `dark` class on <html> via useAppStore/applyTheme).
+ * The @theme inline block below maps the bare names (--bg, --surface,
+ * --ink, …) onto Tailwind's --color-* namespace so components can use
+ * ordinary utilities (bg-surface, text-ink, border-rule, text-accent).
+ * ------------------------------------------------------------------ */
+
 :root {
+  color-scheme: light;
+
+  --bg: #eef1f5;
+  --surface: #ffffff;
+  --ink: #121722;
+  --ink-dim: #5b6478;
+  --accent: #2f6fb0;
+  --accent-ink: #ffffff;
+  --ok: #2f6fb0;
+  --warn: #9c6a24;
+  --err: #b23f34;
+  --rule: #d7dce3;
+  --track: #e2e6ec;
+
+  /* badge / lamp tint pairs (light) */
+  --ok-bg: rgba(47, 111, 176, 0.1);
+  --ok-ink: #2f6fb0;
+  --warn-bg: rgba(179, 121, 42, 0.14);
+  --warn-ink: #9c6a24;
+  --err-bg: rgba(194, 69, 59, 0.12);
+  --err-ink: #b23f34;
+  --neutral-bg: rgba(18, 23, 34, 0.06);
+  --neutral-ink: #5b6478;
+}
+
+.dark {
   color-scheme: dark;
+
+  --bg: #0a0e14;
+  --surface: #10161d;
+  --ink: #dbe4ee;
+  --ink-dim: #71809c;
+  --accent: #4a90d9;
+  --accent-ink: #06121f;
+  --ok: #57a6e8;
+  --warn: #d9a73e;
+  --err: #db5c50;
+  --rule: #1c2530;
+  --track: #131c25;
+
+  /* badge / lamp tint pairs (dark) — never reuse the light values */
+  --ok-bg: rgba(87, 166, 232, 0.14);
+  --ok-ink: #57a6e8;
+  --warn-bg: rgba(217, 167, 62, 0.12);
+  --warn-ink: #d9a73e;
+  --err-bg: rgba(219, 92, 80, 0.14);
+  --err-ink: #db5c50;
+  --neutral-bg: rgba(219, 228, 238, 0.08);
+  --neutral-ink: #93a1b8;
+}
+
+/* Map the semantic tokens onto Tailwind's color namespace. `inline` keeps the
+ * var() reference in the emitted utility so the .dark overrides are honoured. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-err: var(--err);
+  --color-rule: var(--rule);
+  --color-track: var(--track);
+  --color-ok-bg: var(--ok-bg);
+  --color-ok-ink: var(--ok-ink);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-ink: var(--warn-ink);
+  --color-err-bg: var(--err-bg);
+  --color-err-ink: var(--err-ink);
+  --color-neutral-bg: var(--neutral-bg);
+  --color-neutral-ink: var(--neutral-ink);
+}
+
+/* Display face — self-hosted via @fontsource/rajdhani (imported in main.tsx). */
+@theme {
+  --font-display: "Rajdhani", ui-sans-serif, system-ui, sans-serif;
 }
 
 body {
-  @apply bg-zinc-100 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+  @apply bg-bg text-ink antialiased;
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { @apply rounded-full bg-zinc-300 dark:bg-zinc-700; }
+::-webkit-scrollbar-thumb { @apply rounded-full bg-rule; }
 ::-webkit-scrollbar-track { background: transparent; }

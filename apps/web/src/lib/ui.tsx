@@ -5,7 +5,7 @@ import { Loader2 , Inbox, AlertTriangle } from "lucide-react";
 
 export function Spinner({ label }: { label?: string }) {
   return (
-    <div className="flex items-center gap-2 text-sm text-zinc-500" role="status">
+    <div className="flex items-center gap-2 text-sm text-ink-dim" role="status">
       <Loader2 className="h-4 w-4 animate-spin" /> {label ?? "Loading…"}
     </div>
   );
@@ -13,10 +13,10 @@ export function Spinner({ label }: { label?: string }) {
 
 export function EmptyState({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 px-6 py-12 text-center dark:border-zinc-700">
-      <Inbox className="h-8 w-8 text-zinc-400" />
-      <p className="font-medium text-zinc-700 dark:text-zinc-200">{title}</p>
-      {hint && <p className="max-w-sm text-sm text-zinc-500">{hint}</p>}
+    <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-rule bg-surface px-6 py-12 text-center">
+      <Inbox className="h-8 w-8 text-ink-dim" />
+      <p className="font-medium text-ink">{title}</p>
+      {hint && <p className="max-w-sm text-sm text-ink-dim">{hint}</p>}
       {action}
     </div>
   );
@@ -25,13 +25,13 @@ export function EmptyState({ title, hint, action }: { title: string; hint?: stri
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const msg = error instanceof Error ? error.message : String(error);
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-err/40 bg-err-bg px-4 py-3 text-sm text-err-ink">
       <div className="flex items-center gap-2">
         <AlertTriangle className="h-4 w-4" />
         <span>{msg}</span>
       </div>
       {onRetry && (
-        <button onClick={onRetry} className="rounded-md px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900/40">
+        <button onClick={onRetry} className="rounded-md px-2 py-1 text-xs font-medium text-err-ink hover:bg-err-bg">
           Retry
         </button>
       )}
@@ -41,14 +41,14 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
 
 export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "ok" | "warn" | "danger" | "info" }) {
   const tones: Record<string, string> = {
-    neutral: "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-    ok: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300",
-    warn: "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300",
-    danger: "bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300",
-    info: "bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-300",
+    neutral: "bg-neutral-bg text-neutral-ink",
+    ok: "bg-ok-bg text-ok-ink",
+    warn: "bg-warn-bg text-warn-ink",
+    danger: "bg-err-bg text-err-ink",
+    info: "bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] text-accent",
   };
   return (
-    <span className={clsx("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium", tones[tone])}>{children}</span>
+    <span className={clsx("inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wide", tones[tone])}>{children}</span>
   );
 }
 
@@ -64,10 +64,55 @@ export function statusTone(status: string): "ok" | "warn" | "danger" | "info" | 
 
 export function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <p className="text-xs uppercase tracking-wide text-zinc-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold">{value}</p>
-      {hint && <p className="text-xs text-zinc-500">{hint}</p>}
+    <div className="rounded-lg border border-rule bg-surface p-4">
+      <p className="font-display text-xs font-medium uppercase tracking-[0.04em] text-ink-dim">{label}</p>
+      <p className="mt-1 font-display text-2xl font-bold uppercase tracking-[0.05em] tabular-nums text-accent">{value}</p>
+      {hint && <p className="text-xs text-ink-dim">{hint}</p>}
+    </div>
+  );
+}
+
+/**
+ * StatusLamp — a small glowing dot + label for REAL health/status signals
+ * (queue item status, indexer/download-client connectivity, provider health).
+ * Not a decorative badge: attach it only where a genuine signal exists.
+ * Dark theme gets a soft glow; light theme uses a ring (glow reads washed-out
+ * on white — confirmed in the approved mockup).
+ */
+export type LampTone = "ok" | "warn" | "err" | "neutral";
+
+export function StatusLamp({ tone = "neutral", label, className }: { tone?: LampTone; label?: ReactNode; className?: string }) {
+  const dot: Record<LampTone, string> = {
+    ok: "bg-ok shadow-[0_0_0_2px_var(--ok)] dark:shadow-[0_0_7px_1px_var(--ok)]",
+    warn: "bg-warn shadow-[0_0_0_2px_var(--warn)] dark:shadow-[0_0_7px_1px_var(--warn)]",
+    err: "bg-err shadow-[0_0_0_2px_var(--err)] dark:shadow-[0_0_7px_1px_var(--err)]",
+    neutral: "bg-ink-dim shadow-[0_0_0_2px_var(--ink-dim)] dark:shadow-[0_0_7px_1px_var(--ink-dim)]",
+  };
+  return (
+    <span className={clsx("inline-flex items-center gap-1.5", className)} role="status">
+      <span className={clsx("h-2 w-2 rounded-full", dot[tone])} />
+      {label != null && <span className="text-xs font-medium text-ink-dim">{label}</span>}
+    </span>
+  );
+}
+
+/**
+ * ProgressBar — segmented "VU-meter" fill (repeating 4px segments with 1px gap)
+ * over the --track background, not a smooth gradient. Replaces the ad-hoc
+ * violet bar in Activity.tsx.
+ */
+export function ProgressBar({ value, className }: { value: number; className?: string }) {
+  const pct = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
+  return (
+    <div className={clsx("h-2 w-24 overflow-hidden rounded-sm bg-track", className)}>
+      <div
+        className="h-full"
+        style={{
+          width: `${pct}%`,
+          backgroundImage:
+            "repeating-linear-gradient(90deg, var(--accent) 0 4px, transparent 4px 5px)",
+        }}
+      />
     </div>
   );
 }
