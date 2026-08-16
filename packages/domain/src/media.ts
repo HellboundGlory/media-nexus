@@ -147,18 +147,6 @@ export function targetEpisodeIds(target: ReleaseTarget): string[] {
   return target.kind === "episode" ? target.episodes.map((e) => e.id) : [];
 }
 
-/** True when nothing the target covers has a file yet. */
-export function targetIsMissing(target: ReleaseTarget, movieHasFile = false): boolean {
-  if (target.kind === "movie") return !movieHasFile;
-  return target.episodes.every((e) => !e.hasFile);
-}
-
-/** True when at least one thing the target covers is monitored. */
-export function targetIsMonitored(target: ReleaseTarget, movieMonitored = true): boolean {
-  if (target.kind === "movie") return movieMonitored;
-  return target.episodes.some((e) => e.monitored);
-}
-
 // ---------------------------------------------------------------------------
 // Existing-file view — what the target already has, for upgrade decisions
 // ---------------------------------------------------------------------------

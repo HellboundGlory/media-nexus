@@ -87,7 +87,6 @@ export const runtimeSettingsSchema = z.object({
   // a non-empty one means BYO-key mode against the real TVDB API. The apiKey is a J9 secret.
   "metadata.tvdbBaseUrl": z.string().default(""),
   "metadata.tvdbApiKey": z.string().default(""),
-  "system.timezone": z.string().default("UTC"),
   "ui.theme": z.enum(["dark", "light"]).default("dark"),
   // Housekeeping retention windows (roadmap P1, gap report B9). Orphan rows (no matching
   // movie/series) are always swept regardless of age; these only bound the unconditional

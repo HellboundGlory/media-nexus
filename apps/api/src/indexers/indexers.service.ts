@@ -342,9 +342,16 @@ export class IndexersService {
     // can use t=tvsearch / t=movie instead of fuzzy t=search when available; its tags
     // drive tag-scoped indexer search (roadmap P2, gap C6).
     const { tags, ...ids } = await this.lookupSearchIds(input.mediaType, input.mediaId);
-    const results = await this.fetchReleases(
+    const results = (await this.fetchReleases(
       query, input.limit ?? 20, input.mediaType, input.seasons?.[0], input.episodes?.[0], ids, tags,
-    );
+    ))
+      // Higher-priority indexer results surface first in the interactive list (roadmap J7 —
+      // a real indexer.priority consumer). Sonarr/Prowlarr convention: LOWER priority NUMBER
+      // = HIGHER priority (1 best, 50 worst; schema default 25), so ascending by number puts
+      // the highest-priority indexer first. Stable: releases fetched from the same indexer
+      // keep their original order, and indexer priority never outranks the decision engine
+      // or a user's own choice — it's a display- (and RSS tie-) break only.
+      .sort((a, b) => (a.indexerPriority ?? 25) - (b.indexerPriority ?? 25));
     const decisions = await this.decisions.evaluateMany(input.mediaType, input.mediaId, results);
     const releases = results.map((r, i) => ({ ...r, decision: decisions[i] }));
     return { mediaType: input.mediaType, mediaId: input.mediaId, query, releases };
@@ -425,7 +432,7 @@ export class IndexersService {
           }
         }
         for (const r of releases) {
-          results.push({ ...r, indexerId: row.id, indexerName: row.name });
+          results.push({ ...r, indexerId: row.id, indexerName: row.name, indexerPriority: row.priority });
         }
       } catch (err) {
         await this.status.recordFailure("indexer", row.id, err);

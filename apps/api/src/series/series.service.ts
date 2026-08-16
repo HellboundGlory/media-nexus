@@ -3,13 +3,13 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { extname, join } from "node:path";
 import { LocalStorageProvider } from "@medianexus/integrations";
-import { deletePolymorphicRows, deletePolymorphicRowsAsync, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
+import { ensureAvailability, getMediaCredits, getMediaFiles, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition } from "../media/library.helpers";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import type { RuntimeSettings } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import { episodeQueryTag, parseEpisodeRelease, pickBest } from "@medianexus/domain";
+import { episodeQueryTag, parseEpisodeRelease } from "@medianexus/domain";
 import type { CreateSeries, Quality, Release, SeriesType, UpdateSeriesBody } from "@medianexus/domain";
 import { seriesFolderName, episodeFileName } from "../media/naming.helpers";
 import { selectMediaFiles, runWrite, type MediaFileRow } from "../media/media-file.types";
@@ -155,8 +155,7 @@ export class SeriesService {
    *  file-level display. Read-only, pure DB. Each row's episodeIds lets the frontend attribute
    *  a file to its season (via the already-fetched episode list). */
   async files(id: string): Promise<MediaFileRow[]> {
-    await this.get(id);
-    return selectMediaFiles(this.db, "series", id);
+    return getMediaFiles(this.db, "series", id);
   }
 
   async list(q: { search?: string; page?: number; pageSize?: number }) {
@@ -166,8 +165,7 @@ export class SeriesService {
 
   async get(id: string) {
     const rows = await this.db.select().from(schema.series).where(eq(schema.series.id, id)).limit(1);
-    if (!rows[0]) throw ApiError.notFound("series", id);
-    return rows[0];
+    return requireFound(rows[0], "series", id);
   }
 
   /** Edit a series (roadmap P1, gap report C5). Partial body; omitted fields untouched,
@@ -261,62 +259,20 @@ export class SeriesService {
   async remove(id: string, opts: { deleteFiles?: boolean; addImportExclusion?: boolean } = {}) {
     const row = await this.get(id);
     const { deleteFiles = false, addImportExclusion = false } = opts;
-    // Before the DB cascade: physically delete each file and the title's folder when requested
-    // (opt-in — a bare DELETE on its own does nothing to disk, matching upstream).
-    if (deleteFiles) await this.deleteFilesFromDisk(row);
-    // Only the polymorphic tables need a hand-written delete here — season/episode cascade
-    // automatically via their DB-level FK to series (roadmap P0.7) once the series row
-    // itself is deleted.
-    if (this.db.dbDialect === "postgres") {
-      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
-      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
-      await this.db.transaction(async (tx) => {
-        await deletePolymorphicRowsAsync(tx, "series", id);
-        await tx.delete(schema.series).where(eq(schema.series.id, id));
-        // C2 import lists: only exclude from re-import when explicitly requested (opt-in).
-        if (addImportExclusion && row.tmdbId != null) {
-          await tx.insert(schema.importExclusion).values({
-            id: `excl-series-${row.tmdbId}`, mediaType: "series", externalId: String(row.tmdbId),
-            reason: "removed from library", createdAt: new Date().toISOString(),
-          }).onConflictDoNothing();
-        }
-      });
-    } else {
-      this.db.transaction((tx) => {
-        deletePolymorphicRows(tx, "series", id);
-        tx.delete(schema.series).where(eq(schema.series.id, id)).run();
-        // C2 import lists: only exclude from re-import when explicitly requested (opt-in).
-        if (addImportExclusion && row.tmdbId != null) {
-          tx.insert(schema.importExclusion).values({
-            id: `excl-series-${row.tmdbId}`, mediaType: "series", externalId: String(row.tmdbId),
-            reason: "removed from library", createdAt: new Date().toISOString(),
-          }).onConflictDoNothing().run();
-        }
-      });
-    }
-    this.events.publish(EventTypes.SeriesRemoved, { seriesId: id }, { aggType: "series", aggId: id });
-    return { removed: id };
-  }
-
-  /** Move every series file into the recycle bin, then remove the title's folder itself
-   *  (recursive — also removes untracked extras/subtitles, matching upstream). A file already
-   *  missing on disk is wrapped + logged; a folder-delete failure surfaces normally. */
-  private async deleteFilesFromDisk(series: typeof schema.series.$inferSelect): Promise<void> {
-    const files = await this.db.select().from(schema.mediaFile)
-      .where(and(eq(schema.mediaFile.mediaType, "series"), eq(schema.mediaFile.mediaId, series.id)));
-    const root = series.rootFolderPath ?? "";
-    const folder = join(root, seriesFolderName(series.title));
-    const storage = new LocalStorageProvider();
-    for (const f of files) {
-      // relativePath is root-relative and includes the title-folder prefix — no double join.
-      const abs = join(root, f.relativePath);
-      try {
-        await this.recycleBin.dispose(abs);
-      } catch (err) {
-        this.logger.warn(`Failed to dispose series file ${abs}: ${(err as Error).message}`);
-      }
-    }
-    await storage.delete(folder);
+    return removeMediaItem(this.db, {
+      events: this.events,
+      recycleBin: this.recycleBin,
+      logWarn: (msg) => this.logger.warn(msg),
+    }, {
+      mediaType: "series",
+      id,
+      rootFolderPath: row.rootFolderPath,
+      folderName: seriesFolderName(row.title),
+      tmdbId: row.tmdbId,
+      deleteFiles,
+      addImportExclusion,
+      publish: (events, sid) => events.publish(EventTypes.SeriesRemoved, { seriesId: sid }, { aggType: "series", aggId: sid }),
+    });
   }
 
   // ---------- episodes (M2) ----------
@@ -335,14 +291,7 @@ export class SeriesService {
 
   /** Cast & crew for a series (DETAILPAGE-BE2) — split by role, cast ordered top-billed first. */
   async credits(seriesId: string): Promise<{ cast: typeof schema.mediaCredit.$inferSelect[]; crew: typeof schema.mediaCredit.$inferSelect[] }> {
-    await this.get(seriesId);
-    const rows = await this.db.select().from(schema.mediaCredit)
-      .where(and(eq(schema.mediaCredit.mediaType, "series"), eq(schema.mediaCredit.mediaId, seriesId)))
-      .orderBy(asc(schema.mediaCredit.sortOrder));
-    return {
-      cast: rows.filter((r) => r.role === "cast"),
-      crew: rows.filter((r) => r.role === "crew"),
-    };
+    return getMediaCredits(this.db, "series", seriesId);
   }
 
   /** Bulk-create episodes for a season (metadata import will automate this; manual endpoint for now). */
@@ -455,20 +404,16 @@ export class SeriesService {
       absoluteNumber: row.episode.absoluteNumber,
     };
     const query = episodeAutoQuery(seriesType, series.title, target);
-    const res = await this.indexers.search({ mediaType: "series", mediaId: series.id, query, limit: 50 });
-    if (res.releases.length === 0) return { grabbed: false };
-    const candidates = res.releases.filter((r) => episodeAutoMatches(seriesType, target, r.title));
-    const best = pickBest(candidates.map((r) => r.decision));
-    if (!best) return { grabbed: false };
-    try {
-      await this.indexers.grab({ mediaType: "series", mediaId: series.id, releaseId: best.release.id, indexerId: best.release.indexerId, release: best.release });
-      return { grabbed: true, release: best.release };
-    } catch (err) {
-      const error = (err as Error).message;
-      this.logger.warn(`auto-search grab failed for "${series.title}" ${query}: ${error}`);
-      this.events.publish(EventTypes.DownloadClientFailed, { seriesId: series.id, error });
-      return { grabbed: false, error };
-    }
+    return searchAndGrabRelease(this.indexers, {
+      mediaType: "series",
+      mediaId: series.id,
+      buildQuery: () => query,
+      matches: (r) => episodeAutoMatches(seriesType, target, r.title),
+      publishFailure: (error) => {
+        this.logger.warn(`auto-search grab failed for "${series.title}" ${query}: ${error}`);
+        this.events.publish(EventTypes.DownloadClientFailed, { seriesId: series.id, error });
+      },
+    });
   }
 
   /**

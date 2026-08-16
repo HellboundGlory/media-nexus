@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: MIT
-import { and, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, sql, type SQL } from "drizzle-orm";
 import type { SQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core";
 import type { Db } from "@medianexus/database";
 import { schema } from "@medianexus/database";
-import { newEntityId } from "@medianexus/shared";
-import type { MediaType, QualityProfileLike } from "@medianexus/domain";
+import { ApiError, newEntityId } from "@medianexus/shared";
+import { pickBest, type MediaType, type QualityProfileLike, type Release } from "@medianexus/domain";
+import { join } from "node:path";
+import { LocalStorageProvider } from "@medianexus/integrations";
+import { selectMediaFiles, type MediaFileRow } from "./media-file.types";
+import type { EventsService } from "../events/events.service";
+import type { IndexersService } from "../indexers/indexers.service";
+import type { RecycleBinService } from "./recycle-bin.service";
 
 /**
  * Small shared pieces of the movie/series services. These two paths had independently
@@ -185,4 +191,164 @@ export async function getQualityProfile(db: Db, qualityProfileId: string | null)
     minFormatScore: row.minFormatScore ?? 0,
     cutoffFormatScore: row.cutoffFormatScore ?? 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Shared movie/series CRUD plumbing (roadmap J1). The two services' get()/files()/credits()/
+// remove()/auto-search paths carried independently written — and independently drifting —
+// copies of the same control flow; only the table, on-disk folder name, removed/download-
+// failed event and the match/query predicate genuinely differ. Everything below is
+// parameterized over those, so the movie and series paths cannot drift the way they did.
+// ---------------------------------------------------------------------------
+
+/** Throw the standard notFound error when a fetched row is absent. The movie/series get()
+ *  lookups differ only in table and label; this holds the shared 404 mechanics. */
+export function requireFound<T>(row: T | null | undefined, mediaType: "movie" | "series", id: string): T {
+  if (row == null) throw ApiError.notFound(mediaType, id);
+  return row;
+}
+
+/** Existence-check a title (404 on missing) before a read that needs it. */
+async function requireTitleExists(db: Db, mediaType: "movie" | "series", mediaId: string): Promise<void> {
+  const q: PromiseLike<{ id: string }[]> = mediaType === "movie"
+    ? db.select({ id: schema.movie.id }).from(schema.movie).where(eq(schema.movie.id, mediaId)).limit(1)
+    : db.select({ id: schema.series.id }).from(schema.series).where(eq(schema.series.id, mediaId)).limit(1);
+  const rows = await q;
+  requireFound(rows[0], mediaType, mediaId);
+}
+
+/** A title's media_file rows after a 404 existence check — the shared body of both /files
+ *  endpoints (selectMediaFiles is the shared row query; this adds the existence gate both
+ *  services previously got from calling their get() first). */
+export async function getMediaFiles(db: Db, mediaType: "movie" | "series", mediaId: string): Promise<MediaFileRow[]> {
+  await requireTitleExists(db, mediaType, mediaId);
+  return selectMediaFiles(db, mediaType, mediaId);
+}
+
+/** A title's cast/crew split (cast ordered top-billed first) — the shared body of both
+ *  credits endpoints. */
+export async function getMediaCredits(db: Db, mediaType: "movie" | "series", mediaId: string) {
+  await requireTitleExists(db, mediaType, mediaId);
+  const rows = await db.select().from(schema.mediaCredit)
+    .where(and(eq(schema.mediaCredit.mediaType, mediaType), eq(schema.mediaCredit.mediaId, mediaId)))
+    .orderBy(asc(schema.mediaCredit.sortOrder));
+  return {
+    cast: rows.filter((r) => r.role === "cast"),
+    crew: rows.filter((r) => r.role === "crew"),
+  };
+}
+
+/** Move every file of a title into the recycle bin, then delete the title's folder itself
+ *  (recursive — also removes untracked extras/subtitles, matching upstream). A file already
+ *  missing on disk is wrapped + logged so it can't block the rest of the delete; a
+ *  folder-delete failure surfaces normally. */
+async function disposeTitleFiles(
+  db: Db, recycleBin: RecycleBinService, mediaType: "movie" | "series", id: string,
+  root: string, folderName: string, logWarn: (msg: string) => void,
+): Promise<void> {
+  const files = await db.select().from(schema.mediaFile)
+    .where(and(eq(schema.mediaFile.mediaType, mediaType), eq(schema.mediaFile.mediaId, id)));
+  const storage = new LocalStorageProvider();
+  for (const f of files) {
+    // relativePath is root-relative and includes the title-folder prefix — no double join.
+    const abs = join(root, f.relativePath);
+    try {
+      await recycleBin.dispose(abs);
+    } catch (err) {
+      logWarn(`Failed to dispose ${mediaType} file ${abs}: ${(err as Error).message}`);
+    }
+  }
+  await storage.delete(join(root, folderName));
+}
+
+/** Remove a library title end-to-end. Movies and series differ only in: the row/table to
+ *  delete, the optional on-disk folder name, the import-exclusion mediaType key, and the
+ *  removed event. Everything else — optional file dispose + recursive folder delete, the
+ *  transactional polymorphic cascade (Postgres-vs-SQLite split), the import-exclusion
+ *  insert — is shared. Each service supplies the media-type-specific pieces and a `publish`
+ *  callback that emits its own removed event. */
+export async function removeMediaItem(
+  db: Db,
+  deps: { events: EventsService; recycleBin: RecycleBinService; logWarn: (msg: string) => void },
+  opts: {
+    mediaType: "movie" | "series";
+    id: string;
+    rootFolderPath: string | null;
+    folderName: string;
+    tmdbId: number | null;
+    deleteFiles: boolean;
+    addImportExclusion: boolean;
+    publish: (events: EventsService, id: string) => void;
+  },
+): Promise<{ removed: string }> {
+  const { mediaType, id, rootFolderPath, folderName, tmdbId, deleteFiles, addImportExclusion, publish } = opts;
+  // Before the DB cascade: physically delete each file and the title's folder when requested
+  // (opt-in — a bare DELETE on its own does nothing to disk, matching upstream).
+  if (deleteFiles) {
+    await disposeTitleFiles(db, deps.recycleBin, mediaType, id, rootFolderPath ?? "", folderName, deps.logWarn);
+  }
+  // Only the polymorphic tables need a hand-written delete here — a series' season/episode
+  // cascade automatically via their DB-level FK to series once the series row is deleted.
+  if (db.dbDialect === "postgres") {
+    // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
+    // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
+    await db.transaction(async (tx) => {
+      await deletePolymorphicRowsAsync(tx, mediaType, id);
+      if (mediaType === "movie") await tx.delete(schema.movie).where(eq(schema.movie.id, id));
+      else await tx.delete(schema.series).where(eq(schema.series.id, id));
+      // C2 import lists: only exclude from re-import when explicitly requested (opt-in).
+      if (addImportExclusion && tmdbId != null) {
+        await tx.insert(schema.importExclusion).values({
+          id: `excl-${mediaType}-${tmdbId}`, mediaType, externalId: String(tmdbId),
+          reason: "removed from library", createdAt: new Date().toISOString(),
+        }).onConflictDoNothing();
+      }
+    });
+  } else {
+    db.transaction((tx) => {
+      deletePolymorphicRows(tx, mediaType, id);
+      if (mediaType === "movie") tx.delete(schema.movie).where(eq(schema.movie.id, id)).run();
+      else tx.delete(schema.series).where(eq(schema.series.id, id)).run();
+      if (addImportExclusion && tmdbId != null) {
+        tx.insert(schema.importExclusion).values({
+          id: `excl-${mediaType}-${tmdbId}`, mediaType, externalId: String(tmdbId),
+          reason: "removed from library", createdAt: new Date().toISOString(),
+        }).onConflictDoNothing().run();
+      }
+    });
+  }
+  publish(deps.events, id);
+  return { removed: id };
+}
+
+/** The shared composition behind both services' on-demand "Search + auto-grab": fetch
+ *  releases, filter to the ones matching the target, pick the best *approved* candidate via
+ *  the decision engine, grab it, and map the failure path. `grabbed: false` means no
+ *  acceptable release was found (normal); only a genuine grab failure sets `error`. The
+ *  movie/series paths differ only in the query builder, the match predicate and the
+ *  failure event payload — those are passed in, the control flow lives here once. */
+export async function searchAndGrabRelease(
+  indexers: IndexersService,
+  opts: {
+    mediaType: "movie" | "series";
+    mediaId: string;
+    buildQuery: () => string;
+    matches: (release: Release) => boolean;
+    publishFailure: (error: string) => void;
+  },
+): Promise<{ grabbed: boolean; release?: Release; error?: string }> {
+  const { mediaType, mediaId, buildQuery, matches, publishFailure } = opts;
+  const res = await indexers.search({ mediaType, mediaId, query: buildQuery(), limit: 50 });
+  if (res.releases.length === 0) return { grabbed: false };
+  const candidates = res.releases.filter((r) => matches(r));
+  const best = pickBest(candidates.map((r) => r.decision));
+  if (!best) return { grabbed: false };
+  try {
+    await indexers.grab({ mediaType, mediaId, releaseId: best.release.id, indexerId: best.release.indexerId, release: best.release });
+    return { grabbed: true, release: best.release };
+  } catch (err) {
+    const error = (err as Error).message;
+    publishFailure(error);
+    return { grabbed: false, error };
+  }
 }

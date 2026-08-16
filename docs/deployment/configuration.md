@@ -32,7 +32,6 @@ Namespaced keys, e.g.:
   on the same filesystem as `paths.rootFolders` for hardlink imports.
 - `media.naming.movies` / `media.naming.episodes` — naming templates
 - `media.preferredProtocol` — usenet vs torrent preference
-- `system.timezone`
 - `ui.theme` — dark/light
 
 Settings are validated against a zod schema in `packages/shared/src/config.ts` before persistence.

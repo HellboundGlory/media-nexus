@@ -36,7 +36,7 @@ export default function Indexers() {
   const [releases, setReleases] = useState<Release[] | null>(null);
 
   const defs = useQuery({ queryKey: ["indexer-defs"], queryFn: () => api.get<(IndexerDef & { settingsSchema?: CardigannSettingMeta[] })[]>("/indexers/definitions") });
-  const indexers = useQuery({ queryKey: ["indexers"], queryFn: () => api.get<IndexerRow[] & { lastError?: string | null }[]>("/indexers") });
+  const indexers = useQuery({ queryKey: ["indexers"], queryFn: () => api.get<IndexerRow[]>("/indexers") });
   const stats = useQuery({ queryKey: ["indexer-stats"], queryFn: () => api.get<any[]>("/indexers/statistics") });
   const movies = useQuery({ queryKey: ["movies"], queryFn: () => api.get<Paged<Movie>>("/movies?pageSize=100") });
 

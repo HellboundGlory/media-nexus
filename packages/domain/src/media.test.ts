@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   episodeTarget, movieTarget, hasMinimumAvailability, mediaLabel,
-  targetEpisodeIds, targetIsMissing, targetIsMonitored, isMovieItem, isSeriesItem,
+  targetEpisodeIds, isMovieItem, isSeriesItem,
   type EpisodeRef, type MovieMediaItem, type SeriesMediaItem,
 } from "./media";
 
@@ -41,23 +41,6 @@ describe("release targets", () => {
     expect(targetEpisodeIds(movieTarget("m1"))).toEqual([]);
     const target = episodeTarget("s1", 2, [ep({ id: "a" }), ep({ id: "b" })]);
     expect(targetEpisodeIds(target)).toEqual(["a", "b"]);
-  });
-
-  it("is missing only while nothing it covers has a file", () => {
-    expect(targetIsMissing(movieTarget("m1"), false)).toBe(true);
-    expect(targetIsMissing(movieTarget("m1"), true)).toBe(false);
-
-    const partly = episodeTarget("s1", 1, [ep({ id: "a", hasFile: true }), ep({ id: "b" })]);
-    expect(targetIsMissing(partly)).toBe(false);
-    const none = episodeTarget("s1", 1, [ep({ id: "a" }), ep({ id: "b" })]);
-    expect(targetIsMissing(none)).toBe(true);
-  });
-
-  it("is monitored when any covered episode is monitored", () => {
-    const mixed = episodeTarget("s1", 1, [ep({ id: "a", monitored: false }), ep({ id: "b", monitored: true })]);
-    expect(targetIsMonitored(mixed)).toBe(true);
-    const off = episodeTarget("s1", 1, [ep({ id: "a", monitored: false })]);
-    expect(targetIsMonitored(off)).toBe(false);
   });
 
   it("marks season packs", () => {

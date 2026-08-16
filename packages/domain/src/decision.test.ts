@@ -195,6 +195,24 @@ describe("pickBest / compareDecisions", () => {
     const c = evaluate(release({ id: "c", seeders: 5, ageHours: 1 }), ctx); // newer
     expect(compareDecisions(c, a)).toBeGreaterThan(0);
   });
+
+  it("breaks a seeders tie on indexer priority, preferring the higher-priority indexer (lower number wins)", () => {
+    const ctx = baseContext();
+    const worse = evaluate(release({ id: "worse", indexerPriority: 50, seeders: 5, ageHours: 10 }), ctx);
+    const better = evaluate(release({ id: "better", indexerPriority: 10, seeders: 5, ageHours: 10 }), ctx);
+    // equal quality/format/seeders/freshness — only priority differs; Sonarr/Prowlarr
+    // convention is LOWER number = HIGHER priority, so the priority-10 release wins
+    expect(compareDecisions(better, worse)).toBeGreaterThan(0);
+    expect(pickBest([worse, better])?.release.id).toBe("better");
+  });
+
+  it("keeps indexer priority a tiebreak — a worse-quality release never wins on priority alone", () => {
+    const ctx = baseContext();
+    const good = evaluate(release({ id: "good", quality: q("bluray", "2160p"), indexerPriority: 50, seeders: 10 }), ctx);
+    const ham = evaluate(release({ id: "ham", quality: q("web", "1080p"), indexerPriority: 10, seeders: 10 }), ctx);
+    // ham has higher priority (10) but worse quality — quality must win
+    expect(pickBest([ham, good])?.release.id).toBe("good");
+  });
 });
 
 describe("custom-format scoring (roadmap P2)", () => {

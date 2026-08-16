@@ -24,14 +24,6 @@ export const indexerStatusSchema = z.enum(["ok", "error", "disabled"]);
 // --- Download clients ---
 export const downloadClientKindSchema = z.enum(["usenet", "torrent"]);
 
-// --- Requests ---
-export const requestStatusSchema = z.enum([
-  "pending", "approved", "declined", "processing", "fulfilled", "failed", "expired",
-]);
-export const requestItemStatusSchema = z.enum([
-  "pending", "approved", "declined", "processing", "fulfilled", "failed",
-]);
-
 // --- History ---
 export const historyActionSchema = z.enum([
   "grabbed", "download_completed", "import_completed", "upgraded",
@@ -58,6 +50,5 @@ export const jobStatusSchema = z.enum([
 ]);
 export const jobTriggerSchema = z.enum(["scheduled", "manual", "event"]);
 
-export type RequestStatus = z.infer<typeof requestStatusSchema>;
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 export type MediaStatus = "released" | "continuing";

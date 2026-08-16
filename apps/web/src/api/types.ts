@@ -191,17 +191,6 @@ export interface IndexerDef {
   capabilities?: { cardigannStatus?: { supported: boolean; reasons: string[] } } | null;
 }
 
-export interface IndexerRow {
-  id: string;
-  definitionKey: string;
-  name: string;
-  protocol: string;
-  enabled: boolean;
-  implementation: string;
-  status: string;
-  lastError?: string | null;
-}
-
 export interface DownloadClient {
   id: string;
   name: string;
@@ -323,6 +312,7 @@ export interface IndexerRow {
   enabled: boolean;
   implementation: string;
   status: string;
+  lastError?: string | null;
 }
 
 export interface JobRun {

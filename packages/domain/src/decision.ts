@@ -236,8 +236,12 @@ export function evaluate(release: Release, context: DecisionContext): Decision {
 }
 
 /** Rank two *approved* decisions: profile order (or global quality if no profile was
- *  assigned) -> custom-format score -> seeders -> freshness. Size proximity is a
- *  documented later slot (see file header). */
+ *  assigned) -> custom-format score -> seeders -> indexer priority -> freshness. Size
+ *  proximity is a documented later slot (see file header). Indexer priority (roadmap J7)
+ *  breaks a seeders tie: when every higher-ranked criterion is equal, prefer the release
+ *  from the higher-priority indexer. Sonarr/Prowlarr priority is a number where LOWER =
+ *  HIGHER priority (1 best, 50 worst; schema default 25), so compareDecisions returns
+ *  b - a on indexerPriority to make the lower number win. */
 export function compareDecisions(a: Decision, b: Decision): number {
   const qualityDiff = a.profile
     ? profilePosition(a.profile, a.release.quality) - profilePosition(a.profile, b.release.quality)
@@ -247,6 +251,12 @@ export function compareDecisions(a: Decision, b: Decision): number {
   if (formatDiff !== 0) return formatDiff;
   const seedersDiff = (a.release.seeders ?? 0) - (b.release.seeders ?? 0);
   if (seedersDiff !== 0) return seedersDiff;
+  // Indexer priority (roadmap J7) breaks a seeders tie: when every higher-ranked criterion
+  // is equal, prefer the release from the higher-priority indexer. Upstream (Sonarr/Prowlarr)
+  // convention — LOWER number = HIGHER priority (1 best, 50 worst; schema default 25) — so
+  // return b - a to make the lower number win.
+  const indexerDiff = (b.release.indexerPriority ?? 25) - (a.release.indexerPriority ?? 25);
+  if (indexerDiff !== 0) return indexerDiff;
   return b.release.ageHours - a.release.ageHours; // newer (lower ageHours) wins
 }
 

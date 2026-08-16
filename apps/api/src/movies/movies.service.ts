@@ -6,15 +6,15 @@ import { newEntityId } from "@medianexus/shared";
 import { ApiError } from "@medianexus/shared";
 import type { RuntimeSettings } from "@medianexus/shared";
 import { LocalStorageProvider } from "@medianexus/integrations";
-import { combine, deletePolymorphicRows, deletePolymorphicRowsAsync, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
+import { combine, ensureAvailability, getMediaCredits, getMediaFiles, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition } from "../media/library.helpers";
 import { movieFolderName, movieFileName } from "../media/naming.helpers";
-import { selectMediaFiles, runWrite, type MediaFileRow } from "../media/media-file.types";
+import { runWrite, type MediaFileRow } from "../media/media-file.types";
 import { RecycleBinService } from "../media/recycle-bin.service";
 import { ConfigService } from "../system/config.service";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import { parseEpisodeRelease, pickBest, titleMatches } from "@medianexus/domain";
+import { parseEpisodeRelease, titleMatches } from "@medianexus/domain";
 import type { CreateMovie, MinimumAvailability, Quality, Release, UpdateMovieBody } from "@medianexus/domain";
 import { hasMinimumAvailability } from "@medianexus/domain";
 import { EventsService } from "../events/events.service";
@@ -142,8 +142,7 @@ export class MoviesService {
   /** The movie's media_file rows (DETAILPAGE-FE1) — feeds the movie File panel. Read-only,
    *  pure DB. A movie has no episodeIds; the shape is shared with the series /files endpoint. */
   async files(id: string): Promise<MediaFileRow[]> {
-    await this.get(id);
-    return selectMediaFiles(this.db, "movie", id);
+    return getMediaFiles(this.db, "movie", id);
   }
 
   async list(q: ListQuery) {
@@ -157,8 +156,7 @@ export class MoviesService {
 
   async get(id: string) {
     const rows = await this.db.select().from(schema.movie).where(eq(schema.movie.id, id)).limit(1);
-    if (!rows[0]) throw ApiError.notFound("movie", id);
-    return rows[0];
+    return requireFound(rows[0], "movie", id);
   }
 
   /** On-demand "Search + auto-grab" for a single movie (DETAILPAGE-FE1). Mirrors
@@ -169,33 +167,21 @@ export class MoviesService {
   async autoSearchMovie(mediaId: string): Promise<{ grabbed: boolean; release?: Release; error?: string }> {
     const movie = await this.get(mediaId);
     const year = movie.releaseDate ? Number(movie.releaseDate.slice(0, 4)) : undefined;
-    const query = year ? `${movie.title} ${year}` : movie.title;
-    const res = await this.indexers.search({ mediaType: "movie", mediaId, query, limit: 50 });
-    if (res.releases.length === 0) return { grabbed: false };
-    const candidates = res.releases.filter((r) => movieReleaseMatches(r, movie.title, year));
-    const best = pickBest(candidates.map((r) => r.decision));
-    if (!best) return { grabbed: false };
-    try {
-      await this.indexers.grab({ mediaType: "movie", mediaId, releaseId: best.release.id, indexerId: best.release.indexerId, release: best.release });
-      return { grabbed: true, release: best.release };
-    } catch (err) {
-      const error = (err as Error).message;
-      this.logger.warn(`auto-search grab failed for "${movie.title}": ${error}`);
-      this.events.publish(EventTypes.DownloadClientFailed, { movieId: mediaId, error });
-      return { grabbed: false, error };
-    }
+    return searchAndGrabRelease(this.indexers, {
+      mediaType: "movie",
+      mediaId,
+      buildQuery: () => (year ? `${movie.title} ${year}` : movie.title),
+      matches: (r) => movieReleaseMatches(r, movie.title, year),
+      publishFailure: (error) => {
+        this.logger.warn(`auto-search grab failed for "${movie.title}": ${error}`);
+        this.events.publish(EventTypes.DownloadClientFailed, { movieId: mediaId, error });
+      },
+    });
   }
 
   /** Cast & crew for a movie (DETAILPAGE-BE2) — split by role, cast ordered top-billed first. */
   async credits(id: string): Promise<{ cast: typeof schema.mediaCredit.$inferSelect[]; crew: typeof schema.mediaCredit.$inferSelect[] }> {
-    await this.get(id);
-    const rows = await this.db.select().from(schema.mediaCredit)
-      .where(and(eq(schema.mediaCredit.mediaType, "movie"), eq(schema.mediaCredit.mediaId, id)))
-      .orderBy(asc(schema.mediaCredit.sortOrder));
-    return {
-      cast: rows.filter((r) => r.role === "cast"),
-      crew: rows.filter((r) => r.role === "crew"),
-    };
+    return getMediaCredits(this.db, "movie", id);
   }
 
   /** Edit a movie (roadmap P1, gap report C5). Partial body; omitted fields are untouched,
@@ -263,7 +249,7 @@ export class MoviesService {
       year: row.releaseDate ? Number(row.releaseDate.slice(0, 4)) : null,
     });
     await this.db.insert(schema.movie).values(row);
-    await this.upsertAvailability("movie", id);
+    await ensureAvailability(this.db, "movie", id);
     this.events.publish(EventTypes.MovieAdded, { movieId: id, title: row.title }, { aggType: "movie", aggId: id });
     return row;
   }
@@ -271,65 +257,20 @@ export class MoviesService {
   async remove(id: string, opts: { deleteFiles?: boolean; addImportExclusion?: boolean } = {}) {
     const row = await this.get(id);
     const { deleteFiles = false, addImportExclusion = false } = opts;
-    // Before the DB cascade: physically delete each file and the title's folder when requested
-    // (opt-in — a bare DELETE on its own does nothing to disk, matching upstream).
-    if (deleteFiles) await this.deleteFilesFromDisk(row);
-    if (this.db.dbDialect === "postgres") {
-      // better-sqlite3's native tx wrapper needs a sync callback; node-postgres needs async
-      // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
-      await this.db.transaction(async (tx) => {
-        await deletePolymorphicRowsAsync(tx, "movie", id);
-        await tx.delete(schema.movie).where(eq(schema.movie.id, id));
-        // C2 import lists: only exclude from re-import when explicitly requested (opt-in).
-        if (addImportExclusion && row.tmdbId != null) {
-          await tx.insert(schema.importExclusion).values({
-            id: `excl-movie-${row.tmdbId}`, mediaType: "movie", externalId: String(row.tmdbId),
-            reason: "removed from library", createdAt: new Date().toISOString(),
-          }).onConflictDoNothing();
-        }
-      });
-    } else {
-      this.db.transaction((tx) => {
-        deletePolymorphicRows(tx, "movie", id);
-        tx.delete(schema.movie).where(eq(schema.movie.id, id)).run();
-        // C2 import lists: only exclude from re-import when explicitly requested (opt-in).
-        if (addImportExclusion && row.tmdbId != null) {
-          tx.insert(schema.importExclusion).values({
-            id: `excl-movie-${row.tmdbId}`, mediaType: "movie", externalId: String(row.tmdbId),
-            reason: "removed from library", createdAt: new Date().toISOString(),
-          }).onConflictDoNothing().run();
-        }
-      });
-    }
-    this.events.publish(EventTypes.MovieRemoved, { movieId: id }, { aggType: "movie", aggId: id });
-    return { removed: id };
-  }
-
-  /** Move every movie file into the recycle bin, then remove the title's folder itself
-   *  (recursive, matching upstream's literal "delete the folder" — this also removes untracked
-   *  extras/subtitles inside it). A file already missing on disk is disposed via a wrapped +
-   *  logged call so it can't block the rest of the delete; a folder-delete failure surfaces
-   *  normally. */
-  private async deleteFilesFromDisk(movie: typeof schema.movie.$inferSelect): Promise<void> {
-    const files = await this.db.select().from(schema.mediaFile)
-      .where(and(eq(schema.mediaFile.mediaType, "movie"), eq(schema.mediaFile.mediaId, movie.id)));
-    const root = movie.rootFolderPath ?? "";
-    const folder = join(root, movieFolderName(movie.title, movie.releaseDate));
-    const storage = new LocalStorageProvider();
-    for (const f of files) {
-      // relativePath is root-relative and includes the title-folder prefix — no double join.
-      const abs = join(root, f.relativePath);
-      try {
-        await this.recycleBin.dispose(abs);
-      } catch (err) {
-        this.logger.warn(`Failed to dispose movie file ${abs}: ${(err as Error).message}`);
-      }
-    }
-    await storage.delete(folder);
-  }
-
-  async upsertAvailability(mediaType: "movie" | "series", mediaId: string): Promise<void> {
-    await ensureAvailability(this.db, mediaType, mediaId);
+    return removeMediaItem(this.db, {
+      events: this.events,
+      recycleBin: this.recycleBin,
+      logWarn: (msg) => this.logger.warn(msg),
+    }, {
+      mediaType: "movie",
+      id,
+      rootFolderPath: row.rootFolderPath,
+      folderName: movieFolderName(row.title, row.releaseDate),
+      tmdbId: row.tmdbId,
+      deleteFiles,
+      addImportExclusion,
+      publish: (events, mid) => events.publish(EventTypes.MovieRemoved, { movieId: mid }, { aggType: "movie", aggId: mid }),
+    });
   }
 
   /** Want/Missing: monitored movies without a file, past their minimum-availability gate

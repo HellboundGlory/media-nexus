@@ -6,6 +6,11 @@ export const releaseSchema = z.object({
   id: z.string(),                 // provider-assigned stable id (guid)
   indexerId: z.string(),
   indexerName: z.string(),
+  /** Indexer priority at fetch time — used as a release-comparison tiebreak when two
+   *  indexers return an equivalent release (roadmap J7, gap report J7 finding 2).
+   *  Sonarr/Prowlarr convention: LOWER number = HIGHER priority (1 best, 50 worst;
+   *  schema default 25). Optional so releases constructed outside the fetch path stay valid. */
+  indexerPriority: z.number().optional(),
   title: z.string(),
   protocol: z.enum(["usenet", "torrent"]),
   categories: z.array(z.number()).default([]),
