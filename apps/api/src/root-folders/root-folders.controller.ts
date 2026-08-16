@@ -22,6 +22,12 @@ export class RootFoldersController {
     return this.rootFolders.get(id);
   }
 
+  @Get(":id/unmapped")
+  @ApiOperation({ summary: "List unmapped top-level folders in a root (Library Import candidates)" })
+  unmapped(@Param("id") id: string) {
+    return this.rootFolders.unmapped(id);
+  }
+
   @Post()
   @ApiOperation({ summary: "Add a root folder (path must already exist on disk)" })
   create(@Body(new ZodValidationPipe(createRootFolderSchema)) body: CreateRootFolder) {

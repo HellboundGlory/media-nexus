@@ -150,7 +150,7 @@ describe("AcquisitionService import-apply is transactional", () => {
     const blocklist = new BlocklistService(db);
     const service = new AcquisitionService(
       db, config, events, providers, new MediaRepository(db), blocklist,
-      new RootFoldersService(db), new RemotePathMappingsService(db), new RecycleBinService(config),
+      new RootFoldersService(db, new ConfigService(db)), new RemotePathMappingsService(db), new RecycleBinService(config),
       new ProviderStatusService(db, config),
     );
 

@@ -56,7 +56,7 @@ async function seedMovie(db: Db, over: Partial<typeof schema.movie.$inferInsert>
 const X265_SPEC: CustomFormatSpec = { type: "term", term: "x265", useRegex: false, negate: false, caseSensitive: false };
 
 function decisionService(db: Db) {
-  return new DecisionService(db, new MediaRepository(db), new BlocklistService(db), new ConfigService(db), new RootFoldersService(db));
+  return new DecisionService(db, new MediaRepository(db), new BlocklistService(db), new ConfigService(db), new RootFoldersService(db, new ConfigService(db)));
 }
 
 describe("custom-format CRUD (CustomFormatsService)", () => {

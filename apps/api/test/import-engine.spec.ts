@@ -64,7 +64,7 @@ async function harness(): Promise<Harness> {
 
   const config = new ConfigService(handle.db);
   await config.upsert({ "paths.downloads": downloadsRoot });
-  const rootFolders = new RootFoldersService(handle.db);
+  const rootFolders = new RootFoldersService(handle.db, new ConfigService(handle.db));
   await rootFolders.create({ path: mediaRoot, name: "", isDefault: true });
 
   const events = new EventsService(new EventBus());
@@ -320,7 +320,9 @@ describe("B7 — naming templates honored on import", () => {
     const files = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaType, "series"));
     expect(files).toHaveLength(1);
     expect(files[0].relativePath).toContain("Pack Show - S02E01-02 - Part One + Part Two.mkv");
-    expect(files[0].episodeIds.sort()).toEqual(["s2e1", "s2e2"]);
+    // Coverage is carried by the episode -> media_file FK (roadmap J3), not a JSON column.
+    const linked = await h.db.select({ id: schema.episode.id }).from(schema.episode).where(eq(schema.episode.mediaFileId, files[0].id));
+    expect(linked.map((l) => l.id).sort()).toEqual(["s2e1", "s2e2"]);
   });
 });
 
@@ -408,7 +410,9 @@ describe("D8 — daily/anime release import (not Season Unknown)", () => {
     expect(target.hasFile).toBe(true);
     const files = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaId, "sa"));
     expect(files).toHaveLength(1);
-    expect(files[0].episodeIds).toEqual(["sa2e1"]);
+    // The episode -> media_file FK is the coverage source (roadmap J3).
+    const linked = await h.db.select({ id: schema.episode.id }).from(schema.episode).where(eq(schema.episode.mediaFileId, files[0].id));
+    expect(linked.map((l) => l.id)).toEqual(["sa2e1"]);
     expect(files[0].relativePath).toContain("Season 2");
   });
 });

@@ -57,7 +57,7 @@ async function harness(): Promise<Harness> {
 
   const config = new ConfigService(db);
   await config.upsert({ "paths.downloads": downloadsRoot } as never);
-  const rootFolders = new RootFoldersService(db);
+  const rootFolders = new RootFoldersService(db, new ConfigService(db));
   await rootFolders.create({ path: mediaRoot, name: "", isDefault: true });
   const events = new EventsService(new EventBus());
   const providers = {} as ProvidersService;

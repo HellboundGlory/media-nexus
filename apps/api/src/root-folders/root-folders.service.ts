@@ -2,12 +2,15 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { asc, eq } from "drizzle-orm";
 import { existsSync, statSync } from "node:fs";
+import { basename, resolve } from "node:path";
 import { newEntityId, ApiError } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import { LocalStorageProvider } from "@medianexus/integrations";
 import type { CreateRootFolder, UpdateRootFolderBody } from "@medianexus/domain";
+import { resolvedMovieFolderName, resolvedSeriesFolderName } from "../media/naming.helpers";
+import { ConfigService } from "../system/config.service";
 
 type RootFolderRow = typeof schema.rootFolder.$inferSelect;
 
@@ -15,6 +18,46 @@ export interface RootFolderView extends RootFolderRow {
   accessible: boolean;
   freeBytes: number | null;
   totalBytes: number | null;
+}
+
+/** One top-level folder in a root folder that isn't already mapped to an added title
+ *  (gap report B3, Library Import). `suggestedMediaType`/`suggestedTitle`/`suggestedYear` are
+ *  pre-fill hints only — never authoritative; the user confirms/overrides at add time. */
+export interface UnmappedFolder {
+  name: string;
+  path: string;
+  suggestedTitle: string | null;
+  suggestedYear: number | null;
+  suggestedMediaType?: "movie" | "series";
+}
+
+export interface UnmappedFolders {
+  path: string;
+  items: UnmappedFolder[];
+}
+
+// Sonarr's own special-folder exclusion list (matched case-insensitively): these are not
+// titles, and a recycle bin named after one of them lives inside a root folder. Match
+// upstream rather than inventing our own shorter list.
+const SONARR_SPECIAL_FOLDERS = new Set([
+  "$recycle.bin", "system volume information", "recycler", "lost+found",
+  ".appledb", ".appledesktop", ".appledouble", "@eadir", ".grab",
+]);
+
+/** Best-effort (title, year) from an on-disk folder name, for pre-filling the TMDB search.
+ *  Movie folders conventionally end "Title (YYYY)"; anything else is treated as a plain title
+ *  (dots/underscores read as spaces, matching how unmapped scene-style folders typically
+ *  differ from the movieFolderName() "Title (YYYY)" convention we'd compute for the added row). */
+function folderHint(name: string): { suggestedTitle: string | null; suggestedYear: number | null } {
+  const m = /^(.*?)\s*\((\d{4})\)\s*$/.exec(name);
+  let title = name;
+  let suggestedYear: number | null = null;
+  if (m) {
+    title = m[1];
+    suggestedYear = Number(m[2]);
+  }
+  const suggestedTitle = title.replace(/[._]+/g, " ").replace(/\s+/g, " ").trim();
+  return { suggestedTitle: suggestedTitle || null, suggestedYear };
 }
 
 /**
@@ -32,7 +75,10 @@ export interface RootFolderView extends RootFolderRow {
 export class RootFoldersService {
   private readonly storage = new LocalStorageProvider();
 
-  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
+  constructor(
+    @Inject(DB_TOKEN) private readonly db: Db,
+    private readonly config: ConfigService,
+  ) {}
 
   async list(): Promise<RootFolderView[]> {
     const rows = await this.db.select().from(schema.rootFolder).orderBy(asc(schema.rootFolder.createdAt));
@@ -50,6 +96,76 @@ export class RootFoldersService {
   async getDefault(): Promise<RootFolderRow | null> {
     const rows = await this.db.select().from(schema.rootFolder).orderBy(asc(schema.rootFolder.createdAt));
     return rows.find((r) => r.isDefault) ?? rows[0] ?? null;
+  }
+
+  /** Library Import browse (gap report B3): list the top-level folder entries of a root
+   *  folder that aren't already mapped to an added title, with best-effort search pre-fill
+   *  hints. Mirrors Sonarr/Radarr's GetUnmappedFolders (which lives in their root-folders
+   *  service) — this is a read-only enumeration; adding a picked title is the normal
+   *  POST /movies or POST /series flow with rootFolderPath + folderName. */
+  async unmapped(rootId: string): Promise<UnmappedFolders> {
+    const root = await this.get(rootId);
+    // Recycle bin and download dirs are independently configured and not always outside a
+    // root folder — exclude them by absolute path (in addition to the name-based special list
+    // above), so a nested recycle bin is never offered as a fake "unmapped title".
+    const cfg = await this.config.get();
+    const exclusions = [cfg["media.recycleBinPath"], cfg["paths.downloads"]]
+      .filter((p) => p && p.length > 0)
+      .map((p) => resolve(p));
+
+    // A top-level folder is "mapped" when any added title at this root resolves to it
+    // (respecting each title's stored folder-name override). Compare on the normalized root
+    // path — titles store the exact selected string, which can differ by a trailing slash.
+    const normRoot = root.path.replace(/\/+$/, "");
+    const mapped = new Set<string>();
+    const movieRows = await this.db.select({
+      title: schema.movie.title, releaseDate: schema.movie.releaseDate,
+      folderName: schema.movie.folderName, rootFolderPath: schema.movie.rootFolderPath,
+    }).from(schema.movie);
+    for (const m of movieRows) {
+      if ((m.rootFolderPath ?? "").replace(/\/+$/, "") === normRoot) mapped.add(resolvedMovieFolderName(m));
+    }
+    const seriesRows = await this.db.select({
+      title: schema.series.title, folderName: schema.series.folderName,
+      rootFolderPath: schema.series.rootFolderPath,
+    }).from(schema.series);
+    for (const s of seriesRows) {
+      if ((s.rootFolderPath ?? "").replace(/\/+$/, "") === normRoot) mapped.add(resolvedSeriesFolderName(s));
+    }
+
+    const items: UnmappedFolder[] = [];
+    for (const entry of await this.storage.list(root.path)) {
+      if (!entry.isDirectory) continue;
+      const name = basename(entry.path);
+      if (!name) continue;
+      if (SONARR_SPECIAL_FOLDERS.has(name.toLowerCase())) continue;
+      const abs = resolve(root.path, name);
+      if (exclusions.some((ex) => ex === abs)) continue;
+      if (mapped.has(name)) continue;
+      const { suggestedTitle, suggestedYear } = folderHint(name);
+      const suggestedMediaType = await this.peekSeasonType(abs);
+      items.push({
+        name, path: abs, suggestedTitle, suggestedYear,
+        ...(suggestedMediaType ? { suggestedMediaType } : {}),
+      });
+    }
+    items.sort((a, b) => a.name.localeCompare(b.name));
+    return { path: root.path, items };
+  }
+
+  /** One-level-deep peek for a "Season N"-style subdirectory, the series folder convention
+   *  library-scan recognizes — used only to pre-select the type picker in Library Import, not
+   *  authoritative. Errors (permissions, symlink loops) are swallowed and the hint omitted for
+   *  that candidate only, never to fail or slow the listing. */
+  private async peekSeasonType(dirAbs: string): Promise<"movie" | "series" | undefined> {
+    try {
+      const entries = await this.storage.list(dirAbs);
+      return entries.some((e) => e.isDirectory && /^season\s*\d+$/i.test(basename(e.path)))
+        ? "series"
+        : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async create(input: CreateRootFolder): Promise<RootFolderRow> {

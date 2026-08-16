@@ -14,8 +14,7 @@ import { ApiError } from "@medianexus/shared";
 import { schema, type Db } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import { RecycleBinService } from "./recycle-bin.service";
-import { movieFolderName, seriesFolderName } from "./naming.helpers";
-import { toMediaFileRow, runWrite, type MediaFileRow } from "./media-file.types";
+import { toMediaFileRow, fillEpisodeIds, runWrite, type MediaFileRow } from "./media-file.types";
 
 export interface UpdateMediaFileBody {
   quality?: { source: string; resolution: string; edition: string };
@@ -37,20 +36,23 @@ export class MediaFilesService {
     return rows[0];
   }
 
-  /** The owning title's root folder + fixed folder-per-title name (the same
-   *  movieFolderName/seriesFolderName composition renamePreview/import use — these can never
-   *  drift into a second convention). */
-  private async resolveTitle(mediaType: "movie" | "series", mediaId: string): Promise<{ rootFolderPath: string; folderName: string }> {
+  /** The owning title's root folder. media_file.relativePath is already root-relative and
+   *  includes the title-folder prefix, so a file's absolute path is rootFolderPath +
+   *  relativePath — no folder-name is computed here. (The on-disk folder-name convention is
+   *  resolved by scan/import via resolvedMovieFolderName/resolvedSeriesFolderName, honoring
+   *  the per-title folder_name override — not duplicated in this file, so no second
+   *  convention can creep in.) */
+  private async resolveTitle(mediaType: "movie" | "series", mediaId: string): Promise<{ rootFolderPath: string }> {
     if (mediaType === "movie") {
       const rows = await this.db.select().from(schema.movie).where(eq(schema.movie.id, mediaId)).limit(1);
       const m = rows[0];
       if (!m) throw ApiError.notFound("movie", mediaId);
-      return { rootFolderPath: m.rootFolderPath ?? "", folderName: movieFolderName(m.title, m.releaseDate) };
+      return { rootFolderPath: m.rootFolderPath ?? "" };
     }
     const rows = await this.db.select().from(schema.series).where(eq(schema.series.id, mediaId)).limit(1);
     const s = rows[0];
     if (!s) throw ApiError.notFound("series", mediaId);
-    return { rootFolderPath: s.rootFolderPath ?? "", folderName: seriesFolderName(s.title) };
+    return { rootFolderPath: s.rootFolderPath ?? "" };
   }
 
   /** DELETE /media-files/:id — dispose the physical file, then remove the DB row. A file that
@@ -81,6 +83,8 @@ export class MediaFilesService {
     if (input.releaseGroup !== undefined) set.releaseGroup = input.releaseGroup;
     await runWrite(this.db, this.db.update(schema.mediaFile).set(set).where(eq(schema.mediaFile.id, f.id)));
     const rows = await this.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.id, f.id)).limit(1);
-    return toMediaFileRow(rows[0]);
+    const row = toMediaFileRow(rows[0]);
+    await fillEpisodeIds(this.db, [row]);
+    return row;
   }
 }

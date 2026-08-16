@@ -36,6 +36,20 @@
       "when": 1786845644504,
       "tag": "0004_handy_major_mapleleaf",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786880305483,
+      "tag": "0005_calm_ronan",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786882389732,
+      "tag": "0006_rare_titania",
+      "breakpoints": true
     }
   ]
 }

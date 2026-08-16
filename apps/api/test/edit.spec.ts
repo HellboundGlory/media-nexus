@@ -24,6 +24,7 @@ import { SeriesService } from "../src/series/series.service";
 import { IndexersService } from "../src/indexers/indexers.service";
 import { DownloadClientsService } from "../src/download-clients/download-clients.service";
 import { RootFoldersService } from "../src/root-folders/root-folders.service";
+import { ConfigService } from "../src/system/config.service";
 import { decryptFields, encryptFields, isEncrypted } from "../src/secrets/provider-secrets";
 
 process.env.MEDIA_NEXUS_SECRET = "test-secret-only";
@@ -213,7 +214,7 @@ describe("C5 root-folder update", () => {
     db.insert(schema.rootFolder).values({ id: "rf1", path: a, name: "A", isDefault: true, createdAt: now() }).run();
     db.insert(schema.rootFolder).values({ id: "rf2", path: b, name: "B", isDefault: false, createdAt: now() }).run();
 
-    const svc = new RootFoldersService(db);
+    const svc = new RootFoldersService(db, new ConfigService(db));
     const upd = await svc.update("rf2", { isDefault: true, name: "B2" });
     expect(upd.isDefault).toBe(true);
     expect(upd.name).toBe("B2");

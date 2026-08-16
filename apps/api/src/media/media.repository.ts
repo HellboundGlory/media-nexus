@@ -11,6 +11,7 @@ import {
   type MinimumAvailability, type MovieMediaItem, type Quality,
   type ReleaseTarget, type SeriesMediaItem, type SeriesType,
 } from "@medianexus/domain";
+import { fillEpisodeIds, toMediaFileRow } from "./media-file.types";
 
 /** One entry in the media-neutral calendar (roadmap P3 "calendar iCal export"): either an episode
  *  airing or a movie release, discriminated on `mediaType`. The JSON feed and the .ics export both
@@ -282,17 +283,21 @@ export class MediaRepository {
         eq(schema.mediaFile.mediaType, target.mediaType),
         eq(schema.mediaFile.mediaId, target.mediaId),
       ));
-      return rows.map(toExistingFile);
+      // A movie file covers no episodes — its episodeIds is always empty.
+      return rows.map((r) => toExistingFile(r, []));
     }
 
-    // Series branch (gap report J3 — the hot path): answer "which of this series' files cover
-    // these wanted episode ids" through the indexed `episode.media_file_id` FK instead of loading
-    // every media_file row and filtering each one's `episode_ids` JSON in JS. The FK is kept in
-    // sync with `episode_ids` by the write sites and the startup backfill, so the join is exact.
-    // A file covering several wanted episodes appears once in the join — dedupe on file id.
+    // Series branch (roadmap J3 finishes the migration): answer "which of this series' files cover
+    // these wanted episode ids" through the indexed `episode.media_file_id` FK — now the ONLY source
+    // of coverage truth (the old `media_file.episode_ids` JSON column is gone).
     const wanted = target.episodes.map((e) => e.id);
     if (wanted.length === 0) return [];
-    const joined = await this.db
+    // The join is filtered to `wanted`, so it is used only to decide WHICH files cover a wanted
+    // episode. It must not also derive each file's `episodeIds`: that would truncate a file's
+    // coverage to the wanted subset, whereas the FK's honest answer is the file's true full
+    // coverage. (Today every caller passes a full season's episodes, so no truncation occurs,
+    // but a future partial-subset caller would silently get a wrong answer.)
+    const matched = await this.db
       .select()
       .from(schema.mediaFile)
       .innerJoin(schema.episode, eq(schema.episode.mediaFileId, schema.mediaFile.id))
@@ -301,14 +306,15 @@ export class MediaRepository {
         eq(schema.mediaFile.mediaId, target.mediaId),
         inArray(schema.episode.id, wanted),
       ));
-    const seen = new Set<string>();
-    const files: ExistingFile[] = [];
-    for (const { media_file } of joined) {
-      if (seen.has(media_file.id)) continue;
-      seen.add(media_file.id);
-      files.push(toExistingFile(media_file));
-    }
-    return files;
+    if (matched.length === 0) return [];
+    const fileById = new Map<string, typeof schema.mediaFile.$inferSelect>();
+    for (const { media_file } of matched) fileById.set(media_file.id, media_file);
+    // Derive each matched file's `episodeIds` from its true full FK coverage (unfiltered by
+    // `wanted`), in episode-id order — the same one-place derivation fillEpisodeIds performs.
+    const rawFiles = [...fileById.values()];
+    const rows = await fillEpisodeIds(this.db, rawFiles.map(toMediaFileRow));
+    const episodeIdsById = new Map(rows.map((r) => [r.id, r.episodeIds]));
+    return rawFiles.map((row) => toExistingFile(row, episodeIdsById.get(row.id) ?? []));
   }
 
   // ---------- Calendar (media-neutral) ----------
@@ -433,13 +439,13 @@ function toSeriesItem(row: typeof schema.series.$inferSelect): SeriesMediaItem {
   };
 }
 
-function toExistingFile(row: typeof schema.mediaFile.$inferSelect): ExistingFile {
+function toExistingFile(row: typeof schema.mediaFile.$inferSelect, episodeIds: string[]): ExistingFile {
   return {
     id: row.id,
     relativePath: row.relativePath,
     size: row.size,
     quality: (row.quality ?? { source: "unknown", resolution: "unknown", edition: "" }) as Quality,
-    episodeIds: row.episodeIds ?? [],
+    episodeIds,
     dateAdded: row.dateAdded,
   };
 }

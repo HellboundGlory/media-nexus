@@ -234,7 +234,7 @@ describe("ProviderStatusService + AcquisitionService.syncAll (B10 download clien
     mkdirSync(mediaRoot, { recursive: true });
     const service = new AcquisitionService(
       db, config, events, providers, new MediaRepository(db), blocklist,
-      new RootFoldersService(db), new RemotePathMappingsService(db), new RecycleBinService(config), status,
+      new RootFoldersService(db, new ConfigService(db)), new RemotePathMappingsService(db), new RecycleBinService(config), status,
     );
     return { service, status };
   }

@@ -12,6 +12,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inArray } from "drizzle-orm";
 import { EventBus } from "@medianexus/events";
 import { createDb, schema } from "@medianexus/database";
 import { ConfigService } from "../src/system/config.service";
@@ -83,8 +84,8 @@ async function seedSeries(db: Db, _quality: Record<string, string> = { source: "
   return { id: "s1" };
 }
 
-function mediaFile(id: string, mediaType: "movie" | "series", mediaId: string, relativePath: string, episodeIds: string[], quality: Record<string, string>): typeof schema.mediaFile.$inferInsert {
-  return { id, mediaType, mediaId, episodeIds, relativePath, size: 1000, quality, dateAdded: new Date().toISOString() };
+function mediaFile(id: string, mediaType: "movie" | "series", mediaId: string, relativePath: string, quality: Record<string, string>): typeof schema.mediaFile.$inferInsert {
+  return { id, mediaType, mediaId, relativePath, size: 1000, quality, dateAdded: new Date().toISOString() };
 }
 
 describe("rename-preview (DETAILPAGE-BE4)", () => {
@@ -94,9 +95,10 @@ describe("rename-preview (DETAILPAGE-BE4)", () => {
     await seedSeries(db);
     // Files named exactly as the DEFAULT template produces them.
     await db.insert(schema.mediaFile).values([
-      mediaFile("mf_m1", "movie", "m1", movieFilePath("Fight Club", "1999"), [], { source: "bluray", resolution: "1080p", edition: "" }),
-      mediaFile("mf_s1", "series", "s1", episodeFilePath("Game of Thrones", 1, 1, "Winter Is Coming"), ["s1e1"], { source: "web", resolution: "1080p", edition: "" }),
+      mediaFile("mf_m1", "movie", "m1", movieFilePath("Fight Club", "1999"), { source: "bluray", resolution: "1080p", edition: "" }),
+      mediaFile("mf_s1", "series", "s1", episodeFilePath("Game of Thrones", 1, 1, "Winter Is Coming"), { source: "web", resolution: "1080p", edition: "" }),
     ]);
+    await db.update(schema.episode).set({ mediaFileId: "mf_s1" }).where(inArray(schema.episode.id, ["s1e1"]));
 
     const moviePrev = await movies.renamePreview("m1");
     expect(moviePrev.rootPath).toBe("Fight Club (1999)");
@@ -114,9 +116,10 @@ describe("rename-preview (DETAILPAGE-BE4)", () => {
     await seedMovie(db);
     await seedSeries(db);
     await db.insert(schema.mediaFile).values([
-      mediaFile("mf_m1", "movie", "m1", movieFilePath("Fight Club", "1999"), [], { source: "bluray", resolution: "1080p", edition: "" }),
-      mediaFile("mf_s1", "series", "s1", episodeFilePath("Game of Thrones", 1, 1, "Winter Is Coming"), ["s1e1"], { source: "web", resolution: "1080p", edition: "" }),
+      mediaFile("mf_m1", "movie", "m1", movieFilePath("Fight Club", "1999"), { source: "bluray", resolution: "1080p", edition: "" }),
+      mediaFile("mf_s1", "series", "s1", episodeFilePath("Game of Thrones", 1, 1, "Winter Is Coming"), { source: "web", resolution: "1080p", edition: "" }),
     ]);
+    await db.update(schema.episode).set({ mediaFileId: "mf_s1" }).where(inArray(schema.episode.id, ["s1e1"]));
 
     // Change the naming templates: movie drops the year, episode drops the episode title.
     await config.upsert({
@@ -140,7 +143,7 @@ describe("rename-preview (DETAILPAGE-BE4)", () => {
     const { db, config, series } = await makeServices();
     await seedSeries(db);
     await db.insert(schema.mediaFile).values([
-      mediaFile("mf_unmatched", "series", "s1", "Game of Thrones/Season 1/unmatched-0.mkv", [], { source: "web", resolution: "1080p", edition: "" }),
+      mediaFile("mf_unmatched", "series", "s1", "Game of Thrones/Season 1/unmatched-0.mkv", { source: "web", resolution: "1080p", edition: "" }),
     ]);
 
     // Regardless of the template, no episode identity means no template name to build from.
@@ -154,8 +157,9 @@ describe("rename-preview (DETAILPAGE-BE4)", () => {
     await seedSeries(db);
     // A file covering episodes 1+2: default template renders S01E01-02 (range) + joined titles.
     await db.insert(schema.mediaFile).values([
-      mediaFile("mf_pack", "series", "s1", "Game of Thrones/Season 1/Game of Thrones - S01E01-02 - Winter Is Coming + The Kingsroad.mkv", ["s1e1", "s1e2"], { source: "web", resolution: "1080p", edition: "" }),
+      mediaFile("mf_pack", "series", "s1", "Game of Thrones/Season 1/Game of Thrones - S01E01-02 - Winter Is Coming + The Kingsroad.mkv", { source: "web", resolution: "1080p", edition: "" }),
     ]);
+    await db.update(schema.episode).set({ mediaFileId: "mf_pack" }).where(inArray(schema.episode.id, ["s1e1", "s1e2"]));
 
     const prev = await series.renamePreview("s1");
     expect(prev.items).toEqual([{ mediaFileId: "mf_pack", currentPath: "Game of Thrones/Season 1/Game of Thrones - S01E01-02 - Winter Is Coming + The Kingsroad.mkv", newPath: "Game of Thrones/Season 1/Game of Thrones - S01E01-02 - Winter Is Coming + The Kingsroad.mkv", changed: false }]);

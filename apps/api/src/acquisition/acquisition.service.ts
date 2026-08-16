@@ -21,7 +21,7 @@ import {
 } from "@medianexus/domain";
 import { MediaRepository } from "../media/media.repository";
 import { ensureAvailabilitySync, ensureAvailabilityTx, getQualityProfile, type Tx } from "../media/library.helpers";
-import { movieFolderName, seriesFolderName, movieFileName, episodeFileName } from "../media/naming.helpers";
+import { movieFileName, episodeFileName, resolvedMovieFolderName, resolvedSeriesFolderName } from "../media/naming.helpers";
 import { BlocklistService } from "../blocklist/blocklist.service";
 import { RootFoldersService } from "../root-folders/root-folders.service";
 import { RemotePathMappingsService } from "../remote-path-mappings/remote-path-mappings.service";
@@ -611,7 +611,7 @@ export class AcquisitionService {
     const root = await this.resolveRoot(movie[0].rootFolderPath, resolve(process.cwd(), "data", "media", "movies"));
     await this.assertSufficientFreeSpace(root, source.size, cfg);
     const quality = spQuality(entry);
-    const folderName = movieFolderName(movie[0].title, movie[0].releaseDate);
+    const folderName = resolvedMovieFolderName(movie[0]);
     const targetDir = join(root, folderName);
     await this.storage.ensureDir(targetDir);
     const fileName = movieFileName(cfg, movie[0].title, movie[0].releaseDate, quality);
@@ -629,7 +629,7 @@ export class AcquisitionService {
       // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
       await this.db.transaction(async (tx) => {
         await tx.insert(schema.mediaFile).values({
-          id: mediaFileId, mediaType: "movie", mediaId: movie[0].id, episodeIds: [],
+          id: mediaFileId, mediaType: "movie", mediaId: movie[0].id,
           relativePath, size, quality, dateAdded: now,
         });
         await tx.update(schema.movie).set({ hasFile: true, updatedAt: now }).where(eq(schema.movie.id, movie[0].id));
@@ -640,7 +640,7 @@ export class AcquisitionService {
     } else {
       this.db.transaction((tx) => {
         tx.insert(schema.mediaFile).values({
-          id: mediaFileId, mediaType: "movie", mediaId: movie[0].id, episodeIds: [],
+          id: mediaFileId, mediaType: "movie", mediaId: movie[0].id,
           relativePath, size, quality, dateAdded: now,
         }).run();
         tx.update(schema.movie).set({ hasFile: true, updatedAt: now }).where(eq(schema.movie.id, movie[0].id)).run();
@@ -665,7 +665,7 @@ export class AcquisitionService {
     const releaseTitle = (entry.data as { releaseTitle?: string })?.releaseTitle ?? entry.title;
     const match = parseEpisodeRelease(releaseTitle);
     const root = await this.resolveRoot(series[0].rootFolderPath, resolve(process.cwd(), "data", "media", "tv"));
-    const safeSeries = seriesFolderName(series[0].title);
+    const safeSeries = resolvedSeriesFolderName(series[0]);
     const releaseQuality = spQuality(entry);
     const now = new Date().toISOString();
 
@@ -784,13 +784,13 @@ export class AcquisitionService {
       await this.db.transaction(async (tx) => {
         for (const io of appliedIO) {
           await tx.insert(schema.mediaFile).values({
-            id: io.mediaFileId, mediaType: "series", mediaId: series[0].id, episodeIds: io.episodeIds,
+            id: io.mediaFileId, mediaType: "series", mediaId: series[0].id,
             relativePath: io.relativePath, size: io.size, quality: releaseQuality, dateAdded: now,
           });
           for (const epId of io.episodeIds) {
-            // J3 dual-write: keep episode.has_file AND point the episode at its covering file via
-            // the indexed media_file_id FK (the JSON episode_ids stays authoritative for the
-            // supersession logic; the FK is the queryable hot-path inverse).
+            // J3: flip episode.has_file AND point the episode at its covering file via the indexed
+            // media_file_id FK — the single source of coverage truth now (the episode_ids JSON
+            // column is gone). Supersession derives coverage from this same FK inverse.
             await tx.update(schema.episode).set({ hasFile: true, mediaFileId: io.mediaFileId }).where(eq(schema.episode.id, epId));
           }
         }
@@ -809,11 +809,11 @@ export class AcquisitionService {
       this.db.transaction((tx) => {
         for (const io of appliedIO) {
           tx.insert(schema.mediaFile).values({
-            id: io.mediaFileId, mediaType: "series", mediaId: series[0].id, episodeIds: io.episodeIds,
+            id: io.mediaFileId, mediaType: "series", mediaId: series[0].id,
             relativePath: io.relativePath, size: io.size, quality: releaseQuality, dateAdded: now,
           }).run();
           for (const epId of io.episodeIds) {
-            // J3 dual-write (sync body — SQLite path): has_file + the media_file_id FK pointer.
+            // J3 (sync body — SQLite path): has_file + the media_file_id FK pointer (coverage truth).
             tx.update(schema.episode).set({ hasFile: true, mediaFileId: io.mediaFileId }).where(eq(schema.episode.id, epId)).run();
           }
         }
@@ -907,7 +907,7 @@ export class AcquisitionService {
       // (P2 item 12 Stage 2) — two irreconcilable signatures, so Postgres gets its own body.
       await this.db.transaction(async (tx) => {
         await tx.insert(schema.mediaFile).values({
-          id: mediaFileId, mediaType: "series", mediaId: series.id, episodeIds: [],
+          id: mediaFileId, mediaType: "series", mediaId: series.id,
           relativePath, size, quality, dateAdded: now,
         });
         await this.markAvailability(tx, "series", series.id, now);
@@ -919,7 +919,7 @@ export class AcquisitionService {
     } else {
       this.db.transaction((tx) => {
         tx.insert(schema.mediaFile).values({
-          id: mediaFileId, mediaType: "series", mediaId: series.id, episodeIds: [],
+          id: mediaFileId, mediaType: "series", mediaId: series.id,
           relativePath, size, quality, dateAdded: now,
         }).run();
         this.markAvailabilitySync(tx, "series", series.id, now);

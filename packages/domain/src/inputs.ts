@@ -2,6 +2,20 @@
 import { z } from "zod";
 import { minimumAvailabilitySchema } from "./media";
 
+/** A stored folder-name override (gap report B3 / Library Import). Unlike the computed
+ *  movieFolderName()/seriesFolderName() convention (always sanitizeTitle() output), this is a
+ *  client-controlled value that feeds real filesystem paths via join(rootFolderPath,
+ *  folderName) for scan/delete/rename — so it is validated as a path-traversal surface: no
+ *  empty string, no `/` or `\` separator, no `..` segment, no null bytes. `null` clears the
+ *  override (back to the convention); `nullish` on create/update means absent-or-null. */
+export const folderNameSchema = z
+  .string()
+  .trim()
+  .min(1, "folder name must not be empty")
+  .refine((s) => !/[/\\]/.test(s), "folder name must not contain a path separator")
+  .refine((s) => s !== "..", "folder name must not be '..'")
+  .refine((s) => !s.includes("\0"), "folder name must not contain null bytes");
+
 export const createMovieSchema = z.object({
   tmdbId: z.number().int().positive().optional(),
   imdbId: z.string().optional(),
@@ -11,6 +25,8 @@ export const createMovieSchema = z.object({
   monitored: z.boolean().default(true),
   qualityProfileId: z.string().optional(),
   rootFolderPath: z.string().default(""),
+  // Folder-name override (see folderNameSchema above); null = use the convention.
+  folderName: folderNameSchema.nullish(),
   // Radarr's search-gate: "announced" (the historical hardcoded value here) always passes
   // hasMinimumAvailability(), so the default preserves every existing caller's behavior.
   // Movie automation (roadmap C1) is what gives this field real consequences.
@@ -29,6 +45,8 @@ export const createSeriesSchema = z.object({
   monitored: z.boolean().default(true),
   qualityProfileId: z.string().optional(),
   rootFolderPath: z.string().default(""),
+  // Folder-name override (see folderNameSchema above); null = use the convention.
+  folderName: folderNameSchema.nullish(),
   seriesType: z.enum(["standard", "daily", "anime"]).default("standard"),
   tags: z.array(z.string()).default([]),
 });
@@ -92,6 +110,8 @@ export const updateMovieSchema = z.object({
   monitored: z.boolean().optional(),
   qualityProfileId: z.string().nullish(),
   rootFolderPath: z.string().optional(),
+  // Null clears the folder-name override (back to the convention); omitted leaves it unchanged.
+  folderName: folderNameSchema.nullish(),
   minimumAvailability: minimumAvailabilitySchema.optional(),
   tags: z.array(z.string()).optional(),
 });
@@ -103,6 +123,8 @@ export const updateSeriesSchema = z.object({
   seriesType: z.enum(["standard", "daily", "anime"]).optional(),
   qualityProfileId: z.string().nullish(),
   rootFolderPath: z.string().optional(),
+  // Null clears the folder-name override (back to the convention); omitted leaves it unchanged.
+  folderName: folderNameSchema.nullish(),
   tags: z.array(z.string()).optional(),
 });
 export type UpdateSeriesBody = z.infer<typeof updateSeriesSchema>;

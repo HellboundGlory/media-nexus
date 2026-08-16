@@ -6,7 +6,7 @@
  * mapper normalizes it onto the precise MediaInfo fields (codec/resolution/… ) the detail-page
  * UI reads, and flattens the blob-carrying columns onto clean, nullable-but-typed fields.
  */
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { MediaInfo } from "@medianexus/domain";
 import { schema } from "@medianexus/database";
 import type { Db } from "@medianexus/database";
@@ -41,7 +41,6 @@ type RawMediaFileRow = {
   id: string;
   mediaType: string;
   mediaId: string;
-  episodeIds: unknown;
   relativePath: string;
   size: number;
   quality: unknown;
@@ -51,13 +50,15 @@ type RawMediaFileRow = {
   dateAdded: string | null;
 };
 
-/** Map a raw DB row onto the clean MediaFileRow shape (null-safe for the JSON columns). */
+/** Map a raw DB row onto the clean MediaFileRow shape (null-safe for the JSON columns).
+ *  `episodeIds` is a placeholder ([]) here — callers must run the rows through
+ *  `fillEpisodeIds` to populate it from the FK inverse (roadmap J3). */
 export function toMediaFileRow<T extends RawMediaFileRow>(row: T): MediaFileRow {
   return {
     id: row.id,
     mediaType: row.mediaType as "movie" | "series",
     mediaId: row.mediaId,
-    episodeIds: Array.isArray(row.episodeIds) ? (row.episodeIds as string[]) : [],
+    episodeIds: [],
     relativePath: row.relativePath,
     size: row.size,
     quality: (row.quality && typeof row.quality === "object" ? row.quality : null) as MediaFileRow["quality"],
@@ -68,11 +69,36 @@ export function toMediaFileRow<T extends RawMediaFileRow>(row: T): MediaFileRow 
   };
 }
 
-/** Query a title's media_file rows and map them onto MediaFileRow (shared by movies + series). */
+/** Fill each returned file's `episodeIds` from `episode.media_file_id` — the indexed FK inverse
+ *  of the now-dropped `media_file.episode_ids` JSON column (roadmap J3). An episode whose file
+ *  was later superseded still points only at its current (authoritative) file, so a surviving
+ *  partially-superseded file reports only the episodes it genuinely covers. Deterministic
+ *  ordering by episode id. */
+export async function fillEpisodeIds(db: Db, files: MediaFileRow[]): Promise<MediaFileRow[]> {
+  if (files.length === 0) return files;
+  const byFile = new Map<string, string[]>();
+  const rows = await db
+    .select({ id: schema.episode.id, fileId: schema.episode.mediaFileId })
+    .from(schema.episode)
+    .where(inArray(schema.episode.mediaFileId, files.map((f) => f.id)))
+    .orderBy(asc(schema.episode.id));
+  for (const e of rows) {
+    if (e.fileId === null) continue;
+    const list = byFile.get(e.fileId);
+    if (list) list.push(e.id);
+    else byFile.set(e.fileId, [e.id]);
+  }
+  for (const f of files) f.episodeIds = byFile.get(f.id) ?? [];
+  return files;
+}
+
+/** Query a title's media_file rows and map them onto MediaFileRow (shared by movies + series).
+ *  The /files endpoints, series rename and acquisition all go through here, so the wire
+ *  `episodeIds` array is derived one way from the FK join. */
 export async function selectMediaFiles(db: Db, mediaType: "movie" | "series", mediaId: string): Promise<MediaFileRow[]> {
   const rows = await db
     .select()
     .from(schema.mediaFile)
     .where(and(eq(schema.mediaFile.mediaType, mediaType), eq(schema.mediaFile.mediaId, mediaId)));
-  return rows.map(toMediaFileRow as (r: unknown) => MediaFileRow);
+  return fillEpisodeIds(db, rows.map(toMediaFileRow));
 }

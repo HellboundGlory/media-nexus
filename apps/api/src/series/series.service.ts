@@ -11,7 +11,7 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import { episodeQueryTag, parseEpisodeRelease } from "@medianexus/domain";
 import type { CreateSeries, Quality, Release, SeriesType, UpdateSeriesBody } from "@medianexus/domain";
-import { seriesFolderName, episodeFileName } from "../media/naming.helpers";
+import { episodeFileName, resolvedSeriesFolderName } from "../media/naming.helpers";
 import { selectMediaFiles, runWrite, type MediaFileRow } from "../media/media-file.types";
 import { RecycleBinService } from "../media/recycle-bin.service";
 import { ConfigService } from "../system/config.service";
@@ -51,7 +51,7 @@ export class SeriesService {
       return { mediaFileId: f.id, currentPath: f.relativePath, newPath, changed: newPath !== f.relativePath };
     });
     return {
-      rootPath: join(series.rootFolderPath ?? "", seriesFolderName(series.title)),
+      rootPath: join(series.rootFolderPath ?? "", resolvedSeriesFolderName(series)),
       namingPattern: cfg["media.naming"].episodes,
       items,
     };
@@ -148,7 +148,7 @@ export class SeriesService {
     const season = maps.season.get(ids[0]) ?? 0;
     const episodes = ids.map((epId) => ({ number: maps.number.get(epId) ?? 0, title: maps.title.get(epId) ?? "" }));
     const fileName = `${episodeFileName(cfg, series.title, season, episodes, f.quality as Quality)}${extname(f.relativePath)}`;
-    return `${seriesFolderName(series.title)}/Season ${season}/${fileName}`;
+    return `${resolvedSeriesFolderName(series)}/Season ${season}/${fileName}`;
   }
 
   /** The series' media_file rows (DETAILPAGE-FE1) — feeds the season size-on-disk pill and any
@@ -178,6 +178,8 @@ export class SeriesService {
       seriesType: input.seriesType ?? existing.seriesType,
       qualityProfileId: input.qualityProfileId !== undefined ? input.qualityProfileId : existing.qualityProfileId,
       rootFolderPath: input.rootFolderPath ?? existing.rootFolderPath,
+      // null clears the folder-name override; omitted leaves it unchanged (see updateSeriesSchema).
+      folderName: input.folderName !== undefined ? input.folderName : existing.folderName,
       tags: input.tags ?? existing.tags,
     };
     const updatedAt = new Date().toISOString();
@@ -217,6 +219,7 @@ export class SeriesService {
       monitored: input.monitored ?? true,
       qualityProfileId: input.qualityProfileId ?? null,
       rootFolderPath: input.rootFolderPath ?? "",
+      folderName: input.folderName ?? null,
       genres: [],
       images: [],
       tags: input.tags ?? [],
@@ -267,7 +270,7 @@ export class SeriesService {
       mediaType: "series",
       id,
       rootFolderPath: row.rootFolderPath,
-      folderName: seriesFolderName(row.title),
+      folderName: resolvedSeriesFolderName(row),
       tmdbId: row.tmdbId,
       deleteFiles,
       addImportExclusion,

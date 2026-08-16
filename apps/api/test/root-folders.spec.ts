@@ -40,20 +40,20 @@ async function freshDb() {
 describe("RootFoldersService", () => {
   it("rejects a path that doesn't exist on disk", async () => {
     const db = await freshDb();
-    const svc = new RootFoldersService(db);
+    const svc = new RootFoldersService(db, new ConfigService(db));
     await expect(svc.create({ path: join(dir, "does-not-exist"), name: "", isDefault: false })).rejects.toThrow();
   });
 
   it("makes the first root folder the default automatically, even when isDefault wasn't requested", async () => {
     const db = await freshDb();
-    const svc = new RootFoldersService(db);
+    const svc = new RootFoldersService(db, new ConfigService(db));
     const row = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: false });
     expect(row.isDefault).toBe(true);
   });
 
   it("only one root folder is ever default", async () => {
     const db = await freshDb();
-    const svc = new RootFoldersService(db);
+    const svc = new RootFoldersService(db, new ConfigService(db));
     const a = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: false });
     const b = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: true });
     const list = await svc.list();
@@ -63,7 +63,7 @@ describe("RootFoldersService", () => {
 
   it("reports live accessibility and free space for an existing path", async () => {
     const db = await freshDb();
-    const svc = new RootFoldersService(db);
+    const svc = new RootFoldersService(db, new ConfigService(db));
     const row = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: false });
     const view = await svc.get(row.id);
     expect(view.accessible).toBe(true);
@@ -72,7 +72,7 @@ describe("RootFoldersService", () => {
 
   it("rejects removal when a movie is assigned to the root folder", async () => {
     const db = await freshDb();
-    const svc = new RootFoldersService(db);
+    const svc = new RootFoldersService(db, new ConfigService(db));
     const p = mkdtempSync(join(dir, "root-"));
     const row = await svc.create({ path: p, name: "", isDefault: true });
     const now = new Date().toISOString();
@@ -86,7 +86,7 @@ describe("RootFoldersService", () => {
 
   it("promotes the next-oldest root folder to default when the default is removed", async () => {
     const db = await freshDb();
-    const svc = new RootFoldersService(db);
+    const svc = new RootFoldersService(db, new ConfigService(db));
     const a = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: false }); // first -> default
     const b = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: false });
     await svc.remove(a.id);
@@ -135,7 +135,7 @@ describe("AcquisitionService — remote path mapping (roadmap P1, gap report B8)
     const mediaRoot = mkdtempSync(join(dir, "media-"));
     const config = new ConfigService(db);
     await config.upsert({ "paths.downloads": downloadsRoot });
-    const rootFolders = new RootFoldersService(db);
+    const rootFolders = new RootFoldersService(db, new ConfigService(db));
     await rootFolders.create({ path: mediaRoot, name: "", isDefault: true });
 
     const now = new Date().toISOString();
@@ -196,7 +196,7 @@ describe("AcquisitionService — import-time free-space guard (roadmap P1, gap r
     // proves the guard actually blocks the write rather than just checking the free-space
     // number is plausible.
     await config.upsert({ "paths.downloads": downloadsRoot, "media.minimumFreeSpaceMb": 10 ** 9 });
-    const rootFolders = new RootFoldersService(db);
+    const rootFolders = new RootFoldersService(db, new ConfigService(db));
     await rootFolders.create({ path: mediaRoot, name: "", isDefault: true });
 
     const title = "Huge.Movie.2021.1080p.WEB-DL";

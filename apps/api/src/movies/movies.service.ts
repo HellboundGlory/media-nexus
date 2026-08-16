@@ -7,7 +7,7 @@ import { ApiError } from "@medianexus/shared";
 import type { RuntimeSettings } from "@medianexus/shared";
 import { LocalStorageProvider } from "@medianexus/integrations";
 import { combine, ensureAvailability, getMediaCredits, getMediaFiles, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition } from "../media/library.helpers";
-import { movieFolderName, movieFileName } from "../media/naming.helpers";
+import { movieFileName, resolvedMovieFolderName } from "../media/naming.helpers";
 import { runWrite, type MediaFileRow } from "../media/media-file.types";
 import { RecycleBinService } from "../media/recycle-bin.service";
 import { ConfigService } from "../system/config.service";
@@ -75,7 +75,7 @@ export class MoviesService {
   async renamePreview(id: string): Promise<RenamePreviewEnvelope> {
     const movie = await this.get(id);
     const cfg = await this.config.get();
-    const folderName = movieFolderName(movie.title, movie.releaseDate);
+    const folderName = resolvedMovieFolderName(movie);
     const items = (await this.files(id)).map((f) => {
       const newPath = this.computeNewRelativePath(cfg, movie, f);
       return { mediaFileId: f.id, currentPath: f.relativePath, newPath, changed: newPath !== f.relativePath };
@@ -134,7 +134,7 @@ export class MoviesService {
     movie: typeof schema.movie.$inferSelect,
     f: MediaFileRow,
   ): string {
-    const folder = movieFolderName(movie.title, movie.releaseDate);
+    const folder = resolvedMovieFolderName(movie);
     const fileName = `${movieFileName(cfg, movie.title, movie.releaseDate, f.quality as Quality)}${extname(f.relativePath)}`;
     return `${folder}/${fileName}`;
   }
@@ -193,6 +193,9 @@ export class MoviesService {
       monitored: input.monitored ?? existing.monitored,
       qualityProfileId: input.qualityProfileId !== undefined ? input.qualityProfileId : existing.qualityProfileId,
       rootFolderPath: input.rootFolderPath ?? existing.rootFolderPath,
+      // null clears the folder-name override; omitted leaves it unchanged (matches the merge
+      // semantics of the other partial fields — see updateMovieSchema docs).
+      folderName: input.folderName !== undefined ? input.folderName : existing.folderName,
       minimumAvailability: input.minimumAvailability ?? existing.minimumAvailability,
       tags: input.tags ?? existing.tags,
     };
@@ -229,6 +232,7 @@ export class MoviesService {
       monitored: input.monitored ?? true,
       qualityProfileId: input.qualityProfileId ?? null,
       rootFolderPath: input.rootFolderPath ?? "",
+      folderName: input.folderName ?? null,
       minimumAvailability: input.minimumAvailability,
       genres: [],
       images: [],
@@ -265,7 +269,7 @@ export class MoviesService {
       mediaType: "movie",
       id,
       rootFolderPath: row.rootFolderPath,
-      folderName: movieFolderName(row.title, row.releaseDate),
+      folderName: resolvedMovieFolderName(row),
       tmdbId: row.tmdbId,
       deleteFiles,
       addImportExclusion,

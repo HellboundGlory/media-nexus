@@ -15,7 +15,7 @@ import {
 import { LocalStorageProvider, findAllVideos } from "@medianexus/integrations";
 import { MediaRepository } from "../media/media.repository";
 import { ensureAvailabilitySync, ensureAvailabilityTx, getQualityProfile, type Tx } from "../media/library.helpers";
-import { movieFolderName, seriesFolderName } from "../media/naming.helpers";
+import { resolvedMovieFolderName, resolvedSeriesFolderName } from "../media/naming.helpers";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 
@@ -326,7 +326,7 @@ export class LibraryScanService implements OnModuleInit {
     const stale: ExistingFile[] = [];
     for (const f of existing) (existsSync(join(movie.rootFolderPath!, f.relativePath)) ? surviving : stale).push(f);
 
-    const folder = join(movie.rootFolderPath!, movieFolderName(movie.title, movie.releaseDate));
+    const folder = join(movie.rootFolderPath!, resolvedMovieFolderName(movie));
     const files = await findAllVideos(this.storage, folder);
     const trackedPaths = new Set(surviving.map((f) => join(movie.rootFolderPath!, f.relativePath)));
     const untracked: ScanUntrackedFile[] = files
@@ -366,7 +366,7 @@ export class LibraryScanService implements OnModuleInit {
       seasonEpisodes.map((e) => [e.episodeNumber, { id: e.id, existingQuality: bestExistingByEpisode.get(e.id) ?? null }]),
     );
 
-    const seasonDir = join(root, seriesFolderName(series.title), `Season ${seasonNumber}`);
+    const seasonDir = join(root, resolvedSeriesFolderName(series), `Season ${seasonNumber}`);
     const files = await findAllVideos(this.storage, seasonDir);
     const trackedPaths = new Set(surviving.map((f) => join(root, f.relativePath)));
     const untrackedFiles = files.filter((f) => !trackedPaths.has(f.path));
@@ -484,7 +484,7 @@ export class LibraryScanService implements OnModuleInit {
         for (const id of plan.removeIds) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, id));
         for (const im of plan.imports) {
           await tx.insert(schema.mediaFile).values({
-            id: im.mediaFileId, mediaType: "movie", mediaId: movie.id, episodeIds: [],
+            id: im.mediaFileId, mediaType: "movie", mediaId: movie.id,
             relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: now,
           });
         }
@@ -498,7 +498,7 @@ export class LibraryScanService implements OnModuleInit {
         for (const id of plan.removeIds) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, id)).run();
         for (const im of plan.imports) {
           tx.insert(schema.mediaFile).values({
-            id: im.mediaFileId, mediaType: "movie", mediaId: movie.id, episodeIds: [],
+            id: im.mediaFileId, mediaType: "movie", mediaId: movie.id,
             relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: now,
           }).run();
         }
@@ -521,11 +521,12 @@ export class LibraryScanService implements OnModuleInit {
         for (const id of plan.removeIds) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, id));
         for (const im of plan.imports) {
           await tx.insert(schema.mediaFile).values({
-            id: im.mediaFileId, mediaType: "series", mediaId: seriesId, episodeIds: im.episodeIds,
+            id: im.mediaFileId, mediaType: "series", mediaId: seriesId,
             relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: new Date().toISOString(),
           });
         }
-        // J3 dual-write: point newly/re-pointed episodes at their file via media_file_id.
+        // J3: point newly/re-pointed episodes at their file via media_file_id — the single
+        // source of coverage truth now (the episode_ids JSON column is gone).
         for (let i = 0; i < plan.episodeUpdates.length; i++) {
           const up = plan.episodeUpdates[i];
           const current = seasonEpisodes[i];
@@ -542,11 +543,11 @@ export class LibraryScanService implements OnModuleInit {
         for (const id of plan.removeIds) tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, id)).run();
         for (const im of plan.imports) {
           tx.insert(schema.mediaFile).values({
-            id: im.mediaFileId, mediaType: "series", mediaId: seriesId, episodeIds: im.episodeIds,
+            id: im.mediaFileId, mediaType: "series", mediaId: seriesId,
             relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: new Date().toISOString(),
           }).run();
         }
-        // J3 dual-write (sync body — SQLite path): same episode->file FK wiring as the pg body.
+        // J3 (sync body — SQLite path): same episode->file FK wiring as the pg body.
         for (let i = 0; i < plan.episodeUpdates.length; i++) {
           const up = plan.episodeUpdates[i];
           const current = seasonEpisodes[i];

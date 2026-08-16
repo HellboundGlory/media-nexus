@@ -214,6 +214,21 @@ export interface RootFolder {
   totalBytes: number | null;
 }
 
+/** One unmapped top-level folder in a root folder (gap report B3, Library Import).
+ *  `suggestedTitle`/`suggestedYear`/`suggestedMediaType` are search pre-fill hints only. */
+export interface UnmappedFolder {
+  name: string;
+  path: string;
+  suggestedTitle: string | null;
+  suggestedYear: number | null;
+  suggestedMediaType?: "movie" | "series";
+}
+
+export interface UnmappedFolders {
+  path: string;
+  items: UnmappedFolder[];
+}
+
 /** A single cast-or-crew credit (DETAILPAGE-BE2). `character` cast-only, `job`/`department`
  *  crew-only, `sortOrder` cast billing order (0 = top-billed), `profileUrl` may be null. */
 export interface Credit {

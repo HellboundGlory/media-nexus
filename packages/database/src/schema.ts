@@ -144,6 +144,12 @@ export const movie = sqliteTable("movie", {
   qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
   rootFolderPath: text("root_folder_path").notNull().default(""),
   minimumAvailability: text("minimum_availability").notNull().default("announced"),
+  // Folder-name override (gap report B3 / Library Import): when a title's files live in a
+  // non-conventional on-disk folder, this stores the exact folder NAME (last path segment) so
+  // import/scan/delete resolve it instead of the movieFolderName() "Title (YYYY)" convention.
+  // Null = use the convention. Validated server-side (a real path-traversal surface otherwise,
+  // since it feeds join(rootFolderPath, folderName)); see createMovieSchema/updateMovieSchema.
+  folderName: text("folder_name"),
   genres: json<string[]>("genres"),
   images: json<Record<string, string>[]>("images"),
   tags: json<string[]>("tags"),
@@ -174,6 +180,10 @@ export const series = sqliteTable("series", {
   tmdbRating: real("tmdb_rating"), // vote_average
   qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
   rootFolderPath: text("root_folder_path").notNull().default(""),
+  // Folder-name override (gap report B3 / Library Import) — series variant: stores the exact
+  // on-disk folder NAME when it isn't the seriesFolderName() convention. Null = use convention.
+  // Same validation as movies (see inputs.ts). Feeds join(rootFolderPath, folderName).
+  folderName: text("folder_name"),
   genres: json<string[]>("genres"),
   images: json<Record<string, string>[]>("images"),
   tags: json<string[]>("tags"),
@@ -220,7 +230,6 @@ export const mediaFile = sqliteTable("media_file", {
   id: text("id").primaryKey(),
   mediaType: text("media_type").notNull(), // movie | series
   mediaId: text("media_id").notNull(), // movie.id | series.id
-  episodeIds: json<string[]>("episode_ids"), // episode ids for episode files
   relativePath: text("relative_path").notNull(),
   size: integer("size").notNull().default(0),
   quality: json<{ source: string; resolution: string; edition: string }>("quality"),

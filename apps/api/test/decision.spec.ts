@@ -63,7 +63,7 @@ async function seedProfile(db: Awaited<ReturnType<typeof freshDb>>, items: numbe
 }
 
 function decisionService(db: Awaited<ReturnType<typeof freshDb>>) {
-  return new DecisionService(db, new MediaRepository(db), new BlocklistService(db), new ConfigService(db), new RootFoldersService(db));
+  return new DecisionService(db, new MediaRepository(db), new BlocklistService(db), new ConfigService(db), new RootFoldersService(db, new ConfigService(db)));
 }
 
 describe("DecisionService — unresolved target", () => {
@@ -141,7 +141,7 @@ describe("DecisionService — protocol preference, from real settings", () => {
     await seedMovie(db);
     const config = new ConfigService(db);
     await config.upsert({ "media.preferredProtocol": "usenet" });
-    const decisions = new DecisionService(db, new MediaRepository(db), new BlocklistService(db), config, new RootFoldersService(db));
+    const decisions = new DecisionService(db, new MediaRepository(db), new BlocklistService(db), config, new RootFoldersService(db, new ConfigService(db)));
 
     const d = await decisions.evaluate("movie", "m1", release({ protocol: "torrent" }));
     expect(d.approved).toBe(false);

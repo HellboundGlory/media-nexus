@@ -128,6 +128,9 @@ export const movie = pgTable("movie", {
   qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
   rootFolderPath: text("root_folder_path").notNull().default(""),
   minimumAvailability: text("minimum_availability").notNull().default("announced"),
+  // Folder-name override (gap report B3 / Library Import) — pg twin of schema.ts. Null = use
+  // the movieFolderName() "Title (YYYY)" convention; set = the exact on-disk folder NAME.
+  folderName: text("folder_name"),
   genres: json<string[]>("genres"),
   images: json<Record<string, string>[]>("images"),
   tags: json<string[]>("tags"),
@@ -157,6 +160,9 @@ export const series = pgTable("series", {
   tmdbRating: real("tmdb_rating"), // vote_average
   qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
   rootFolderPath: text("root_folder_path").notNull().default(""),
+  // Folder-name override (gap report B3 / Library Import) — pg twin of schema.ts. Null = use
+  // the seriesFolderName() convention; set = the exact on-disk folder NAME.
+  folderName: text("folder_name"),
   genres: json<string[]>("genres"),
   images: json<Record<string, string>[]>("images"),
   tags: json<string[]>("tags"),
@@ -199,9 +205,8 @@ export const episode = pgTable("episode", {
 
 export const mediaFile = pgTable("media_file", {
   id: text("id").primaryKey(),
-  mediaType: text("media_type").notNull(),
-  mediaId: text("media_id").notNull(),
-  episodeIds: json<string[]>("episode_ids"),
+  mediaType: text("media_type").notNull(), // movie | series
+  mediaId: text("media_id").notNull(), // movie.id | series.id
   relativePath: text("relative_path").notNull(),
   size: integer("size").notNull().default(0),
   quality: json<{ source: string; resolution: string; edition: string }>("quality"),

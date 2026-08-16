@@ -11,6 +11,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inArray } from "drizzle-orm";
 import { EventBus } from "@medianexus/events";
 import { createDb, schema } from "@medianexus/database";
 import { ConfigService } from "../src/system/config.service";
@@ -35,9 +36,9 @@ async function makeServices() {
   return { db: handle.db, movies, series };
 }
 
-function mediaFile(id: string, mediaType: "movie" | "series", mediaId: string, relativePath: string, episodeIds: string[]): typeof schema.mediaFile.$inferInsert {
+function mediaFile(id: string, mediaType: "movie" | "series", mediaId: string, relativePath: string): typeof schema.mediaFile.$inferInsert {
   return {
-    id, mediaType, mediaId, episodeIds, relativePath, size: 1000,
+    id, mediaType, mediaId, relativePath, size: 1000,
     quality: { source: "bluray", resolution: "1080p", edition: "" },
     mediaInfo: { videoCodec: "h264", audioCodec: "aac", resolution: "1920x1080", runtimeSeconds: 7200, audioChannels: 6, subtitles: [] },
     languages: ["eng"], dateAdded: new Date().toISOString(),
@@ -55,8 +56,8 @@ describe("/files subresources (DETAILPAGE-FE1)", () => {
       hasFile: true, addedAt: now, updatedAt: now,
     });
     await db.insert(schema.mediaFile).values([
-      mediaFile("mf1", "movie", "m1", "Fight Club (1999)/Fight Club (1999).mkv", []),
-      mediaFile("mf2", "movie", "m1", "Fight Club (1999)/Fight Club (1999)-extras.mkv", []),
+      mediaFile("mf1", "movie", "m1", "Fight Club (1999)/Fight Club (1999).mkv"),
+      mediaFile("mf2", "movie", "m1", "Fight Club (1999)/Fight Club (1999)-extras.mkv"),
     ]);
 
     const files = await movies.files("m1");
@@ -87,9 +88,12 @@ describe("/files subresources (DETAILPAGE-FE1)", () => {
     ]);
     // Season 1's file covers episodes 1+2; one separate season 2 file.
     await db.insert(schema.mediaFile).values([
-      mediaFile("mf_s1", "series", "s1", "Game of Thrones/Season 1/GoT - S01E01-02.mkv", ["s1e1", "s1e2"]),
-      mediaFile("mf_s2", "series", "s1", "Game of Thrones/Season 2/GoT - S02E01.mkv", ["s2e1"]),
+      mediaFile("mf_s1", "series", "s1", "Game of Thrones/Season 1/GoT - S01E01-02.mkv"),
+      mediaFile("mf_s2", "series", "s1", "Game of Thrones/Season 2/GoT - S02E01.mkv"),
     ]);
+    // Point the covered episodes at their file — the FK is the coverage source (roadmap J3).
+    await db.update(schema.episode).set({ mediaFileId: "mf_s1" }).where(inArray(schema.episode.id, ["s1e1", "s1e2"]));
+    await db.update(schema.episode).set({ mediaFileId: "mf_s2" }).where(inArray(schema.episode.id, ["s2e1"]));
 
     const files = await series.files("s1");
     expect(files).toHaveLength(2);

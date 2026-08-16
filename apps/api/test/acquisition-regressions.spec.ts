@@ -86,7 +86,7 @@ async function harness(): Promise<Harness> {
   const blocklist = new BlocklistService(handle.db);
   const service = new AcquisitionService(
     handle.db, config, events, providers, new MediaRepository(handle.db), blocklist,
-    new RootFoldersService(handle.db), new RemotePathMappingsService(handle.db), new RecycleBinService(config),
+    new RootFoldersService(handle.db, new ConfigService(handle.db)), new RemotePathMappingsService(handle.db), new RecycleBinService(config),
     new ProviderStatusService(handle.db, config),
   );
   return {
@@ -172,7 +172,13 @@ describe("I1 — episode matching honours the season number", () => {
 
     const files = await h.db.select().from(schema.mediaFile);
     expect(files).toHaveLength(1);
-    expect(files[0].episodeIds).toEqual(["s2e1"]);
+    // Coverage truth is now the episode -> media_file FK (roadmap J3) — the imported file must
+    // point at only the matched season-2 episode, not S01E01/S03E01.
+    const eps = await h.db.select({ id: schema.episode.id, mediaFileId: schema.episode.mediaFileId }).from(schema.episode);
+    const byId = Object.fromEntries(eps.map((e) => [e.id, e.mediaFileId]));
+    expect(byId["s2e1"]).toBe(files[0].id);
+    expect(byId["s1e1"]).toBeNull();
+    expect(byId["s3e1"]).toBeNull();
   });
 });
 

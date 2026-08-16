@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/reac
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Discover from "./pages/Discover";
+import LibraryImport from "./pages/LibraryImport";
 import Movies from "./pages/Movies";
 import Series from "./pages/Series";
 import Activity from "./pages/Activity";
@@ -97,6 +98,7 @@ export default function App() {
           >
             <Route index element={<Dashboard />} />
             <Route path="discover" element={<Discover />} />
+            <Route path="import" element={<LibraryImport />} />
             <Route path="movies" element={<Movies />} />
             <Route path="movies/:id" element={<MovieDetail />} />
             <Route path="series" element={<Series />} />

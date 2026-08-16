@@ -14,6 +14,7 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import { EventBus } from "@medianexus/events";
 import { RecycleBinService } from "../src/media/recycle-bin.service";
 import { createDb, schema, type Db } from "@medianexus/database";
@@ -251,9 +252,11 @@ describe("FILEMGMT-1 — rename execute (POST /movies|series/:id/rename)", () =>
     await writeFile(join(root, oldRel), "x");
     await seedSeries(db, root);
     await db.insert(schema.mediaFile).values({
-      id: "mf_sr1", mediaType: "series", mediaId: "s1", episodeIds: ["s1e1"], relativePath: oldRel,
+      id: "mf_sr1", mediaType: "series", mediaId: "s1", relativePath: oldRel,
       size: 1, quality: { source: "web", resolution: "1080p", edition: "" }, dateAdded: new Date().toISOString(),
     });
+    // Cover s1e1 via the FK so rename derives the target episode (roadmap J3).
+    await db.update(schema.episode).set({ mediaFileId: "mf_sr1" }).where(eq(schema.episode.id, "s1e1"));
     await config.upsert({ "media.naming": { episodes: "{Series Title} S{season:00}E{episode:00}" } } as never);
 
     const series = new SeriesService(db, new EventsService(new EventBus()), new AutoTagsService(db), config, undefined as never, realRecycleBin(db));
