@@ -1,23 +1,87 @@
 // SPDX-License-Identifier: MIT
-import { Inject, Injectable } from "@nestjs/common";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { extname } from "node:path";
 import { deletePolymorphicRows, deletePolymorphicRowsAsync, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import type { CreateSeries, UpdateSeriesBody } from "@medianexus/domain";
+import { episodeQueryTag, parseEpisodeRelease, pickBest } from "@medianexus/domain";
+import type { CreateSeries, Quality, Release, SeriesType, UpdateSeriesBody } from "@medianexus/domain";
+import { seriesFolderName, episodeFileName } from "../media/naming.helpers";
+import { selectMediaFiles, type MediaFileRow } from "../media/media-file.types";
+import { ConfigService } from "../system/config.service";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 import { AutoTagsService } from "../auto-tags/auto-tags.service";
+import type { RenamePreviewItem } from "../movies/movies.service";
+import { IndexersService } from "../indexers/indexers.service";
 
 @Injectable()
 export class SeriesService {
+  private readonly logger = new Logger(SeriesService.name);
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly events: EventsService,
     private readonly autoTags: AutoTagsService,
+    private readonly config: ConfigService,
+    private readonly indexers: IndexersService,
   ) {}
+
+  /** Read-only rename preview (DETAILPAGE-BE4) — series files need their episode number/title
+   *  looked up from the file's episodeIds, exactly as acquisition builds epNumberById/
+   *  epTitleById. Purely derived from DB rows, no filesystem/storage access. Mirrors
+   *  acquisition's series assembly: folder = seriesFolderName(title)/Season {n}, filename =
+   *  episodeFileName(cfg, ...), joined with the existing extension. */
+  async renamePreview(id: string): Promise<RenamePreviewItem[]> {
+    const series = await this.get(id);
+    const cfg = await this.config.get();
+    const files = await this.db
+      .select().from(schema.mediaFile)
+      .where(and(eq(schema.mediaFile.mediaType, "series"), eq(schema.mediaFile.mediaId, id)));
+    if (files.length === 0) return [];
+
+    // Load the episodes for every file at once (id -> episodeNumber/title + seasonNumber via the
+    // season join) so we can build the same epNumberById/epTitleById maps acquisition uses.
+    const allEpisodeIds = [...new Set(files.flatMap((f) => f.episodeIds ?? []))];
+    const epRows = allEpisodeIds.length === 0 ? []
+      : await this.db.select({
+          id: schema.episode.id,
+          seriesId: schema.episode.seriesId,
+          seasonNumber: schema.season.seasonNumber,
+          episodeNumber: schema.episode.episodeNumber,
+          title: schema.episode.title,
+        }).from(schema.episode)
+          .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
+          .where(inArray(schema.episode.id, allEpisodeIds));
+    const epNumberById = new Map(epRows.map((e) => [e.id, e.episodeNumber]));
+    const epTitleById = new Map(epRows.map((e) => [e.id, e.title]));
+    const epSeasonById = new Map(epRows.map((e) => [e.id, e.seasonNumber ?? 0]));
+
+    const safeSeries = seriesFolderName(series.title);
+    return files.map((f) => {
+      const ids = f.episodeIds ?? [];
+      if (ids.length === 0) {
+        // Unmatched file inside a pack (acquisition keeps its ad hoc naming for these — there's
+        // no episode identity to build a template from), so treat it as unchanged.
+        return { mediaFileId: f.id, currentPath: f.relativePath, newPath: f.relativePath, changed: false };
+      }
+      const season = epSeasonById.get(ids[0]) ?? 0;
+      const episodes = ids.map((epId) => ({ number: epNumberById.get(epId) ?? 0, title: epTitleById.get(epId) ?? "" }));
+      const fileName = `${episodeFileName(cfg, series.title, season, episodes, f.quality as Quality)}${extname(f.relativePath)}`;
+      const newPath = `${safeSeries}/Season ${season}/${fileName}`;
+      return { mediaFileId: f.id, currentPath: f.relativePath, newPath, changed: newPath !== f.relativePath };
+    });
+  }
+
+  /** The series' media_file rows (DETAILPAGE-FE1) — feeds the season size-on-disk pill and any
+   *  file-level display. Read-only, pure DB. Each row's episodeIds lets the frontend attribute
+   *  a file to its season (via the already-fetched episode list). */
+  async files(id: string): Promise<MediaFileRow[]> {
+    await this.get(id);
+    return selectMediaFiles(this.db, "series", id);
+  }
 
   async list(q: { search?: string; page?: number; pageSize?: number }) {
     const where = titleSearchCondition(schema.series.title, q.search);
@@ -168,6 +232,18 @@ export class SeriesService {
       .orderBy(asc(schema.season.seasonNumber), asc(schema.episode.episodeNumber));
   }
 
+  /** Cast & crew for a series (DETAILPAGE-BE2) — split by role, cast ordered top-billed first. */
+  async credits(seriesId: string): Promise<{ cast: typeof schema.mediaCredit.$inferSelect[]; crew: typeof schema.mediaCredit.$inferSelect[] }> {
+    await this.get(seriesId);
+    const rows = await this.db.select().from(schema.mediaCredit)
+      .where(and(eq(schema.mediaCredit.mediaType, "series"), eq(schema.mediaCredit.mediaId, seriesId)))
+      .orderBy(asc(schema.mediaCredit.sortOrder));
+    return {
+      cast: rows.filter((r) => r.role === "cast"),
+      crew: rows.filter((r) => r.role === "crew"),
+    };
+  }
+
   /** Bulk-create episodes for a season (metadata import will automate this; manual endpoint for now). */
   async createEpisodes(seriesId: string, input: { seasonNumber: number; episodeNumbers: number[]; title?: string; airDateUtc?: string }) {
     await this.get(seriesId);
@@ -200,6 +276,98 @@ export class SeriesService {
     if (!rows[0]) throw ApiError.notFound("episode", episodeId);
     await this.db.update(schema.episode).set({ monitored }).where(eq(schema.episode.id, episodeId));
     return this.db.select().from(schema.episode).where(eq(schema.episode.id, episodeId)).limit(1);
+  }
+
+  /** On-demand "Search + auto-grab" for a single episode (DETAILPAGE-FE1). `grabbed:
+   *  false` means no acceptable release was found — a normal outcome, not an error; only a
+   *  genuine grab failure sets `error`. */
+  async autoSearchEpisode(seriesId: string, episodeId: string): Promise<{ grabbed: boolean; release?: Release; error?: string }> {
+    const series = await this.get(seriesId);
+    const row = await this.episodeAutoRow(seriesId, episodeId);
+    if (!row) throw ApiError.notFound("episode", episodeId);
+    return this.searchAndGrabTarget(series, row);
+  }
+
+  /** On-demand "Search + auto-grab" for a whole season (DETAILPAGE-FE2): runs the same
+   *  search → match → pickBest → grab composition as autoSearchEpisode over every episode
+   *  in the season that does not already have a file (skip ones that do — the per-episode
+   *  button disables on hasFile, this keeps that guard at the loop level). Returns a
+   *  per-episode summary plus the counts. */
+  async autoSearchSeason(seriesId: string, seasonNumber: number): Promise<{
+    attempted: number;
+    grabbed: number;
+    results: { episodeId: string; grabbed: boolean; release?: Release; error?: string }[];
+  }> {
+    const series = await this.get(seriesId);
+    const rows = await this.episodeAutoRows(seriesId, seasonNumber);
+    const results: { episodeId: string; grabbed: boolean; release?: Release; error?: string }[] = [];
+    let grabbed = 0;
+    for (const row of rows) {
+      if (row.episode.hasFile) continue;
+      const r = await this.searchAndGrabTarget(series, row);
+      if (r.grabbed) grabbed++;
+      results.push({ episodeId: row.episode.id, ...r });
+    }
+    return { attempted: results.length, grabbed, results };
+  }
+
+  /** Fetch one episode of a series joined with its season number (the shape the shared
+   *  search/grab helper targets), or null when it doesn't belong to the series. */
+  private async episodeAutoRow(
+    seriesId: string, episodeId: string,
+  ): Promise<{ episode: typeof schema.episode.$inferSelect; seasonNumber: number } | null> {
+    const rows = await this.db
+      .select({ episode: schema.episode, seasonNumber: schema.season.seasonNumber })
+      .from(schema.episode)
+      .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
+      .where(and(eq(schema.episode.id, episodeId), eq(schema.episode.seriesId, seriesId)))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** Fetch every episode of a season, joined with its season number, ordered by episode number. */
+  private async episodeAutoRows(
+    seriesId: string, seasonNumber: number,
+  ): Promise<{ episode: typeof schema.episode.$inferSelect; seasonNumber: number }[]> {
+    return this.db
+      .select({ episode: schema.episode, seasonNumber: schema.season.seasonNumber })
+      .from(schema.episode)
+      .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
+      .where(and(eq(schema.episode.seriesId, seriesId), eq(schema.season.seasonNumber, seasonNumber)))
+      .orderBy(asc(schema.episode.episodeNumber));
+  }
+
+  /** The shared search → title/target match → pickBest → grab composition both the
+   *  per-episode and per-season auto-search use (DETAILPAGE-FE2), so the matching/picking
+   *  logic lives in exactly one place rather than a third near-duplicate of RssSyncService's
+   *  tryGrabEpisode. `grabbed: false` = no acceptable release found (normal); only a genuine
+   *  grab failure sets `error`. */
+  private async searchAndGrabTarget(
+    series: typeof schema.series.$inferSelect,
+    row: { episode: typeof schema.episode.$inferSelect; seasonNumber: number },
+  ): Promise<{ grabbed: boolean; release?: Release; error?: string }> {
+    const seriesType = series.seriesType as SeriesType;
+    const target: EpisodeAutoTarget = {
+      seasonNumber: row.seasonNumber,
+      episodeNumber: row.episode.episodeNumber,
+      airDateUtc: row.episode.airDateUtc,
+      absoluteNumber: row.episode.absoluteNumber,
+    };
+    const query = episodeAutoQuery(seriesType, series.title, target);
+    const res = await this.indexers.search({ mediaType: "series", mediaId: series.id, query, limit: 50 });
+    if (res.releases.length === 0) return { grabbed: false };
+    const candidates = res.releases.filter((r) => episodeAutoMatches(seriesType, target, r.title));
+    const best = pickBest(candidates.map((r) => r.decision));
+    if (!best) return { grabbed: false };
+    try {
+      await this.indexers.grab({ mediaType: "series", mediaId: series.id, releaseId: best.release.id, indexerId: best.release.indexerId, release: best.release });
+      return { grabbed: true, release: best.release };
+    } catch (err) {
+      const error = (err as Error).message;
+      this.logger.warn(`auto-search grab failed for "${series.title}" ${query}: ${error}`);
+      this.events.publish(EventTypes.DownloadClientFailed, { seriesId: series.id, error });
+      return { grabbed: false, error };
+    }
   }
 
   /**
@@ -254,4 +422,54 @@ export class SeriesService {
    * because a series-only home is wrong for movie data, and WantedController.calendar() routes
    * there now.
    */
+}
+
+/** The bits of an episode a per-episode auto-search needs to build a query and match
+ *  releases against — mirror of the wanted-episode shape RssSyncService matches on. */
+interface EpisodeAutoTarget {
+  seasonNumber: number;
+  episodeNumber: number;
+  airDateUtc: string | null;
+  absoluteNumber: number | null;
+}
+
+/** The per-episode indexer query, shaped by the series' numbering — the same
+ *  seriesQuery() RssSyncService uses for its sweep: standard → SxxExx, daily → air date,
+ *  anime → absolute number. */
+function episodeAutoQuery(seriesType: SeriesType, seriesTitle: string, target: EpisodeAutoTarget): string {
+  if (seriesType === "daily" && target.airDateUtc) {
+    const date = target.airDateUtc.slice(0, 10).replace(/-/g, ".");
+    return `${seriesTitle} ${date}`;
+  }
+  if (seriesType === "anime" && target.absoluteNumber != null) {
+    return `${seriesTitle} ${target.absoluteNumber}`;
+  }
+  return `${seriesTitle} ${episodeQueryTag(target.seasonNumber, target.episodeNumber)}`;
+}
+
+/** Whether a release title matches the target episode, by the series' numbering — the
+ *  same matchesTarget() RssSyncService applies to its sweep. Daily/anime prefer their own
+ *  signal (date / absolute number) and fall back to S&E when one is present; absent data
+ *  degrades to a no-match. */
+function episodeAutoMatches(seriesType: SeriesType, target: EpisodeAutoTarget, title: string): boolean {
+  const m = parseEpisodeRelease(title);
+  if (seriesType === "daily") {
+    if (m.dailyDate && target.airDateUtc && airDateMatches(target.airDateUtc, m.dailyDate)) return true;
+    return m.season === target.seasonNumber && m.episodes.includes(target.episodeNumber);
+  }
+  if (seriesType === "anime") {
+    if (m.absoluteNumber !== undefined && target.absoluteNumber != null && m.absoluteNumber === target.absoluteNumber) return true;
+    return m.season === target.seasonNumber && m.episodes.includes(target.episodeNumber);
+  }
+  return m.season === target.seasonNumber && m.episodes.includes(target.episodeNumber);
+}
+
+/** Exact air-date match, else ±1 day for drift — copied from RssSyncService.airDateMatches. */
+function airDateMatches(airDateUtc: string | null | undefined, date: string): boolean {
+  if (!airDateUtc) return false;
+  const day = airDateUtc.slice(0, 10);
+  if (day === date) return true;
+  const t = new Date(`${day}T00:00:00.000Z`).getTime();
+  const base = new Date(`${date}T00:00:00.000Z`).getTime();
+  return Number.isNaN(t) || Number.isNaN(base) ? false : Math.abs(t - base) <= 86400000;
 }

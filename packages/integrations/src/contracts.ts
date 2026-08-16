@@ -93,12 +93,52 @@ export interface MediaSummary {
   genres?: string[];
   images?: { coverType: string; url: string }[];
   rating?: number;
+  // Detail-page additions (roadmap P3 / DETAILPAGE-BE1) — cheap, self-contained fields the
+  // TMDB provider returns on one round trip; nullable because not every title/pipeline has them.
+  /** Age/classification rating, e.g. "PG-13" (movie) / "TV-MA" (series). */
+  certification?: string;
+  /** Runtime in minutes (movie release runtime / series episode runtime). */
+  runtime?: number;
+  /** Production company name — movies only (no studio concept on series). */
+  studio?: string;
+  /** Release dates — three-way breakdown, movies only (series uses firstAirYear). */
+  inCinemas?: string;
+  digitalRelease?: string;
+  physicalRelease?: string;
+  /** YouTube video id of the primary trailer. */
+  trailerId?: string;
+  /** Movie collection the title belongs to (roadmap P3 / DETAILPAGE-BE3). Movies only — prefers
+   *  `undefined` (not null) when a title has no collection, matching the rest of these fields. */
+  collectionTmdbId?: number;
+  collectionName?: string;
 }
 
 export interface MetadataProviderContract {
   readonly key: string;
   search(query: string, mediaType: "movie" | "series"): Promise<MediaSummary[]>;
   getDetails(mediaType: "movie" | "series", externalId: string): Promise<MediaSummary>;
+  /** Optional cast & crew enrichment (roadmap P3 / DETAILPAGE-BE2). Optional because only TMDB
+   *  implements it — a future non-TMDB provider doesn't have to. Splits the full cast list from
+   *  a provider-curated subset of key crew jobs (the provider decides what's "key"; consumers
+   *  shouldn't have to know a vendor's job taxonomy). */
+  getCredits?(mediaType: "movie" | "series", externalId: string): Promise<{ cast: CreditPerson[]; crew: CreditPerson[] }>;
+}
+
+/** A single cast-or-crew credit (DETAILPAGE-BE2). Provider-agnostic — not TMDB-shaped. */
+export interface CreditPerson {
+  /** Stable person id (e.g. TMDB person id). */
+  id: number;
+  name: string;
+  /** Cast only: role/character played. */
+  character?: string;
+  /** Crew only: the credited job (e.g. "Director"). */
+  job?: string;
+  /** Crew only: the department the job belongs to (e.g. "Directing"). */
+  department?: string;
+  /** Cast only: billing order, 0 = top-billed. */
+  order?: number;
+  /** Headshot URL, e.g. `https://image.tmdb.org/t/p/w185/...`; absent when the person has no photo. */
+  profileUrl?: string;
 }
 
 // ---------- Import lists (roadmap P2, gap report C2) ----------

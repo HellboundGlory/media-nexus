@@ -1,19 +1,37 @@
 // SPDX-License-Identifier: MIT
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { and, asc, eq } from "drizzle-orm";
+import { extname } from "node:path";
 import { newEntityId } from "@medianexus/shared";
 import { ApiError } from "@medianexus/shared";
 import { combine, deletePolymorphicRows, deletePolymorphicRowsAsync, ensureAvailability, listPaged, titleSearchCondition } from "../media/library.helpers";
+import { movieFolderName, movieFileName } from "../media/naming.helpers";
+import { selectMediaFiles, type MediaFileRow } from "../media/media-file.types";
+import { ConfigService } from "../system/config.service";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import type { CreateMovie, MinimumAvailability, UpdateMovieBody } from "@medianexus/domain";
+import { parseEpisodeRelease, pickBest, titleMatches } from "@medianexus/domain";
+import type { CreateMovie, MinimumAvailability, Quality, Release, UpdateMovieBody } from "@medianexus/domain";
 import { hasMinimumAvailability } from "@medianexus/domain";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 import { AutoTagsService } from "../auto-tags/auto-tags.service";
+import { IndexersService } from "../indexers/indexers.service";
 
 export interface ListQuery { search?: string; monitored?: string; sort?: string; page?: number; pageSize?: number }
+
+/** One row of a rename preview (DETAILPAGE-BE4): what a file would be renamed to now. */
+export interface RenamePreviewItem {
+  mediaFileId: string;
+  currentPath: string;
+  newPath: string;
+  changed: boolean;
+}
+
+/** A media_file row as exposed by GET /movies|series/:id/files (DETAILPAGE-FE1). Re-exported
+ *  from ../media/media-file.types so consumers import it from one place. */
+export type { MediaFileRow } from "../media/media-file.types";
 
 export interface WantedMovie {
   id: string;
@@ -27,11 +45,41 @@ export interface WantedMovie {
 
 @Injectable()
 export class MoviesService {
+  private readonly logger = new Logger(MoviesService.name);
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly events: EventsService,
     private readonly autoTags: AutoTagsService,
+    private readonly config: ConfigService,
+    private readonly indexers: IndexersService,
   ) {}
+
+  /** Read-only rename preview (DETAILPAGE-BE4): for each media_file of this movie, recompute
+   *  what the relative path WOULD be under the current naming template and compare against the
+   *  stored path. Purely derived from DB rows — no filesystem access, no storage provider
+   *  import. Mirrors acquisition.service's movie assembly exactly: folder =
+   *  movieFolderName(title, releaseDate), filename = movieFileName(cfg, ...), joined with the
+   *  existing extension, made relative the same way import does. */
+  async renamePreview(id: string): Promise<RenamePreviewItem[]> {
+    const movie = await this.get(id);
+    const cfg = await this.config.get();
+    const files = await this.db
+      .select().from(schema.mediaFile)
+      .where(and(eq(schema.mediaFile.mediaType, "movie"), eq(schema.mediaFile.mediaId, id)));
+    return files.map((f) => {
+      const folder = movieFolderName(movie.title, movie.releaseDate);
+      const fileName = `${movieFileName(cfg, movie.title, movie.releaseDate, f.quality as Quality)}${extname(f.relativePath)}`;
+      const newPath = `${folder}/${fileName}`;
+      return { mediaFileId: f.id, currentPath: f.relativePath, newPath, changed: newPath !== f.relativePath };
+    });
+  }
+
+  /** The movie's media_file rows (DETAILPAGE-FE1) — feeds the movie File panel. Read-only,
+   *  pure DB. A movie has no episodeIds; the shape is shared with the series /files endpoint. */
+  async files(id: string): Promise<MediaFileRow[]> {
+    await this.get(id);
+    return selectMediaFiles(this.db, "movie", id);
+  }
 
   async list(q: ListQuery) {
     const where = combine([
@@ -46,6 +94,43 @@ export class MoviesService {
     const rows = await this.db.select().from(schema.movie).where(eq(schema.movie.id, id)).limit(1);
     if (!rows[0]) throw ApiError.notFound("movie", id);
     return rows[0];
+  }
+
+  /** On-demand "Search + auto-grab" for a single movie (DETAILPAGE-FE1). Mirrors
+   *  RssSyncService.tryGrabMovie()'s proven search → title-match → pickBest → grab
+   *  composition (on-demand one-click version of the whole-library RSS sweep). `grabbed:
+   *  false` means no acceptable release was found — a normal outcome, not an error; only a
+   *  genuine grab failure sets `error`. */
+  async autoSearchMovie(mediaId: string): Promise<{ grabbed: boolean; release?: Release; error?: string }> {
+    const movie = await this.get(mediaId);
+    const year = movie.releaseDate ? Number(movie.releaseDate.slice(0, 4)) : undefined;
+    const query = year ? `${movie.title} ${year}` : movie.title;
+    const res = await this.indexers.search({ mediaType: "movie", mediaId, query, limit: 50 });
+    if (res.releases.length === 0) return { grabbed: false };
+    const candidates = res.releases.filter((r) => movieReleaseMatches(r, movie.title, year));
+    const best = pickBest(candidates.map((r) => r.decision));
+    if (!best) return { grabbed: false };
+    try {
+      await this.indexers.grab({ mediaType: "movie", mediaId, releaseId: best.release.id, indexerId: best.release.indexerId, release: best.release });
+      return { grabbed: true, release: best.release };
+    } catch (err) {
+      const error = (err as Error).message;
+      this.logger.warn(`auto-search grab failed for "${movie.title}": ${error}`);
+      this.events.publish(EventTypes.DownloadClientFailed, { movieId: mediaId, error });
+      return { grabbed: false, error };
+    }
+  }
+
+  /** Cast & crew for a movie (DETAILPAGE-BE2) — split by role, cast ordered top-billed first. */
+  async credits(id: string): Promise<{ cast: typeof schema.mediaCredit.$inferSelect[]; crew: typeof schema.mediaCredit.$inferSelect[] }> {
+    await this.get(id);
+    const rows = await this.db.select().from(schema.mediaCredit)
+      .where(and(eq(schema.mediaCredit.mediaType, "movie"), eq(schema.mediaCredit.mediaId, id)))
+      .orderBy(asc(schema.mediaCredit.sortOrder));
+    return {
+      cast: rows.filter((r) => r.role === "cast"),
+      crew: rows.filter((r) => r.role === "crew"),
+    };
   }
 
   /** Edit a movie (roadmap P1, gap report C5). Partial body; omitted fields are untouched,
@@ -172,4 +257,14 @@ export class MoviesService {
         minimumAvailability: m.minimumAvailability as MinimumAvailability, monitored: m.monitored, hasFile: m.hasFile,
       }));
   }
+}
+
+/** Whether a movie release title matches a wanted movie — the same tolerant title/year
+ *  match RssSyncService.matchesMovie() applies to the whole-library sweep: no SxxExx to
+ *  match on, so use the year the parser extracted (tolerant of ±1 for festival/regional
+ *  release-date drift across a calendar-year boundary) plus a real title match. */
+function movieReleaseMatches(r: Release, title: string, year: number | undefined): boolean {
+  const m = parseEpisodeRelease(r.title);
+  if (year !== undefined && m.year !== undefined && Math.abs(m.year - year) > 1) return false;
+  return titleMatches(m.seriesTitle, title);
 }

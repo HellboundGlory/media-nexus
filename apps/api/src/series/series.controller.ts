@@ -74,6 +74,24 @@ export class SeriesController {
     return this.series.episodes(id, q.season);
   }
 
+  @Get(":id/credits")
+  @ApiOperation({ summary: "Cast & crew of a series" })
+  credits(@Param("id") id: string) {
+    return this.series.credits(id);
+  }
+
+  @Get(":id/rename-preview")
+  @ApiOperation({ summary: "Read-only preview of a rename under the current naming template" })
+  renamePreview(@Param("id") id: string) {
+    return this.series.renamePreview(id);
+  }
+
+  @Get(":id/files")
+  @ApiOperation({ summary: "Media files of a series" })
+  files(@Param("id") id: string) {
+    return this.series.files(id);
+  }
+
   @Post(":id/episodes")
   @ApiOperation({ summary: "Bulk-create episodes for a season (manual; metadata import automates later)" })
   createEpisodes(@Param("id") id: string, @Body(new ZodValidationPipe(createEpisodesBody)) body: z.infer<typeof createEpisodesBody>) {
@@ -84,5 +102,17 @@ export class SeriesController {
   @ApiOperation({ summary: "Monitor/unmonitor an episode" })
   setMonitored(@Param("id") id: string, @Param("episodeId") episodeId: string, @Body(new ZodValidationPipe(setMonitoredBody)) body: { monitored: boolean }) {
     return this.series.setEpisodeMonitored(id, episodeId, body.monitored);
+  }
+
+  @Post(":id/episodes/:episodeId/auto-search")
+  @ApiOperation({ summary: "Search indexers for an episode and auto-grab the best release (one click)" })
+  autoSearchEpisode(@Param("id") id: string, @Param("episodeId") episodeId: string) {
+    return this.series.autoSearchEpisode(id, episodeId);
+  }
+
+  @Post(":id/seasons/:seasonNumber/auto-search")
+  @ApiOperation({ summary: "Search indexers for every missing episode in a season and auto-grab the best release for each (one click)" })
+  autoSearchSeason(@Param("id") id: string, @Param("seasonNumber") seasonNumber: string) {
+    return this.series.autoSearchSeason(id, Number(seasonNumber));
   }
 }

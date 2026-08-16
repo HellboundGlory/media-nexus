@@ -33,6 +33,30 @@ export class MoviesController {
     return this.movies.get(id);
   }
 
+  @Get(":id/credits")
+  @ApiOperation({ summary: "Cast & crew of a movie" })
+  credits(@Param("id") id: string) {
+    return this.movies.credits(id);
+  }
+
+  @Post(":id/auto-search")
+  @ApiOperation({ summary: "Search indexers for a movie and auto-grab the best release (one click)" })
+  autoSearch(@Param("id") id: string) {
+    return this.movies.autoSearchMovie(id);
+  }
+
+  @Get(":id/rename-preview")
+  @ApiOperation({ summary: "Read-only preview of a rename under the current naming template" })
+  renamePreview(@Param("id") id: string) {
+    return this.movies.renamePreview(id);
+  }
+
+  @Get(":id/files")
+  @ApiOperation({ summary: "Media files of a movie" })
+  files(@Param("id") id: string) {
+    return this.movies.files(id);
+  }
+
   @Post()
   @ApiOperation({ summary: "Add a movie to the library" })
   create(@Body(new ZodValidationPipe(createMovieSchema)) body: CreateMovie) {

@@ -11,6 +11,7 @@ import Activity from "./pages/Activity";
 import Indexers from "./pages/Indexers";
 import Clients from "./pages/Clients";
 import SeriesDetail from "./pages/SeriesDetail";
+import MovieDetail from "./pages/MovieDetail";
 import Calendar from "./pages/Calendar";
 import ReleaseProfiles from "./pages/ReleaseProfiles";
 import AutoTags from "./pages/AutoTags";
@@ -97,6 +98,7 @@ export default function App() {
             <Route index element={<Dashboard />} />
             <Route path="discover" element={<Discover />} />
             <Route path="movies" element={<Movies />} />
+            <Route path="movies/:id" element={<MovieDetail />} />
             <Route path="series" element={<Series />} />
             <Route path="series/:id" element={<SeriesDetail />} />
             <Route path="activity" element={<Activity />} />

@@ -10,10 +10,22 @@ export interface Movie {
   status: string;
   releaseDate: string | null;
   monitored: boolean;
+  // Detail-page metadata (DETAILPAGE-BE1) — nullable; populated by metadata refresh.
+  certification: string | null;
+  runtime: number | null; // minutes
+  studio: string | null; // movies only
+  inCinemas: string | null; // ISO date
+  digitalRelease: string | null; // ISO date
+  physicalRelease: string | null; // ISO date
+  trailerId: string | null; // YouTube video id
+  tmdbRating: number | null; // vote_average
+  collectionTmdbId: number | null; // movie collection (DETAILPAGE-BE3), null when none
+  collectionName: string | null;
   qualityProfileId: string | null;
   rootFolderPath: string;
   minimumAvailability: MinimumAvailability;
   genres: string[];
+  images: { coverType: string; url: string }[];
   tags: string[];
   hasFile: boolean;
   addedAt: string;
@@ -30,7 +42,16 @@ export interface Series {
   seriesType: string;
   firstAirYear: number | null;
   monitored: boolean;
+  // Detail-page metadata (DETAILPAGE-BE1) — nullable; populated by metadata refresh.
+  certification: string | null;
+  runtime: number | null; // minutes (episode runtime)
+  trailerId: string | null; // YouTube video id
+  tmdbRating: number | null; // vote_average
+  network: string | null;
+  genres: string[];
+  images: { coverType: string; url: string }[];
   tags: string[];
+  rootFolderPath: string;
   addedAt: string;
 }
 
@@ -154,6 +175,10 @@ export interface Release {
   size: number;
   seeders: number | null;
   quality: { source: string; resolution: string };
+  /** Attached by DecisionService to POST /search results (DETAILPAGE-FE1): rejected releases
+   *  carry their reasons here (with a Rejected flag in the UI + a working Grab only when
+   *  approved). undefined when the search response doesn't include a decision. */
+  decision?: { approved: boolean; rejections: { reason: string; message: string }[]; profile?: number; formatScore?: number } | undefined;
 }
 
 export interface IndexerDef {
@@ -198,6 +223,58 @@ export interface RootFolder {
   accessible: boolean;
   freeBytes: number | null;
   totalBytes: number | null;
+}
+
+/** A single cast-or-crew credit (DETAILPAGE-BE2). `character` cast-only, `job`/`department`
+ *  crew-only, `sortOrder` cast billing order (0 = top-billed), `profileUrl` may be null. */
+export interface Credit {
+  id: string;
+  mediaType: "movie" | "series";
+  mediaId: string;
+  role: "cast" | "crew";
+  personName: string;
+  character: string | null;
+  job: string | null;
+  department: string | null;
+  sortOrder: number | null;
+  profileUrl: string | null;
+}
+
+/** GET /movies/:id/credits and /series/:id/credits — split by role, cast ordered top-billed. */
+export interface CreditsResponse {
+  cast: Credit[];
+  crew: Credit[];
+}
+
+/** A media_file row as exposed by GET /movies|series/:id/files (DETAILPAGE-FE1). episodeIds is
+ *  populated for series files only; a movie has none. mediaInfo/quality may be null before a
+ *  probe/refresh runs. */
+export interface MediaFileRow {
+  id: string;
+  mediaType: "movie" | "series";
+  mediaId: string;
+  episodeIds: string[];
+  relativePath: string;
+  size: number;
+  quality: { source: string; resolution: string; edition: string } | null;
+  mediaInfo: {
+    videoCodec: string | null;
+    audioCodec: string | null;
+    resolution: string | null;
+    runtimeSeconds: number | null;
+    audioChannels: number | null;
+    subtitles: { language: string | null }[];
+  } | null;
+  languages: string[];
+  dateAdded: string | null;
+}
+
+/** One row of GET /movies|series/:id/rename-preview (DETAILPAGE-BE4/FE1). */
+export interface RenamePreviewItem {
+  mediaFileId: string;
+  currentPath: string;
+  newPath: string;
+  changed: boolean;
 }
 
 export interface RemotePathMapping {

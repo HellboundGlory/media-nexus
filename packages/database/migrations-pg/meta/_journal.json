@@ -8,6 +8,27 @@
       "when": 1786817718541,
       "tag": "0000_great_stephen_strange",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786826177371,
+      "tag": "0001_zippy_the_watchers",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786827227886,
+      "tag": "0002_workable_killer_shrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786828196608,
+      "tag": "0003_cute_zodiak",
+      "breakpoints": true
     }
   ]
 }

@@ -8,6 +8,27 @@
       "when": 1786817708347,
       "tag": "0000_groovy_boomerang",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786826171382,
+      "tag": "0001_third_forge",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786827223121,
+      "tag": "0002_sticky_spectrum",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786828196183,
+      "tag": "0003_thankful_bloodstrike",
+      "breakpoints": true
     }
   ]
 }

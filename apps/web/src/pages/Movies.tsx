@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { Search, Plus, Database } from "lucide-react";
 import { api } from "../api/client";
 import type { Movie, Paged } from "../api/types";
@@ -96,7 +97,7 @@ export default function Movies() {
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
               {movies.data?.items.map((m) => (
                 <tr key={m.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/60">
-                  <td className="px-4 py-2.5 font-medium">{m.title}</td>
+                  <td className="px-4 py-2.5 font-medium"><Link to={`/movies/${m.id}`} className="hover:text-accent">{m.title}</Link></td>
                   <td className="px-4 py-2.5 text-zinc-500">{m.releaseDate ? m.releaseDate.slice(0, 4) : "—"}</td>
                   <td className="px-4 py-2.5"><Badge tone="neutral">{m.status}</Badge></td>
                   <td className="px-4 py-2.5"><Badge tone={m.hasFile ? "ok" : "warn"}>{m.hasFile ? "available" : "missing"}</Badge></td>

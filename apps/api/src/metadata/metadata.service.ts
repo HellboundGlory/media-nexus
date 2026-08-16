@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { ApiError } from "@medianexus/shared";
+import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
@@ -79,11 +79,52 @@ export class MetadataService {
       genres: d.genres ?? [],
       images: d.images ?? [],
       releaseDate,
+      // Detail-page metadata (DETAILPAGE-BE1) — new nullable columns threaded from MediaSummary.
+      certification: d.certification ?? null,
+      runtime: d.runtime ?? null,
+      studio: d.studio ?? null,
+      inCinemas: d.inCinemas ?? null,
+      digitalRelease: d.digitalRelease ?? null,
+      physicalRelease: d.physicalRelease ?? null,
+      trailerId: d.trailerId ?? null,
+      tmdbRating: d.rating ?? null,
+      // Collection (DETAILPAGE-BE3) — two nullable columns, absent = null.
+      collectionTmdbId: d.collectionTmdbId ?? null,
+      collectionName: d.collectionName ?? null,
       tags,
       updatedAt: now,
       lastRefreshedAt: now,
     }).where(eq(schema.movie.id, movieId));
+    // Cast & crew (DETAILPAGE-BE2): replace this title's credit rows with the fresh set. Guarded
+    // on the optional contract method (only TMDB implements it). A credits failure is a warn, not
+    // a failure of the metadata refresh itself — same best-effort posture as the TVDB backfills.
+    await this.replaceCredits(p, "movie", String(movie[0].tmdbId), movieId).catch((err) =>
+      this.logger.warn(`credits refresh skipped for "${d.title}": ${(err as Error).message}`));
     return { updated: true, title: d.title };
+  }
+
+  /** Replace a title's media_credit rows with a fresh fetch (DETAILPAGE-BE2). Cast is stored in
+   *  full; crew is the provider's curated key-jobs subset. Delete-then-insert is a replace, so
+   *  re-refreshing a title never duplicates rows. */
+  private async replaceCredits(p: TmdbProvider, mediaType: "movie" | "series", externalId: string, localId: string): Promise<void> {
+    const credits = await p.getCredits?.(mediaType, externalId);
+    if (!credits) return; // provider doesn't implement credits — nothing to do
+    await this.db.delete(schema.mediaCredit)
+      .where(and(eq(schema.mediaCredit.mediaType, mediaType), eq(schema.mediaCredit.mediaId, localId)));
+    if (credits.cast.length + credits.crew.length === 0) return;
+    const rows = [
+      ...credits.cast.map((c) => ({
+        id: newEntityId("credit"), mediaType, mediaId: localId, role: "cast" as const,
+        personName: c.name, character: c.character ?? null, job: null, department: null,
+        sortOrder: c.order ?? null, profileUrl: c.profileUrl ?? null,
+      })),
+      ...credits.crew.map((c) => ({
+        id: newEntityId("credit"), mediaType, mediaId: localId, role: "crew" as const,
+        personName: c.name, character: null, job: c.job ?? null, department: c.department ?? null,
+        sortOrder: null, profileUrl: c.profileUrl ?? null,
+      })),
+    ];
+    await this.db.insert(schema.mediaCredit).values(rows);
   }
 
   async refreshSeries(seriesId: string): Promise<{ updated: boolean; title?: string; seasons: number; episodes: number }> {
@@ -113,10 +154,27 @@ export class MetadataService {
       genres: d.genres ?? [],
       images: d.images ?? [],
       firstAirYear: d.year ?? series[0].firstAirYear,
+      // Persist the resolved TMDB id back onto the row — but only when the row has none yet.
+      // Without the backfill at all, a series added via TVDB keeps tmdbId null forever, which in
+      // turn hides the DetailHeader TMDb link (DETAILPAGE-FE1). It must NOT blindly overwrite an
+      // existing id though: series.tmdb_id is UNIQUE, and a refresh that resolves a conflicting id
+      // (e.g. two rows mapping to one TMDB title) would throw a unique-constraint error. A
+      // pre-existing id is already correct (derived from the same tvdbId), so leave it alone.
+      // tmdbId here is a string from tmdbIdForTvdb(); the column is an integer.
+      tmdbId: series[0].tmdbId ?? Number(tmdbId),
+      // Detail-page metadata (DETAILPAGE-BE1) — new nullable columns threaded from MediaSummary.
+      certification: d.certification ?? null,
+      runtime: d.runtime ?? null,
+      trailerId: d.trailerId ?? null,
+      tmdbRating: d.rating ?? null,
       tags,
       updatedAt: now,
       lastRefreshedAt: now,
     }).where(eq(schema.series.id, seriesId));
+    // Cast & crew (DETAILPAGE-BE2): replace this title's credit rows with the fresh set. Same
+    // best-effort posture as refreshMovie — a credits failure is a warn, not a refresh failure.
+    await this.replaceCredits(p, "series", String(tmdbId), seriesId).catch((err) =>
+      this.logger.warn(`credits refresh skipped for "${d.title}": ${(err as Error).message}`));
 
     // upsert seasons + episodes idempotently
     let seasonCount = 0;

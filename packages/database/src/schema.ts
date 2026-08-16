@@ -6,7 +6,7 @@
  * NOTE: SQLite is the fully-wired default. PostgreSQL is a targeted follow-up: Drizzle's
  * pg-core port of this schema is a contained, mechanical change (see roadmap M1.1).
  */
-import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql, type SQL } from "drizzle-orm";
 import type { CustomFormatSpec, AutoTagSpec } from "@medianexus/domain";
 
@@ -123,6 +123,24 @@ export const movie = sqliteTable("movie", {
   status: text("status").notNull().default("unknown"),
   releaseDate: text("release_date"),
   monitored: bool("monitored", true),
+  // Detail-page metadata (roadmap P3 / DETAILPAGE-BE1): nullable columns populated by
+  // metadata refresh; existing rows hold null until next refresh. `releaseDate` stays as-is
+  // (back-compat); the three new dates carry the fuller in-cinemas/digital/physical split.
+  certification: text("certification"),
+  runtime: integer("runtime"), // minutes
+  studio: text("studio"), // production company, movies only
+  inCinemas: text("in_cinemas"), // ISO date
+  digitalRelease: text("digital_release"), // ISO date
+  physicalRelease: text("physical_release"), // ISO date
+  trailerId: text("trailer_id"), // YouTube video id
+  tmdbRating: real("tmdb_rating"), // vote_average
+  // Collection the movie belongs to (roadmap P3 / DETAILPAGE-BE3) — deliberately two nullable
+  // columns on `movie`, NOT a joined movie_collection table: the mockup shows only a text chip
+  // ("Dune Collection") beside the genres. A join table is the right shape only when
+  // "browse other movies in this collection" gets built; promoting these two columns then is a
+  // normal, cheap migration. Absent = null (most movies aren't in a collection).
+  collectionTmdbId: integer("collection_tmdb_id"),
+  collectionName: text("collection_name"),
   qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
   rootFolderPath: text("root_folder_path").notNull().default(""),
   minimumAvailability: text("minimum_availability").notNull().default("announced"),
@@ -147,6 +165,13 @@ export const series = sqliteTable("series", {
   network: text("network"),
   firstAirYear: integer("first_air_year"),
   monitored: bool("monitored", true),
+  // Detail-page metadata (roadmap P3 / DETAILPAGE-BE1) — movies absent: no studio/release-date
+  // breakdown for series (firstAirYear already covers release timing; Radarr's release-date
+  // split is movie-specific).
+  certification: text("certification"),
+  runtime: integer("runtime"), // minutes (episode runtime)
+  trailerId: text("trailer_id"), // YouTube video id
+  tmdbRating: real("tmdb_rating"), // vote_average
   qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
   rootFolderPath: text("root_folder_path").notNull().default(""),
   genres: json<string[]>("genres"),
@@ -203,6 +228,25 @@ export const mediaFile = sqliteTable("media_file", {
   languages: json<string[]>("languages"),
   dateAdded: iso("date_added"),
 }, (t) => [index("media_file_media_idx").on(t.mediaType, t.mediaId)]);
+
+// Cast & crew for a movie or series (roadmap P3 / DETAILPAGE-BE2). Polymorphic — serves both
+// media types through the shared `(mediaType, mediaId)` pattern (same as media_file/queue/
+// history/availability). The TMDB credits response splits cast (all of it — `order` lets a
+// consumer slice top-N for the mockup's scrollable strip) from a curated crew subset (only key
+// jobs, e.g. Director/Writer/Screenplay/Creator, not best-boy grips and script supervisors).
+// `character` is cast-only, `job`/`department` crew-only, `sortOrder` mirrors TMDB's cast `order`.
+export const mediaCredit = sqliteTable("media_credit", {
+  id: text("id").primaryKey(), // newEntityId("credit")
+  mediaType: text("media_type").notNull(), // movie | series
+  mediaId: text("media_id").notNull(), // movie.id | series.id
+  role: text("role").notNull(), // cast | crew
+  personName: text("person_name").notNull(),
+  character: text("character"), // cast only
+  job: text("job"), // crew only
+  department: text("department"), // crew only
+  sortOrder: integer("sort_order"), // TMDB cast `order`; cast only
+  profileUrl: text("profile_url"), // w185 headshot; null when TMDB has no photo
+}, (t) => [index("media_credit_media_idx").on(t.mediaType, t.mediaId)]);
 
 // ---------- 4. Discovery (indexers) ----------
 export const indexerDefinition = sqliteTable("indexer_definition", {
@@ -560,6 +604,7 @@ export const schema = {
   season,
   episode,
   mediaFile,
+  mediaCredit,
   indexerDefinition,
   indexer,
   seenRelease,

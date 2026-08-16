@@ -21,7 +21,7 @@
  * cast to the app's `Db` at the single `connection.ts` boundary (Option 1, approved).
  * See `connection.ts` for the cast rationale.
  */
-import { pgTable, text, integer, boolean, jsonb, serial, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, real, boolean, jsonb, serial, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql, type SQL } from "drizzle-orm";
 import type { CustomFormatSpec, AutoTagSpec } from "@medianexus/domain";
 
@@ -112,6 +112,19 @@ export const movie = pgTable("movie", {
   status: text("status").notNull().default("unknown"),
   releaseDate: text("release_date"),
   monitored: bool("monitored", true),
+  // Detail-page metadata (roadmap P3 / DETAILPAGE-BE1) — mirrors schema.ts (sqlite twin).
+  certification: text("certification"),
+  runtime: integer("runtime"), // minutes
+  studio: text("studio"), // production company, movies only
+  inCinemas: text("in_cinemas"), // ISO date
+  digitalRelease: text("digital_release"), // ISO date
+  physicalRelease: text("physical_release"), // ISO date
+  trailerId: text("trailer_id"), // YouTube video id
+  tmdbRating: real("tmdb_rating"), // vote_average
+  // Collection the movie belongs to (DETAILPAGE-BE3) — pg twin of schema.ts; two nullable
+  // columns, deliberately NOT a joined movie_collection table (see schema.ts comment).
+  collectionTmdbId: integer("collection_tmdb_id"),
+  collectionName: text("collection_name"),
   qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
   rootFolderPath: text("root_folder_path").notNull().default(""),
   minimumAvailability: text("minimum_availability").notNull().default("announced"),
@@ -136,6 +149,12 @@ export const series = pgTable("series", {
   network: text("network"),
   firstAirYear: integer("first_air_year"),
   monitored: bool("monitored", true),
+  // Detail-page metadata (roadmap P3 / DETAILPAGE-BE1) — series gets certification/runtime/
+  // trailer/rating; no studio/release-date split (movie-specific concept).
+  certification: text("certification"),
+  runtime: integer("runtime"), // minutes (episode runtime)
+  trailerId: text("trailer_id"), // YouTube video id
+  tmdbRating: real("tmdb_rating"), // vote_average
   qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
   rootFolderPath: text("root_folder_path").notNull().default(""),
   genres: json<string[]>("genres"),
@@ -190,6 +209,21 @@ export const mediaFile = pgTable("media_file", {
   languages: json<string[]>("languages"),
   dateAdded: iso("date_added"),
 }, (t) => [index("media_file_media_idx").on(t.mediaType, t.mediaId)]);
+
+// Cast & crew (roadmap P3 / DETAILPAGE-BE2) — pg twin of schema.ts's media_credit. Polymorphic
+// (mediaType, mediaId), cast (all) + curated crew subset. Same columns/index as the sqlite side.
+export const mediaCredit = pgTable("media_credit", {
+  id: text("id").primaryKey(),
+  mediaType: text("media_type").notNull(),
+  mediaId: text("media_id").notNull(),
+  role: text("role").notNull(), // cast | crew
+  personName: text("person_name").notNull(),
+  character: text("character"), // cast only
+  job: text("job"), // crew only
+  department: text("department"), // crew only
+  sortOrder: integer("sort_order"), // TMDB cast `order`; cast only
+  profileUrl: text("profile_url"), // w185 headshot; null when TMDB has no photo
+}, (t) => [index("media_credit_media_idx").on(t.mediaType, t.mediaId)]);
 
 // ---------- 4. Discovery (indexers) ----------
 export const indexerDefinition = pgTable("indexer_definition", {
@@ -493,6 +527,7 @@ export const schema = {
   season,
   episode,
   mediaFile,
+  mediaCredit,
   indexerDefinition,
   indexer,
   seenRelease,
