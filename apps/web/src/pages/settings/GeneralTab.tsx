@@ -1,15 +1,47 @@
 // SPDX-License-Identifier: MIT
 // Settings > General (NAV-1 Phase 4): API key (regenerate/reveal) + Change password — both
-// relocated verbatim from System's old page. (Indexer rate-limit and housekeeping-retention
-// knobs are intentionally out of scope for this pass.)
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { KeyRound, RotateCw, Eye, EyeOff, Copy, Check, Lock } from "lucide-react";
+// relocated verbatim from System's old page. Plus a Backups section (UNI-024) editing the two
+// real /system/config keys consumed by BackupService (backupPath + backupRetentionCount).
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { KeyRound, RotateCw, Eye, EyeOff, Copy, Check, Lock, Archive } from "lucide-react";
 import { api } from "../../api/client";
 
 const inputCls = "rounded-lg border border-rule bg-transparent px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
+const monoCls = "w-full rounded-lg border border-rule bg-transparent px-3 py-1.5 font-mono text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
+const labelCls = "mb-1 block text-xs text-ink-dim";
+
+// Backup settings draft (UNI-024) — the two real /system/config keys consumed by BackupService:
+// `system.backupPath` (string) and `system.backupRetentionCount` (number-as-string input, same
+// convention as MediaManagementTab's recycleBinRetentionDays).
+interface BackupDraft {
+  backupPath: string;
+  backupRetentionCount: string;
+}
+const emptyBackupDraft: BackupDraft = { backupPath: "", backupRetentionCount: "" };
+function backupDraftFromCfg(c: Record<string, unknown> | undefined): BackupDraft {
+  if (!c) return emptyBackupDraft;
+  return {
+    backupPath: String(c["system.backupPath"] ?? ""),
+    backupRetentionCount: c["system.backupRetentionCount"] != null ? String(c["system.backupRetentionCount"]) : "",
+  };
+}
 
 export function GeneralTab() {
+  // Backup settings (UNI-024) — a separate /system/config draft from the API-key/password
+  // sections below; saving it PUTs ONLY the two backup keys, not the whole config.
+  const qc = useQueryClient();
+  const cfg = useQuery({ queryKey: ["config"], queryFn: () => api.get<Record<string, unknown>>("/system/config") });
+  const [bd, setBd] = useState<BackupDraft>(emptyBackupDraft);
+  useEffect(() => { if (cfg.data) setBd(backupDraftFromCfg(cfg.data)); }, [cfg.data]);
+  const saveBackups = useMutation({
+    mutationFn: () => api.put("/system/config", {
+      "system.backupPath": bd.backupPath,
+      "system.backupRetentionCount": Number(bd.backupRetentionCount || 0),
+    }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["config"] }),
+  });
+
   const regenerateKey = useMutation({ mutationFn: () => api.post<{ rawKey: string }>("/auth/regenerate-key"), onSuccess: () => setRevealedKey(undefined) });
   const [revealedKey, setRevealedKey] = useState<string | null | undefined>(undefined);
   const [revealCopied, setRevealCopied] = useState(false);
@@ -82,6 +114,37 @@ export function GeneralTab() {
         </form>
         {passwordError && <p className="mt-2 text-xs text-err">{passwordError}</p>}
         {changePassword.isSuccess && <p className="mt-2 text-xs text-ok">Password updated.</p>}
+      </section>
+
+      <section className="rounded-xl border border-rule bg-surface p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Archive className="h-4 w-4 text-ink-dim" />
+          <h3 className="font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink-dim">Backups</h3>
+        </div>
+        <p className="mb-3 text-xs text-ink-dim">
+          Backups run on a fixed weekly schedule (Sunday 3am) and can be triggered manually from System → Tasks.
+          Browse, download, upload and restore them from System → Backup.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className={labelCls}>Backup folder</span>
+            <input value={bd.backupPath} onChange={(e) => setBd((p) => ({ ...p, backupPath: e.target.value }))} placeholder="/data/backups" className={monoCls} />
+            <p className="mt-1 text-xs text-ink-dim">Leave empty to disable backups.</p>
+          </label>
+          <label className="block">
+            <span className={labelCls}>Retention (backups to keep)</span>
+            <input type="number" value={bd.backupRetentionCount} onChange={(e) => setBd((p) => ({ ...p, backupRetentionCount: e.target.value }))} className={inputCls} />
+          </label>
+        </div>
+        <p className="mt-2 text-xs text-ink-dim">
+          The N most recent scheduled/manual backups are kept; older ones are trimmed automatically.
+          Safety copies (made before a restore) and manually uploaded backups are never counted or trimmed.
+        </p>
+        <div className="mt-4 flex items-center gap-2">
+          <button onClick={() => saveBackups.mutate()} disabled={saveBackups.isPending} className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">{saveBackups.isPending ? "Saving…" : "Save"}</button>
+          {saveBackups.isSuccess && <span className="text-xs text-ok">Saved.</span>}
+        </div>
+        {saveBackups.isError && <p className="mt-2 text-xs text-err">{saveBackups.error instanceof Error ? saveBackups.error.message : "Failed to save"}</p>}
       </section>
     </div>
   );
