@@ -165,6 +165,8 @@ export interface QueueRow {
   progress: number;
   size: number;
   addedAt: string;
+  /** Full queue row JSON blob, including `matchedFormats` for post-grab grabs (SON-024). */
+  data?: Record<string, unknown>;
 }
 
 export interface Release {
@@ -284,6 +286,8 @@ export interface MediaFileRow {
   languages: string[];
   releaseGroup: string | null;
   dateAdded: string | null;
+  /** Custom formats this file currently matches, computed live by the /files endpoint (SON-024). */
+  matchedFormats: { id: string; name: string }[];
 }
 
 /** One row of GET /movies|series/:id/rename-preview (DETAILPAGE-BE4/FE1). */

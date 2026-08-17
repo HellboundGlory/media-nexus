@@ -41,7 +41,7 @@ export class DecisionService {
     const target = item ? await this.media.resolveTarget(mediaType, mediaId, release.title) : null;
     if (!item || !target) {
       return {
-        release, approved: false, profile: null, formatScore: 0,
+        release, approved: false, profile: null, formatScore: 0, matchedFormats: [],
         rejections: [{ reason: "unresolved_target", message: "could not determine which media/episode this release is for" }],
       };
     }

@@ -14,7 +14,7 @@ import { ArrowLeft, Crosshair, FolderOpen, MonitorDown, Database, FileText, Tras
 import { clsx } from "clsx";
 import { api } from "../api/client";
 import type { Series as SeriesRow, Episode, MediaFileRow, Release } from "../api/types";
-import { Badge, ErrorState, formatDate, formatBytes } from "../lib/ui";
+import { Badge, ErrorState, formatDate, formatBytes, FormatsBadges } from "../lib/ui";
 import { DetailHeader, type ReadoutCell } from "../components/detail/DetailHeader";
 import { CastCrewStrip } from "../components/detail/CastCrewStrip";
 import { HistoryPanel } from "../components/detail/HistoryPanel";
@@ -425,6 +425,7 @@ export default function SeriesDetail() {
                     <th className="px-3 py-2">Path</th>
                     <th className="px-3 py-2">Size</th>
                     <th className="px-3 py-2">Quality</th>
+                    <th className="px-3 py-2">Formats</th>
                     <th className="px-3 py-2">Codec</th>
                     <th className="px-3 py-2">Resolution</th>
                     <th className="px-3 py-2">Languages</th>
@@ -438,6 +439,7 @@ export default function SeriesDetail() {
                       <td className="max-w-[26rem] truncate px-3 py-2" title={f.relativePath}>{f.relativePath}</td>
                       <td className="px-3 py-2 tabular-nums text-ink-dim">{formatBytes(f.size)}</td>
                       <td className="px-3 py-2 text-ink-dim">{f.quality ? `${f.quality.source} · ${f.quality.resolution}` : "—"}</td>
+                      <td className="px-3 py-2"><FormatsBadges formats={f.matchedFormats} /></td>
                       <td className="px-3 py-2 text-ink-dim">{f.mediaInfo?.videoCodec ?? "—"}</td>
                       <td className="px-3 py-2 text-ink-dim">{f.mediaInfo?.resolution ?? "—"}</td>
                       <td className="px-3 py-2 text-ink-dim">{f.languages.length ? f.languages.join(", ") : "—"}</td>

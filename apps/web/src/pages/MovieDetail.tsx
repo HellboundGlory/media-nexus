@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Crosshair, FolderOpen, RefreshCw, Trash2, FileText, Search, Pencil } from "lucide-react";
 import { api } from "../api/client";
 import type { Movie, MediaFileRow, Release } from "../api/types";
-import { ErrorState, formatBytes, formatDate } from "../lib/ui";
+import { ErrorState, formatBytes, formatDate, FormatsBadges } from "../lib/ui";
 import { DetailHeader, type ReadoutCell } from "../components/detail/DetailHeader";
 import { CastCrewStrip } from "../components/detail/CastCrewStrip";
 import { HistoryPanel } from "../components/detail/HistoryPanel";
@@ -193,6 +193,7 @@ export default function MovieDetail() {
                     <th className="px-3 py-2">Path</th>
                     <th className="px-3 py-2">Size</th>
                     <th className="px-3 py-2">Quality</th>
+                    <th className="px-3 py-2">Formats</th>
                     <th className="px-3 py-2">Codec</th>
                     <th className="px-3 py-2">Resolution</th>
                     <th className="px-3 py-2">Languages</th>
@@ -206,6 +207,7 @@ export default function MovieDetail() {
                       <td className="max-w-[26rem] truncate px-3 py-2" title={f.relativePath}>{f.relativePath}</td>
                       <td className="px-3 py-2 tabular-nums text-ink-dim">{formatBytes(f.size)}</td>
                       <td className="px-3 py-2 text-ink-dim">{f.quality ? `${f.quality.source} · ${f.quality.resolution}` : "—"}</td>
+                      <td className="px-3 py-2"><FormatsBadges formats={f.matchedFormats} /></td>
                       <td className="px-3 py-2 text-ink-dim">{f.mediaInfo?.videoCodec ?? "—"}</td>
                       <td className="px-3 py-2 text-ink-dim">{f.mediaInfo?.resolution ?? "—"}</td>
                       <td className="px-3 py-2 text-ink-dim">{f.languages.length ? f.languages.join(", ") : "—"}</td>

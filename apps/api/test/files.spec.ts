@@ -11,9 +11,10 @@ import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { inArray } from "drizzle-orm";
+import { inArray, eq } from "drizzle-orm";
 import { EventBus } from "@medianexus/events";
 import { createDb, schema } from "@medianexus/database";
+import type { CustomFormatSpec } from "@medianexus/domain";
 import { ConfigService } from "../src/system/config.service";
 import { EventsService } from "../src/events/events.service";
 import { AutoTagsService } from "../src/auto-tags/auto-tags.service";
@@ -119,5 +120,35 @@ describe("/files subresources (DETAILPAGE-FE1)", () => {
     const { movies, series } = await makeServices();
     await expect(movies.files("nope")).rejects.toThrow();
     await expect(series.files("nope")).rejects.toThrow();
+  });
+
+  it("movie files recompute matchedFormats live against CURRENT custom format definitions (SON-024)", async () => {
+    const { db, movies } = await makeServices();
+    const now = new Date().toISOString();
+    await db.insert(schema.movie).values({
+      id: "m5", tmdbId: 5, imdbId: null, title: "Fight Club", originalTitle: null, overview: "",
+      status: "released", releaseDate: "1999-10-15", monitored: true, qualityProfileId: null,
+      rootFolderPath: "", minimumAvailability: "released", genres: [], images: [], tags: [],
+      hasFile: true, addedAt: now, updatedAt: now,
+    });
+    await db.insert(schema.mediaFile).values([
+      mediaFile("mfm", "movie", "m5", "Fight Club (1999)/Fight Club (1999).mkv"),
+    ]);
+
+    const termSpec = (term: string): CustomFormatSpec => ({ type: "term", term, useRegex: false, negate: false, caseSensitive: false });
+    // A custom format whose term matches this file's basename ("Fight Club (1999).mkv").
+    await db.insert(schema.customFormat).values({
+      id: "cfx", name: "FC", specs: [termSpec("Fight Club")], createdAt: now, updatedAt: now,
+    });
+
+    const withMatch = await movies.files("m5");
+    expect(withMatch[0]?.matchedFormats.map((m) => m.id)).toContain("cfx");
+    expect(withMatch[0]?.matchedFormats.map((m) => m.name)).toContain("FC");
+
+    // Edit the format so it no longer matches, then refetch — the badge set must change to
+    // prove the files path recomputes live and doesn't trust a frozen snapshot.
+    await db.update(schema.customFormat).set({ specs: [termSpec("Zebra")] }).where(eq(schema.customFormat.id, "cfx"));
+    const after = await movies.files("m5");
+    expect(after[0]?.matchedFormats).toEqual([]);
   });
 });

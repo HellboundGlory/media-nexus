@@ -355,16 +355,21 @@ function groupDidMatch(specs: CustomFormatSpec[], input: CustomFormatMatchInput)
  * the scores of every matching format. `profileScores` maps custom-format id -> score;
  * a format absent from the map contributes 0 regardless of whether it matches.
  */
+export function matchingFormats(
+  formats: CustomFormat[],
+  input: CustomFormatMatchInput,
+): CustomFormat[] {
+  return formats.filter((f) => matchFormat(f, input));
+}
+
 export function calculateFormatScore(
   formats: CustomFormat[],
   profileScores: Record<string, number>,
   input: CustomFormatMatchInput,
 ): number {
   let total = 0;
-  for (const format of formats) {
-    if (matchFormat(format, input)) {
-      total += profileScores[format.id] ?? 0;
-    }
+  for (const format of matchingFormats(formats, input)) {
+    total += profileScores[format.id] ?? 0;
   }
   return total;
 }

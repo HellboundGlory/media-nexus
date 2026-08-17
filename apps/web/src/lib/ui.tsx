@@ -52,6 +52,18 @@ export function Badge({ children, tone = "neutral" }: { children: ReactNode; ton
   );
 }
 
+/** Renders the custom formats a release/file/queue/history row matched as small badges
+ *  (SON-024). Accepts the optional `{id,name}[]` a caller reads out of `data`/`matchedFormats`
+ *  (defensively — older rows / files with no probe lack it) and renders "—" when empty/absent. */
+export function FormatsBadges({ formats }: { formats?: { id: string; name: string }[] }) {
+  if (!formats || formats.length === 0) return <span className="text-ink-dim">—</span>;
+  return (
+    <span className="flex flex-wrap gap-1">
+      {formats.map((f) => <Badge key={f.id} tone="info">{f.name}</Badge>)}
+    </span>
+  );
+}
+
 export function statusTone(status: string): "ok" | "warn" | "danger" | "info" | "neutral" {
   switch (status) {
     case "available": case "succeeded": case "imported": case "ok": return "ok";

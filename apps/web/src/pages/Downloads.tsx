@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, FolderOpen, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { QueueRow } from "../api/types";
-import { Badge, EmptyState, ErrorState, formatBytes, formatDate, ProgressBar, statusTone } from "../lib/ui";
+import { Badge, EmptyState, ErrorState, formatBytes, formatDate, ProgressBar, statusTone, FormatsBadges } from "../lib/ui";
 
 export default function Downloads() {
   const qc = useQueryClient();
@@ -76,6 +76,7 @@ export default function Downloads() {
                 <th className="w-8 px-3 py-2"><input type="checkbox" checked={selected.size > 0 && selected.size === rows.length} onChange={(e) => setSelected(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())} className="h-4 w-4" /></th>
                 <th className="px-3 py-2">Title</th>
                 <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Formats</th>
                 <th className="px-3 py-2">Progress</th>
                 <th className="px-3 py-2">Size</th>
                 <th className="px-3 py-2">Added</th>
@@ -90,6 +91,7 @@ export default function Downloads() {
                     <td className="px-3 py-2"><input type="checkbox" checked={selected.has(q.id)} onChange={() => toggle(q.id)} className="h-4 w-4" /></td>
                     <td className="max-w-md truncate px-3 py-2 font-medium text-ink">{q.title}</td>
                     <td className="px-3 py-2"><Badge tone={statusTone(q.status)}>{q.status}</Badge></td>
+                    <td className="px-3 py-2"><FormatsBadges formats={q.data?.matchedFormats as { id: string; name: string }[] | undefined} /></td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
                         <ProgressBar value={q.progress} />

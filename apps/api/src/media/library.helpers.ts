@@ -5,6 +5,7 @@ import type { Db } from "@medianexus/database";
 import { schema } from "@medianexus/database";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import { pickBest, type MediaType, type QualityProfileLike, type Release } from "@medianexus/domain";
+import { matchingFormats, existingFileMatchInput, type CustomFormat } from "@medianexus/domain";
 import { join } from "node:path";
 import { LocalStorageProvider } from "@medianexus/integrations";
 import { selectMediaFiles, type MediaFileRow } from "./media-file.types";
@@ -191,6 +192,30 @@ export async function getQualityProfile(db: Db, qualityProfileId: string | null)
     minFormatScore: row.minFormatScore ?? 0,
     cutoffFormatScore: row.cutoffFormatScore ?? 0,
   };
+}
+
+/** Populate each file's `matchedFormats` — the subset of CURRENT custom format definitions
+ *  the file matches, computed live at read time (matching upstream: editing a custom format
+ *  retroactively changes what existing files show, they are not frozen at import the way
+ *  queue/history grab events are). Called only by the movie/series /files endpoints — the
+ *  rename and acquisition paths share `MediaFileRow` but don't need this and don't pay for
+ *  the extra query. `matchingFormats` derives the per-file reduced view from the filename,
+ *  so a file with no probe (null `quality`) matches nothing. */
+export async function attachMatchedFormats(
+  db: Db,
+  files: MediaFileRow[],
+): Promise<MediaFileRow[]> {
+  if (files.length === 0) return files;
+  const customFormats = (await db.select().from(schema.customFormat)) as CustomFormat[];
+  if (customFormats.length === 0) return files; // nothing configured — leave matchedFormats []
+  for (const f of files) {
+    if (!f.quality) continue; // no quality -> no possible match, stays []
+    f.matchedFormats = matchingFormats(
+      customFormats,
+      existingFileMatchInput({ relativePath: f.relativePath, size: f.size, quality: f.quality as never }),
+    ).map((fmt) => ({ id: fmt.id, name: fmt.name }));
+  }
+  return files;
 }
 
 // ---------------------------------------------------------------------------

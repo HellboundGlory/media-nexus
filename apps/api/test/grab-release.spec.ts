@@ -204,4 +204,37 @@ describe("I6 — manual grab does not double indexer search (controller/DTO laye
       expect(q.length).toBe(0);
     } finally { await app3.close(); }
   });
+
+  it("writes the decision's matchedFormats into BOTH the queue row and the history row (SON-024)", async () => {
+    const db = freshDb();
+    const now = new Date().toISOString();
+    await db.insert(schema.movie).values({
+      id: "m4", tmdbId: 4, title: "Four Movie", overview: "", status: "released",
+      releaseDate: "2024-01-01", monitored: true, qualityProfileId: null,
+      rootFolderPath: "", minimumAvailability: "announced", genres: [], images: [], tags: [],
+      hasFile: false, addedAt: now, updatedAt: now,
+    });
+    // approved decision whose matchedFormats the grab must mirror into queue `data` + history `data`
+    const matchedFormats = [{ id: "cf1", name: "x265" }, { id: "cf2", name: "Remux" }];
+    const built = await buildApp({
+      db,
+      releaseFromSearch: release(),
+      decide: () => ({ approved: true, profile: null, formatScore: 0, matchedFormats, rejections: [] }),
+    });
+    const app4 = built.app;
+    try {
+      const res = await request(app4.getHttpServer())
+        .post("/api/v1/grabs")
+        .set("X-Api-Key", "test-key")
+        .send({ mediaType: "movie", mediaId: "m4", releaseId: "r1", indexerId: "idx1", release: release() });
+      expect(res.status).toBe(201);
+
+      // Same `data` object is written to both download_queue_entry and history_entry in one
+      // transaction — assert matchedFormats landed in each (the single grab choke point, SON-024).
+      const queue = (await db.select().from(schema.downloadQueueEntry).all())[0];
+      const history = (await db.select().from(schema.historyEntry).all())[0];
+      expect(queue?.data).toMatchObject({ matchedFormats });
+      expect(history?.data).toMatchObject({ matchedFormats });
+    } finally { await app4.close(); }
+  });
 });

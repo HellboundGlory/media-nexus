@@ -603,6 +603,7 @@ export class IndexersService {
       protocol: release.protocol,
       size: release.size,
       category: input.mediaType,
+      matchedFormats: decision.matchedFormats,
     };
     // memory download client (test infra only): create a placeholder "downloaded" file so the importer has something to move
     if (client.row?.implementation === "memory") {

@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { extname, join } from "node:path";
 import { LocalStorageProvider } from "@medianexus/integrations";
-import { ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition } from "../media/library.helpers";
+import { ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition, attachMatchedFormats } from "../media/library.helpers";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import type { RuntimeSettings } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
@@ -153,9 +153,11 @@ export class SeriesService {
 
   /** The series' media_file rows (DETAILPAGE-FE1) — feeds the season size-on-disk pill and any
    *  file-level display. Read-only, pure DB. Each row's episodeIds lets the frontend attribute
-   *  a file to its season (via the already-fetched episode list). */
+   *  a file to its season (via the already-fetched episode list). matchedFormats is computed
+   *  live against current custom formats (SON-024). */
   async files(id: string): Promise<MediaFileRow[]> {
-    return getMediaFiles(this.db, "series", id);
+    const files = await getMediaFiles(this.db, "series", id);
+    return attachMatchedFormats(this.db, files);
   }
 
   async list(q: { search?: string; page?: number; pageSize?: number }) {

@@ -6,7 +6,7 @@ import { newEntityId } from "@medianexus/shared";
 import { ApiError } from "@medianexus/shared";
 import type { RuntimeSettings } from "@medianexus/shared";
 import { LocalStorageProvider } from "@medianexus/integrations";
-import { combine, ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition } from "../media/library.helpers";
+import { combine, ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition, attachMatchedFormats } from "../media/library.helpers";
 import { movieFileName, resolvedMovieFolderName } from "../media/naming.helpers";
 import { runWrite, type MediaFileRow } from "../media/media-file.types";
 import { RecycleBinService } from "../media/recycle-bin.service";
@@ -140,9 +140,11 @@ export class MoviesService {
   }
 
   /** The movie's media_file rows (DETAILPAGE-FE1) — feeds the movie File panel. Read-only,
-   *  pure DB. A movie has no episodeIds; the shape is shared with the series /files endpoint. */
+   *  pure DB. A movie has no episodeIds; the shape is shared with the series /files endpoint.
+   *  matchedFormats is computed live against current custom formats (SON-024). */
   async files(id: string): Promise<MediaFileRow[]> {
-    return getMediaFiles(this.db, "movie", id);
+    const files = await getMediaFiles(this.db, "movie", id);
+    return attachMatchedFormats(this.db, files);
   }
 
   async list(q: ListQuery) {

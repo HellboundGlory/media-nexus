@@ -3,7 +3,7 @@ import type { Release } from "./release";
 import type { ReleaseTarget, ExistingFile } from "./media";
 import { qualityAllowed, meetsCutoff, compareQuality, profilePosition, type QualityProfileLike } from "./quality";
 import {
-  calculateFormatScore, releaseMatchInput, existingFileMatchInput, type CustomFormat,
+  calculateFormatScore, matchingFormats, releaseMatchInput, existingFileMatchInput, type CustomFormat,
 } from "./custom-formats";
 import { tagApplies } from "./tags";
 import { matchesTerm, type ReleaseProfile } from "./release-profile";
@@ -109,6 +109,8 @@ export interface Decision {
   /** Total custom-format score of the release under the profile's scores (0 if none
    *  configured). Used as the tiebreaker after quality and by the upgrade check. */
   formatScore: number;
+  /** The subset of custom formats that matched this release (id + name only, for UI). */
+  matchedFormats: { id: string; name: string }[];
 }
 
 export type Specification = (release: Release, context: DecisionContext) => Rejection | null;
@@ -231,8 +233,9 @@ export const SPECIFICATIONS: readonly Specification[] = [
 
 export function evaluate(release: Release, context: DecisionContext): Decision {
   const formatScore = releaseFormatScore(release, context);
+  const matchedFormats = matchingFormats(context.customFormats ?? [], releaseMatchInput(release)).map((f) => ({ id: f.id, name: f.name }));
   const rejections = SPECIFICATIONS.map((spec) => spec(release, context)).filter((r): r is Rejection => r !== null);
-  return { release, approved: rejections.length === 0, rejections, profile: context.profile, formatScore };
+  return { release, approved: rejections.length === 0, rejections, profile: context.profile, formatScore, matchedFormats };
 }
 
 /** Rank two *approved* decisions: profile order (or global quality if no profile was

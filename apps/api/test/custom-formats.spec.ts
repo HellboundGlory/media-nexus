@@ -99,10 +99,15 @@ describe("DecisionService — minFormatScore gate changes the grab outcome", () 
     expect(rejected.approved).toBe(false);
     expect(rejected.formatScore).toBe(0);
     expect(rejected.rejections.map((r) => r.reason)).toContain("below_min_format_score");
+    // No x265 in the title -> no matched formats (SON-024)
+    expect(rejected.matchedFormats).toEqual([]);
 
     const grabbed = await svc.evaluate("movie", "m1", release({ title: "Some.Movie.2020.1080p.x265" }));
     expect(grabbed.approved).toBe(true);
     expect(grabbed.formatScore).toBe(100);
+    // x265 matches -> the id+name subset appears on the decision (SON-024)
+    expect(grabbed.matchedFormats.map((m) => m.id)).toContain(f1.id);
+    expect(grabbed.matchedFormats.map((m) => m.name)).toContain("x265");
   });
 });
 

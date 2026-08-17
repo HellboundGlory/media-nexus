@@ -9,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MonitorDown, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { HistoryRow, BlocklistRow, Paged } from "../api/types";
-import { Badge, EmptyState, ErrorState, formatDate, statusTone } from "../lib/ui";
+import { Badge, EmptyState, ErrorState, formatDate, statusTone, FormatsBadges } from "../lib/ui";
 
 type Tab = "history" | "blocklist";
 
@@ -86,7 +86,7 @@ export default function Activity() {
               <thead className="bg-bg text-[10px] font-semibold uppercase tracking-wide text-ink-dim">
                 <tr>
                   <th className="w-8 px-3 py-2"><input type="checkbox" checked={selected.size > 0 && selected.size === historyRows.length} onChange={(e) => setSelected(e.target.checked ? new Set(historyRows.map((h) => h.id)) : new Set())} className="h-4 w-4" /></th>
-                  <th className="px-3 py-2">Action</th><th className="px-3 py-2">Media</th><th className="px-3 py-2">Release</th><th className="px-3 py-2">When</th>
+                  <th className="px-3 py-2">Action</th><th className="px-3 py-2">Media</th><th className="px-3 py-2">Release</th><th className="px-3 py-2">Formats</th><th className="px-3 py-2">When</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-rule">
@@ -96,6 +96,7 @@ export default function Activity() {
                     <td className="px-3 py-2"><Badge tone={statusTone(h.action)}>{h.action.replace(/_/g, " ")}</Badge></td>
                     <td className="px-3 py-2 text-ink-dim">{h.mediaType} / {h.mediaId}</td>
                     <td className="max-w-sm truncate px-3 py-2">{String(h.data?.releaseTitle ?? h.data?.title ?? "—")}</td>
+                    <td className="px-3 py-2"><FormatsBadges formats={h.data?.matchedFormats as { id: string; name: string }[] | undefined} /></td>
                     <td className="px-3 py-2 text-ink-dim">{formatDate(h.createdAt)}</td>
                   </tr>
                 ))}

@@ -35,6 +35,10 @@ export interface MediaFileRow {
   languages: string[];
   releaseGroup: string | null;
   dateAdded: string | null;
+  /** Custom formats this file currently matches, recomputed live against the CURRENT
+   *  custom-format definitions at read time (never a frozen snapshot — see attachMatchedFormats).
+   *  Left `[]` by toMediaFileRow; only the /files endpoints populate it. */
+  matchedFormats: { id: string; name: string }[];
 }
 
 type RawMediaFileRow = {
@@ -66,6 +70,7 @@ export function toMediaFileRow<T extends RawMediaFileRow>(row: T): MediaFileRow 
     languages: Array.isArray(row.languages) ? (row.languages as string[]) : [],
     releaseGroup: row.releaseGroup ?? null,
     dateAdded: row.dateAdded,
+    matchedFormats: [],
   };
 }
 

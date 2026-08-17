@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { describe, it, expect } from "vitest";
 import {
-  matchSpec, matchFormat, calculateFormatScore,
+  matchSpec, matchFormat, calculateFormatScore, matchingFormats,
   releaseMatchInput, existingFileMatchInput,
   type CustomFormat, type CustomFormatSpec, type CustomFormatMatchInput,
 } from "./custom-formats";
@@ -135,6 +135,40 @@ describe("calculateFormatScore", () => {
     const ex = existingFileMatchInput({ relativePath: "movie.x265.mkv", size: 1024, quality: Q });
     // f1's term still matches the filename; f2's indexer spec can't for an existing file.
     expect(calculateFormatScore(liveFormats, scores, ex)).toBe(100);
+  });
+});
+
+describe("matchingFormats", () => {
+  const formats: CustomFormat[] = [
+    { id: "f1", name: "x265", specs: [spec({ type: "term", term: "x265" })] },
+    { id: "f2", name: "French", specs: [spec({ type: "language", language: "fr" })] },
+    { id: "f3", name: "Remux", specs: [spec({ type: "term", term: "REMUX" })] },
+  ];
+  it("returns the matching formats as a filtered array", () => {
+    const matched = matchingFormats(formats, input);
+    expect(matched).toHaveLength(2);
+    expect(matched.map((f) => f.id).sort()).toEqual(["f1", "f3"]);
+  });
+  it("returns empty array when nothing matches", () => {
+    const noMatchInput: CustomFormatMatchInput = {
+      title: "Movie.2020.720p.WEB-DL",
+      size: 2 * 1024 ** 3,
+      quality: Q,
+      languages: ["en"],
+    };
+    const matched = matchingFormats(formats, noMatchInput);
+    expect(matched).toHaveLength(0);
+  });
+  it("returns all formats when all match", () => {
+    const allMatchInput: CustomFormatMatchInput = {
+      title: "Movie.2020.1080p.FRENCH.REMUX.x265",
+      size: 2 * 1024 ** 3,
+      quality: Q,
+      languages: ["fr"],
+      indexerId: "idx9",
+    };
+    const matched = matchingFormats(formats, allMatchInput);
+    expect(matched).toHaveLength(3);
   });
 });
 
