@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { CheckSquare, Search, Plus, Database, Pencil, Tag, Trash2 } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { CheckSquare, Search, Plus, Database, Pencil, Tag, Trash2, LayoutGrid, Rows3 } from "lucide-react";
 import { api } from "../api/client";
 import type { Movie, Paged } from "../api/types";
 import { Badge, EmptyState, ErrorState } from "../lib/ui";
+import { useAppStore } from "../store/useAppStore";
 import { AddTitleModal, type AddTitleBody } from "../components/AddTitleModal";
 import { BulkEditModal, type BulkEditPatch } from "../components/BulkEditModal";
 import { BulkTagsModal } from "../components/BulkTagsModal";
 import { BulkDeleteModal, type BulkDeleteOptions } from "../components/BulkDeleteModal";
+import { MediaPosterCard } from "../components/MediaPosterCard";
 
 interface BulkResult {
   updated: string[];
@@ -18,6 +20,9 @@ interface BulkResult {
 
 export default function Movies() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const viewMode = useAppStore((s) => s.libraryView);
+  const setViewMode = useAppStore((s) => s.setLibraryView);
   const [search, setSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ title: "", tmdbId: "" });
@@ -110,6 +115,10 @@ export default function Movies() {
               className="w-56 rounded-lg border border-rule bg-surface px-3 py-1.5 pl-8 pr-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
             />
           </div>
+          <div className="flex gap-1 rounded-lg border border-rule bg-surface p-1">
+            <button onClick={() => setViewMode("posters")} title="Poster view" aria-label="Poster view" className={`rounded px-2 py-1.5 ${viewMode === "posters" ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-bg hover:text-ink"}`}><LayoutGrid className="h-4 w-4" /></button>
+            <button onClick={() => setViewMode("table")} title="Table view" aria-label="Table view" className={`rounded px-2 py-1.5 ${viewMode === "table" ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-bg hover:text-ink"}`}><Rows3 className="h-4 w-4" /></button>
+          </div>
           <button onClick={() => setSelecting((v) => { if (v) setSelected(new Set()); return !v; })} className="flex items-center gap-1.5 rounded-lg border border-rule bg-surface px-3 py-1.5 text-sm font-medium text-ink hover:bg-rule">
             <CheckSquare className="h-4 w-4" /> {selecting ? "Done" : "Select"}
           </button>
@@ -157,6 +166,25 @@ export default function Movies() {
         <EmptyState title="No movies yet" hint="Add a movie — the first release of the unified library." />
       ) : (
         <>
+          {viewMode === "posters" ? (
+            <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
+              {items.map((m) => (
+                <MediaPosterCard
+                  key={m.id}
+                  id={m.id}
+                  title={m.title}
+                  year={m.releaseDate ? m.releaseDate.slice(0, 4) : null}
+                  images={m.images}
+                  monitored={m.monitored}
+                  hasFile={m.hasFile}
+                  selecting={selecting}
+                  selected={selected.has(m.id)}
+                  onToggleSelect={toggle}
+                  onClick={(id) => navigate(`/movies/${id}`)}
+                />
+              ))}
+            </div>
+          ) : (
           <div className="overflow-hidden rounded-lg border border-rule">
             <table className="w-full text-left text-sm">
               <thead className="bg-bg text-[10px] font-semibold uppercase tracking-wide text-ink-dim">
@@ -198,6 +226,7 @@ export default function Movies() {
               </tbody>
             </table>
           </div>
+          )}
           {movies.hasNextPage && (
             <div className="flex justify-center pt-2">
               <button

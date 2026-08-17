@@ -5,6 +5,9 @@ import { persist } from "zustand/middleware";
 interface AppState {
   theme: "dark" | "light";
   setTheme: (theme: "dark" | "light") => void;
+  /** UNI-028 layout view for the Movies/Series library pages: poster grid (default) or table. */
+  libraryView: "posters" | "table";
+  setLibraryView: (view: "posters" | "table") => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -12,6 +15,8 @@ export const useAppStore = create<AppState>()(
     (set) => ({
       theme: "dark",
       setTheme: (theme) => set({ theme }),
+      libraryView: "posters",
+      setLibraryView: (libraryView) => set({ libraryView }),
     }),
     { name: "medianexus-ui" },
   ),

@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { CheckSquare, Search, Plus, Pencil, Tag, Trash2 } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { CheckSquare, Search, Plus, Pencil, Tag, Trash2, LayoutGrid, Rows3 } from "lucide-react";
 import { api } from "../api/client";
 import type { Series as SeriesRow, Paged } from "../api/types";
 import { Badge, EmptyState, ErrorState } from "../lib/ui";
+import { useAppStore } from "../store/useAppStore";
 import { AddTitleModal, type AddTitleBody } from "../components/AddTitleModal";
 import { BulkEditModal, type BulkEditPatch } from "../components/BulkEditModal";
 import { BulkTagsModal } from "../components/BulkTagsModal";
 import { BulkDeleteModal, type BulkDeleteOptions } from "../components/BulkDeleteModal";
+import { MediaPosterCard } from "../components/MediaPosterCard";
 
 interface BulkResult {
   updated: string[];
@@ -18,6 +20,9 @@ interface BulkResult {
 
 export default function Series() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const viewMode = useAppStore((s) => s.libraryView);
+  const setViewMode = useAppStore((s) => s.setLibraryView);
   const [search, setSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ title: "", tvdbId: "" });
@@ -95,6 +100,10 @@ export default function Series() {
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search shows…"
               className="w-56 rounded-lg border border-rule bg-surface px-3 py-1.5 pl-8 pr-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40" />
           </div>
+          <div className="flex gap-1 rounded-lg border border-rule bg-surface p-1">
+            <button onClick={() => setViewMode("posters")} title="Poster view" aria-label="Poster view" className={`rounded px-2 py-1.5 ${viewMode === "posters" ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-bg hover:text-ink"}`}><LayoutGrid className="h-4 w-4" /></button>
+            <button onClick={() => setViewMode("table")} title="Table view" aria-label="Table view" className={`rounded px-2 py-1.5 ${viewMode === "table" ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-bg hover:text-ink"}`}><Rows3 className="h-4 w-4" /></button>
+          </div>
           <button onClick={() => setSelecting((v) => { if (v) setSelected(new Set()); return !v; })} className="flex items-center gap-1.5 rounded-lg border border-rule bg-surface px-3 py-1.5 text-sm font-medium text-ink hover:bg-rule">
             <CheckSquare className="h-4 w-4" /> {selecting ? "Done" : "Select"}
           </button>
@@ -140,38 +149,57 @@ export default function Series() {
         <EmptyState title="No series yet" hint="Add a show to start building the TV library." />
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg border border-rule">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-bg text-[10px] font-semibold uppercase tracking-wide text-ink-dim">
-                <tr>
-                  {selecting && (
-                    <th className="w-8 px-3 py-2">
-                      <input
-                        type="checkbox"
-                        checked={selected.size > 0 && selected.size === items.length}
-                        onChange={(e) => setSelected(e.target.checked ? new Set(items.map((s) => s.id)) : new Set())}
-                        title={series.hasNextPage ? "Selects all currently loaded titles — Load more to select more" : "Select all"}
-                        className="h-4 w-4"
-                      />
-                    </th>
-                  )}
-                  <th className="px-3 py-2">Title</th><th className="px-3 py-2">Year</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Monitored</th><th className="px-3 py-2 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-rule">
-                {items.map((s) => (
-                  <tr key={s.id} className="hover:bg-bg/60">
-                    {selecting && <td className="px-3 py-2"><input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} className="h-4 w-4" /></td>}
-                    <td className="px-3 py-2 font-medium text-ink"><Link to={`/series/${s.id}`} className="hover:text-accent">{s.title}</Link></td>
-                    <td className="px-3 py-2 text-ink-dim">{s.firstAirYear ?? "—"}</td>
-                    <td className="px-3 py-2"><Badge tone="neutral">{s.seriesType}</Badge></td>
-                    <td className="px-3 py-2"><Badge tone={s.monitored ? "ok" : "warn"}>{s.monitored ? "monitored" : "unmonitored"}</Badge></td>
-                    <td className="px-3 py-2 text-right"><button onClick={() => remove.mutate(s.id)} className="text-xs text-err hover:underline">Remove</button></td>
+          {viewMode === "posters" ? (
+            <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
+              {items.map((s) => (
+                <MediaPosterCard
+                  key={s.id}
+                  id={s.id}
+                  title={s.title}
+                  year={s.firstAirYear}
+                  images={s.images}
+                  monitored={s.monitored}
+                  selecting={selecting}
+                  selected={selected.has(s.id)}
+                  onToggleSelect={toggle}
+                  onClick={(id) => navigate(`/series/${id}`)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-rule">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-bg text-[10px] font-semibold uppercase tracking-wide text-ink-dim">
+                  <tr>
+                    {selecting && (
+                      <th className="w-8 px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={selected.size > 0 && selected.size === items.length}
+                          onChange={(e) => setSelected(e.target.checked ? new Set(items.map((s) => s.id)) : new Set())}
+                          title={series.hasNextPage ? "Selects all currently loaded titles — Load more to select more" : "Select all"}
+                          className="h-4 w-4"
+                        />
+                      </th>
+                    )}
+                    <th className="px-3 py-2">Title</th><th className="px-3 py-2">Year</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Monitored</th><th className="px-3 py-2 text-right">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-rule">
+                  {items.map((s) => (
+                    <tr key={s.id} className="hover:bg-bg/60">
+                      {selecting && <td className="px-3 py-2"><input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} className="h-4 w-4" /></td>}
+                      <td className="px-3 py-2 font-medium text-ink"><Link to={`/series/${s.id}`} className="hover:text-accent">{s.title}</Link></td>
+                      <td className="px-3 py-2 text-ink-dim">{s.firstAirYear ?? "—"}</td>
+                      <td className="px-3 py-2"><Badge tone="neutral">{s.seriesType}</Badge></td>
+                      <td className="px-3 py-2"><Badge tone={s.monitored ? "ok" : "warn"}>{s.monitored ? "monitored" : "unmonitored"}</Badge></td>
+                      <td className="px-3 py-2 text-right"><button onClick={() => remove.mutate(s.id)} className="text-xs text-err hover:underline">Remove</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           {series.hasNextPage && (
             <div className="flex justify-center pt-2">
               <button
