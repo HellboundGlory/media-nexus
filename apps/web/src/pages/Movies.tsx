@@ -7,7 +7,7 @@ import { api } from "../api/client";
 import type { Movie, Paged, QualityProfile } from "../api/types";
 import { Badge, EmptyState, ErrorState } from "../lib/ui";
 import { useAppStore } from "../store/useAppStore";
-import { AddTitleModal, type AddTitleBody } from "../components/AddTitleModal";
+import { AddSearchModal } from "../components/AddSearchModal";
 import { BulkEditModal, type BulkEditPatch } from "../components/BulkEditModal";
 import { BulkTagsModal } from "../components/BulkTagsModal";
 import { BulkDeleteModal, type BulkDeleteOptions } from "../components/BulkDeleteModal";
@@ -34,9 +34,7 @@ export default function Movies() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [filter, setFilter] = useState(""); // "" | monitored | unmonitored | missing
   const [optionsOpen, setOptionsOpen] = useState(false);
-  const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ title: "", tmdbId: "" });
-  const [draft, setDraft] = useState<{ title: string; tmdbId?: number } | null>(null);
+  const [addSearchOpen, setAddSearchOpen] = useState(false);
 
   // ---- bulk selection (UNI-020) ----
   const [selecting, setSelecting] = useState(false);
@@ -102,12 +100,6 @@ export default function Movies() {
     onError: (e) => setBulkMsg(e instanceof Error ? e.message : "Bulk delete failed"),
   });
 
-  const add = useMutation({
-    mutationFn: (vars: { title: string; tmdbId?: number; body: AddTitleBody }) =>
-      api.post<Movie>("/movies", { title: vars.title, tmdbId: vars.tmdbId, ...vars.body }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["movies"] }); setShowAdd(false); setForm({ title: "", tmdbId: "" }); setDraft(null); },
-  });
-
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/movies/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["movies"] }),
@@ -157,7 +149,7 @@ export default function Movies() {
           <button onClick={() => setSelecting((v) => { if (v) setSelected(new Set()); return !v; })} className="flex items-center gap-1.5 rounded-lg border border-rule bg-surface px-3 py-1.5 text-sm font-medium text-ink hover:bg-rule">
             <CheckSquare className="h-4 w-4" /> {selecting ? "Done" : "Select"}
           </button>
-          <button onClick={() => setShowAdd((v) => !v)} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90">
+          <button onClick={() => setAddSearchOpen(true)} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90">
             <Plus className="h-4 w-4" /> Add movie
           </button>
         </div>
@@ -172,27 +164,6 @@ export default function Movies() {
             <button onClick={() => setBulkDeleteOpen(true)} className="flex items-center gap-1.5 rounded-lg bg-err/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-err hover:bg-err/20"><Trash2 className="h-3.5 w-3.5" /> Delete</button>
           </div>
         </div>
-      )}
-
-      {showAdd && (
-        <form
-          className="flex flex-wrap items-end gap-3 rounded-xl border border-rule bg-surface p-4"
-          onSubmit={(e) => { e.preventDefault(); setDraft({ title: form.title, tmdbId: form.tmdbId ? Number(form.tmdbId) : undefined }); }}
-        >
-          <label className="flex-1 basis-52">
-            <span className="mb-1 block text-xs text-ink-dim">Title</span>
-            <input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="w-full rounded-lg border border-rule bg-transparent px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40" />
-          </label>
-          <label className="basis-32">
-            <span className="mb-1 block text-xs text-ink-dim">TMDB ID (optional)</span>
-            <input value={form.tmdbId} onChange={(e) => setForm({ ...form, tmdbId: e.target.value })} type="number"
-              className="w-full rounded-lg border border-rule bg-transparent px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40" />
-          </label>
-          <button type="submit" className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90">
-            Continue
-          </button>
-        </form>
       )}
 
       {movies.isError ? <ErrorState error={movies.error} onRetry={() => movies.refetch()} /> : movies.isLoading ? (
@@ -280,16 +251,7 @@ export default function Movies() {
 
       {bulkMsg && <p className="text-xs text-err">{bulkMsg}</p>}
 
-      {draft && (
-        <AddTitleModal
-          mediaType="movie"
-          title={draft.title}
-          isPending={add.isPending}
-          error={add.error}
-          onClose={() => setDraft(null)}
-          onSubmit={(body) => add.mutate({ title: draft.title, tmdbId: draft.tmdbId, body })}
-        />
-      )}
+      {addSearchOpen && <AddSearchModal mediaType="movie" onClose={() => setAddSearchOpen(false)} />}
 
       {bulkEditOpen && <BulkEditModal mediaType="movie" count={selected.size} onSave={(patch) => bulkEdit.mutate(patch)} onClose={() => setBulkEditOpen(false)} busy={bulkEdit.isPending} />}
       {bulkTagsOpen && <BulkTagsModal onSave={(tagIds, mode) => bulkTags.mutate({ tagIds, mode })} onClose={() => setBulkTagsOpen(false)} busy={bulkTags.isPending} />}

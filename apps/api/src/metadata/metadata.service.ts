@@ -13,6 +13,14 @@ import { SeriesService } from "../series/series.service";
 import { AutoTagsService } from "../auto-tags/auto-tags.service";
 import type { SeriesType } from "@medianexus/domain";
 
+/** A /metadata/search result annotated against the local library (UNI-029 pass 2). The provider
+ *  (`MediaSummary`) stays DB-agnostic; in-library membership is enriched here, not in
+ *  TmdbProvider — same discipline as `discover()`. */
+export interface SearchResult extends MediaSummary {
+  inLibrary: boolean;
+  libraryId: string | null;
+}
+
 /** Optional non-smart fields the add flow can override (QUALITYPROFILES-1 / UNI-014). Every
  *  field defaults to the same literal Discovery previously hardcoded ("" / [] / "standard" /
  *  monitored:true), so callers that don't pass overrides get identical behaviour — only a field
@@ -65,9 +73,22 @@ export class MetadataService {
     });
   }
 
-  async lookup(query: string, mediaType: "movie" | "series"): Promise<MediaSummary[]> {
+  async lookup(query: string, mediaType: "movie" | "series"): Promise<SearchResult[]> {
     const p = await this.provider();
-    return p.search(query, mediaType);
+    const results = await p.search(query, mediaType);
+    // Annotate in-library membership with one batched query (same discipline as `discover()`) so
+    // the Add search modal can show "In library"/"+ Add" correctly for already-added titles.
+    const tmdbIds = results.map((r) => Number(r.externalId)).filter((n) => Number.isFinite(n));
+    const inLibrary = new Map<number, string>();
+    if (tmdbIds.length) {
+      const table = mediaType === "movie" ? schema.movie : schema.series;
+      const rows = await this.db.select({ id: table.id, tmdbId: table.tmdbId }).from(table).where(inArray(table.tmdbId, tmdbIds));
+      for (const r of rows) if (r.tmdbId != null) inLibrary.set(r.tmdbId, r.id);
+    }
+    return results.map((r) => {
+      const id = Number(r.externalId);
+      return { ...r, inLibrary: inLibrary.has(id), libraryId: inLibrary.get(id) ?? null };
+    });
   }
 
   async refreshMovie(movieId: string): Promise<{ updated: boolean; title?: string }> {

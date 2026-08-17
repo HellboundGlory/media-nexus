@@ -1267,6 +1267,16 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
     expect(lookup.status).toBe(200);
     expect(lookup.body[0].title).toBe("Dune");
     expect(lookup.body[0].externalId).toBe("9");
+    // UNI-029 pass 2: search results are enriched with in-library membership at the service layer.
+    expect(lookup.body[0].inLibrary).toBe(false);
+    expect(lookup.body[0].libraryId).toBeNull();
+
+    // the inLibrary flag flips once that TMDB id is in the local library
+    const addedDune = await auth(request(http).post("/api/v1/movies").send({ title: "Dune Local", tmdbId: 9 }));
+    expect(addedDune.status).toBe(201);
+    const lookup2 = await auth(request(http).get("/api/v1/metadata/search?query=dune&type=movie"));
+    expect(lookup2.body[0].inLibrary).toBe(true);
+    expect(lookup2.body[0].libraryId).toBe(addedDune.body.id);
   });
 
   it("discover: browses lists, adds a movie and a series, and flags them in-library", async () => {

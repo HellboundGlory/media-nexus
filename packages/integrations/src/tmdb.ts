@@ -135,6 +135,9 @@ export class TmdbProvider implements MetadataProviderContract {
       releaseDate: r.release_date ?? r.first_air_date ?? undefined,
       year: r.release_date ? Number(String(r.release_date).slice(0, 4)) : r.first_air_date ? Number(String(r.first_air_date).slice(0, 4)) : undefined,
       overview: r.overview,
+      // TMDB's /search/movie and /search/tv both carry vote_average per result (same field
+      // getDetails reads for tmdbRating); MediaSummary.rating already exists — this populates it.
+      rating: r.vote_average ?? undefined,
       genres: (r.genre_ids ?? r.genres ?? []).map((g: any) => (typeof g === "string" ? g : g.name ?? "")).filter(Boolean),
       images: r.poster_path ? [{ coverType: "poster", url: `https://image.tmdb.org/t/p/w500${r.poster_path}` }] : [],
     }));
