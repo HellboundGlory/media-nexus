@@ -92,7 +92,10 @@ export default function Settings() {
       {tab === "tags" && (
         <div className="space-y-8">
           <TagCatalog />
-          <AutoTags />
+          <div className="space-y-3">
+            <h3 className="font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink-dim">Auto Tagging</h3>
+            <AutoTags />
+          </div>
         </div>
       )}
 

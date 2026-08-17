@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2, Pencil, Plus } from "lucide-react";
 import { api } from "../api/client";
 import { Badge, ErrorState } from "../lib/ui";
-import type { AutoTag, AutoTagSpec } from "../api/types";
+import { TagPicker } from "../components/TagPicker";
+import type { AutoTag, AutoTagSpec, TagRow } from "../api/types";
 
 const SPEC_TYPES: { type: string; label: string }[] = [
   { type: "tag", label: "Has tag" },
@@ -21,7 +22,7 @@ const SPEC_TYPES: { type: string; label: string }[] = [
 interface SpecRow { type: string; value: string | number | boolean; negate: boolean; required: boolean }
 
 const emptySpec = (): SpecRow => ({ type: "genre", value: "", negate: false, required: false });
-const emptyForm = { name: "", removeTagsAutomatically: false, tags: "", specifications: [emptySpec()] as SpecRow[] };
+const emptyForm = { name: "", removeTagsAutomatically: false, tags: [] as string[], specifications: [emptySpec()] as SpecRow[] };
 
 function specText(s: AutoTagSpec): string {
   const neg = s.negate ? "!" : "";
@@ -34,6 +35,8 @@ export default function AutoTags() {
   const [form, setForm] = useState(emptyForm);
 
   const rules = useQuery({ queryKey: ["auto-tags"], queryFn: () => api.get<AutoTag[]>("/auto-tags") });
+  const tagsQuery = useQuery({ queryKey: ["tags"], queryFn: () => api.get<TagRow[]>("/tags") });
+  const tagLookup = useMemo(() => new Map((tagsQuery.data ?? []).map((t) => [t.id, t])), [tagsQuery.data]);
   const refetch = () => qc.invalidateQueries({ queryKey: ["auto-tags"] });
 
   const save = useMutation({
@@ -41,7 +44,7 @@ export default function AutoTags() {
       const body = {
         name: form.name.trim(),
         removeTagsAutomatically: form.removeTagsAutomatically,
-        tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
+        tags: form.tags,
         specifications: form.specifications.map((s) => ({
           type: s.type,
           value: s.type === "year" ? Number(s.value) : s.value,
@@ -62,7 +65,7 @@ export default function AutoTags() {
     setForm({
       name: r.name,
       removeTagsAutomatically: r.removeTagsAutomatically,
-      tags: r.tags.join(", "),
+      tags: r.tags,
       specifications: r.specifications.map((s) => ({ type: s.type, value: s.value, negate: s.negate, required: s.required })),
     });
   };
@@ -83,8 +86,8 @@ export default function AutoTags() {
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Genre: Comedy" className={`${inputCls} w-full`} />
           </label>
           <label className="block w-64">
-            <span className="mb-1 block text-xs text-ink-dim">Managed tags (comma-separated ids)</span>
-            <input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="comedy-tag, favorite" className={`${inputCls} w-full`} />
+            <span className="mb-1 block text-xs text-ink-dim">Managed tags</span>
+            <TagPicker value={form.tags} onChange={(tags) => setForm({ ...form, tags })} />
           </label>
           <label className="flex items-center gap-2 pb-1.5 text-sm text-ink-dim">
             <input type="checkbox" checked={form.removeTagsAutomatically} onChange={(e) => setForm({ ...form, removeTagsAutomatically: e.target.checked })} className="h-4 w-4" />
@@ -148,7 +151,7 @@ export default function AutoTags() {
                 <tr key={r.id}>
                   <td className="py-1.5 pr-3 font-medium text-ink">{r.name}</td>
                   <td className="py-1.5 pr-3 font-mono text-xs text-ink-dim">{r.specifications.length ? r.specifications.map(specText).join(" , ") : <span className="text-ink-dim">—</span>}</td>
-                  <td className="py-1.5 pr-3 text-xs text-ink-dim">{r.tags.length ? r.tags.join(", ") : <span className="text-ink-dim">—</span>}</td>
+                  <td className="py-1.5 pr-3 text-xs text-ink-dim">{r.tags.length ? r.tags.map((id) => tagLookup.get(id)?.label ?? id).join(", ") : <span className="text-ink-dim">—</span>}</td>
                   <td className="py-1.5 pr-3"><Badge tone={r.removeTagsAutomatically ? "warn" : "neutral"}>{r.removeTagsAutomatically ? "yes" : "no"}</Badge></td>
                   <td className="py-1.5 text-right">
                     <div className="inline-flex gap-1">

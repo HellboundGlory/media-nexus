@@ -12,6 +12,7 @@ import { Check } from "lucide-react";
 import { api } from "../api/client";
 import type { QualityProfile } from "../api/types";
 import { Modal } from "./Modal";
+import { TagPicker } from "./TagPicker";
 import type { MinimumAvailability, SeriesType } from "./AddTitleModal";
 
 export interface EditTitleInitial {
@@ -54,7 +55,7 @@ export function EditTitleModal({
   const [path, setPath] = useState(initial.rootFolderPath ?? "");
   const [minAvail, setMinAvail] = useState<MinimumAvailability>(initial.minimumAvailability ?? "released");
   const [seriesType, setSeriesType] = useState<SeriesType>(initial.seriesType ?? "standard");
-  const [tags, setTags] = useState((initial.tags ?? []).join(", "));
+  const [tags, setTags] = useState<string[]>(initial.tags ?? []);
 
   const singular = mediaType === "movie" ? "movie" : "series";
 
@@ -63,7 +64,7 @@ export function EditTitleModal({
       monitored,
       qualityProfileId: profileSel || null,
       rootFolderPath: path,
-      tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+      tags,
     };
     if (mediaType === "movie") body.minimumAvailability = minAvail;
     else body.seriesType = seriesType;
@@ -130,8 +131,8 @@ export function EditTitleModal({
         </label>
 
         <label className="block">
-          <span className="mb-1 block text-xs text-ink-dim">Tags (comma-separated)</span>
-          <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="favorite, 4k" className={inputCls} />
+          <span className="mb-1 block text-xs text-ink-dim">Tags</span>
+          <TagPicker value={tags} onChange={setTags} />
         </label>
       </div>
     </Modal>

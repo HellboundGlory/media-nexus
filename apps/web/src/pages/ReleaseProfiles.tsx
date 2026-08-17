@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: MIT
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2, Pencil } from "lucide-react";
 import { api } from "../api/client";
 import { Badge, ErrorState } from "../lib/ui";
-import type { ReleaseProfile } from "../api/types";
+import { TagPicker } from "../components/TagPicker";
+import type { ReleaseProfile, TagRow } from "../api/types";
 
-const emptyForm = { name: "", enabled: true, required: "", ignored: "", tags: "" };
+const emptyForm = { name: "", enabled: true, required: "", ignored: "", tags: [] as string[] };
 
 function splitLines(s: string): string[] {
   return s.split("\n").map((t) => t.trim()).filter(Boolean);
-}
-function splitTags(s: string): string[] {
-  return s.split(",").map((t) => t.trim()).filter(Boolean);
 }
 
 export default function ReleaseProfiles() {
@@ -25,6 +23,9 @@ export default function ReleaseProfiles() {
     queryFn: () => api.get<ReleaseProfile[]>("/release-profiles"),
   });
 
+  const tagsQuery = useQuery({ queryKey: ["tags"], queryFn: () => api.get<TagRow[]>("/tags") });
+  const tagLookup = useMemo(() => new Map((tagsQuery.data ?? []).map((t) => [t.id, t])), [tagsQuery.data]);
+
   const refetch = () => qc.invalidateQueries({ queryKey: ["release-profiles"] });
 
   const save = useMutation({
@@ -34,7 +35,7 @@ export default function ReleaseProfiles() {
         enabled: form.enabled,
         required: splitLines(form.required),
         ignored: splitLines(form.ignored),
-        tags: splitTags(form.tags),
+        tags: form.tags,
       };
       if (editing) await api.put(`/release-profiles/${editing}`, body);
       else await api.post("/release-profiles", body);
@@ -54,7 +55,7 @@ export default function ReleaseProfiles() {
       enabled: p.enabled,
       required: p.required.join("\n"),
       ignored: p.ignored.join("\n"),
-      tags: p.tags.join(", "),
+      tags: p.tags,
     });
   };
 
@@ -84,13 +85,8 @@ export default function ReleaseProfiles() {
           />
         </label>
         <label className="block w-56">
-          <span className="mb-1 block text-xs text-ink-dim">Tags (comma-separated, empty = all)</span>
-          <input
-            value={form.tags}
-            onChange={(e) => setForm({ ...form, tags: e.target.value })}
-            placeholder="4k, original"
-            className={inputCls}
-          />
+          <span className="mb-1 block text-xs text-ink-dim">Tags (empty = all)</span>
+          <TagPicker value={form.tags} onChange={(tags) => setForm({ ...form, tags })} />
         </label>
         <label className="block">
           <span className="mb-1 block text-xs text-ink-dim">Enabled</span>
@@ -151,7 +147,7 @@ export default function ReleaseProfiles() {
                   <td className="py-1.5 pr-3"><Badge tone={p.enabled ? "ok" : "neutral"}>{p.enabled ? "enabled" : "disabled"}</Badge></td>
                   <td className="py-1.5 pr-3 font-mono text-xs text-ink-dim">{p.required.length ? p.required.join(", ") : <span className="text-ink-dim">—</span>}</td>
                   <td className="py-1.5 pr-3 font-mono text-xs text-ink-dim">{p.ignored.length ? p.ignored.join(", ") : <span className="text-ink-dim">—</span>}</td>
-                  <td className="py-1.5 pr-3 text-xs text-ink-dim">{p.tags.length ? p.tags.join(", ") : <span className="text-ink-dim">all</span>}</td>
+                  <td className="py-1.5 pr-3 text-xs text-ink-dim">{p.tags.length ? p.tags.map((id) => tagLookup.get(id)?.label ?? id).join(", ") : <span className="text-ink-dim">all</span>}</td>
                   <td className="py-1.5 text-right">
                     <div className="inline-flex gap-1">
                       <button onClick={() => startEdit(p)} className="rounded p-1 text-ink-dim hover:bg-rule hover:text-ink" aria-label={`Edit ${p.name}`}>
