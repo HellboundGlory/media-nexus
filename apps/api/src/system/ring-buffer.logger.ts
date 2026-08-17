@@ -2,6 +2,7 @@
 import { ConsoleLogger } from "@nestjs/common";
 import { redactSecret } from "@medianexus/shared";
 import type { LogBuffer } from "./log-buffer";
+import type { LogFileWriter } from "./log-file-writer";
 
 const REDACT = "[REDACTED]";
 /**
@@ -31,10 +32,12 @@ function redactMessage(msg: string): string {
 }
 
 /**
- * Nest-compatible app logger (roadmap P3, gap report C8 logs sub-item) that does two jobs on
+ * Nest-compatible app logger (roadmap P3, gap report C8 logs sub-item) that does three jobs on
  * every call: (1) writes to the console EXACTLY as Nest's default ConsoleLogger does — `docker
  * logs` output must stay byte-for-byte unchanged, several ops workflows depend on it — and (2)
- * pushes the same entry into the in-memory ring buffer for the `/system/logs` + UI view.
+ * pushes the same entry into the in-memory ring buffer for the `/system/logs` + UI view, and (3)
+ * appends the same already-redacted line to the durable log file on disk (SON-035) — one
+ * redaction pass, two destinations, so they can never drift.
  *
  * Applied as the app-level logger (`NestFactory.create(AppModule, { logger })`), so all the
  * existing per-class `new Logger(ClassName)` call sites transparently route through it with no
@@ -48,7 +51,10 @@ function redactMessage(msg: string): string {
  * (e.g. "DownloadClientsService") and names like "AuthService".
  */
 export class RingBufferLogger extends ConsoleLogger {
-  constructor(private readonly buffer: LogBuffer) {
+  constructor(
+    private readonly buffer: LogBuffer,
+    private readonly writer: LogFileWriter,
+  ) {
     super();
   }
 
@@ -63,7 +69,11 @@ export class RingBufferLogger extends ConsoleLogger {
     const context = typeof optionalParams[optionalParams.length - 1] === "string"
       ? (optionalParams[optionalParams.length - 1] as string)
       : "";
-    this.buffer.append(level, context, redactMessage(this.toMessage(message)));
+    // Redact once, write to BOTH destinations (ring buffer + durable file) so the file carries
+    // the exact same scrubbed string the live view shows — never a second, drifting redaction.
+    const redacted = redactMessage(this.toMessage(message));
+    this.buffer.append(level, context, redacted);
+    this.writer.append(level, context, redacted);
   }
 
   override log(message: unknown, ...optionalParams: unknown[]): void {

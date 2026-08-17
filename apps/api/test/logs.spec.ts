@@ -11,9 +11,19 @@
  *    surfaced through a new API/UI surface would be a credential-leak vector).
  */
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { LogBuffer } from "../src/system/log-buffer";
 import { LogsService } from "../src/system/logs.service";
 import { RingBufferLogger } from "../src/system/ring-buffer.logger";
+import { LogFileWriter } from "../src/system/log-file-writer";
+
+// RingBufferLogger now requires a LogFileWriter collaborator (SON-035); point it at a throwaway
+// temp dir so the buffer-redaction tests here don't touch the app's real data/logs.
+function tempWriter(): LogFileWriter {
+  return new LogFileWriter(mkdtempSync(join(tmpdir(), "mn-ringbuf-")));
+}
 
 describe("LogBuffer + LogsService (GET /api/v1/system/logs backing)", () => {
   it("returns entries most-recent-first and respects limit, level and search filters", () => {
@@ -48,7 +58,7 @@ describe("LogBuffer + LogsService (GET /api/v1/system/logs backing)", () => {
 describe("RingBufferLogger", () => {
   it("captures console log lines (with context) and redacts secret-shaped messages before storing", () => {
     const buffer = new LogBuffer();
-    const logger = new RingBufferLogger(buffer);
+    const logger = new RingBufferLogger(buffer, tempWriter());
     const SECRET = "mn_Ip1u_j3adlXI457o06XWiyMnte5XBnx1";
 
     logger.log(SECRET, "AcquisitionService");
@@ -69,7 +79,7 @@ describe("RingBufferLogger", () => {
 
   it("redacts a secret token embedded in longer message prose (the real-world leak)", () => {
     const buffer = new LogBuffer();
-    const logger = new RingBufferLogger(buffer);
+    const logger = new RingBufferLogger(buffer, tempWriter());
     const SECRET = "mn_7Blv4nhQz2_DkvNDH4EncaBmX3uRBkuX";
     // Mirrors how Bootstrap logs the first-run API key on boot ("API key : mn_... (send as ...)").
     logger.warn(`   API key : ${SECRET}   (send as X-Api-Key header)`, "Bootstrap");
@@ -87,7 +97,7 @@ describe("RingBufferLogger", () => {
     // "CustomFormatsController {/api/v1}:" into "[REDACTED] {/api/v1}:"). Class names are
     // letters only; requiring a digit in the matched run preserves them.
     const buffer = new LogBuffer();
-    const logger = new RingBufferLogger(buffer);
+    const logger = new RingBufferLogger(buffer, tempWriter());
 
     logger.log("CustomFormatsController {/api/v1}:", "RoutesResolver");
     logger.log("RemotePathMappingsController {/api/v1/remote-path-mappings}:", "RoutesResolver");
@@ -95,5 +105,24 @@ describe("RingBufferLogger", () => {
     const entries = buffer.latest(10);
     expect(entries[0].message).toBe("RemotePathMappingsController {/api/v1/remote-path-mappings}:");
     expect(entries[1].message).toBe("CustomFormatsController {/api/v1}:");
+  });
+
+  it("writes the SAME redacted string to the durable file (one redaction pass, two destinations — SON-035)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mn-redact-file-"));
+    const writer = new LogFileWriter(dir);
+    const buffer = new LogBuffer();
+    const logger = new RingBufferLogger(buffer, writer);
+    const SECRET = "mn_aB3cdE4fGhI5jKlM6nOpQ7rStU8vWxYz";
+
+    logger.log(`API key : ${SECRET} (send as X-Api-Key)`, "Bootstrap");
+
+    const fileText = readFileSync(join(dir, "medianexus.txt"), "utf8");
+    // The secret-shaped token is scrubbed from the file exactly like the ring buffer.
+    expect(fileText).not.toContain(SECRET);
+    expect(fileText).toContain("[REDACTED]");
+    // And the ring buffer holds the identical string (they share one redaction computation).
+    const entry = buffer.latest(10)[0];
+    expect(entry?.message).toBe(`API key : [REDACTED] (send as X-Api-Key)`);
+    expect(fileText).toContain(entry!.message);
   });
 });

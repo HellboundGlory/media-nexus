@@ -16,6 +16,7 @@ import { ConfigService } from "./config.service";
 import { BackupService } from "./backup.service";
 import { ParseService } from "./parse.service";
 import { LogsService } from "./logs.service";
+import { LogFileWriter } from "./log-file-writer";
 import { UpdateCheckService } from "./update-check.service";
 
 const upsertSchema = z.record(z.string(), z.unknown());
@@ -46,6 +47,7 @@ export class SystemController {
     private readonly backupSvc: BackupService,
     private readonly parseSvc: ParseService,
     private readonly logsSvc: LogsService,
+    private readonly logFileWriter: LogFileWriter,
     private readonly updateCheckSvc: UpdateCheckService,
     @Inject(DB_HANDLE_TOKEN) private readonly dbHandle: DbHandle,
   ) {}
@@ -101,6 +103,24 @@ export class SystemController {
   @ApiOperation({ summary: "Download the named backup file (admin)" })
   async downloadBackup(@Param("name") name: string) {
     const dl = await this.backupSvc.openDownload(name);
+    return new StreamableFile(dl.stream, {
+      type: "application/octet-stream",
+      disposition: `attachment; filename="${dl.name}"`,
+    });
+  }
+
+  @Get("log-files")
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "List durable log files on disk (admin; rotated, newest first, redacted)" })
+  logFiles() {
+    return this.logFileWriter.list();
+  }
+
+  @Get("log-files/:name/download")
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "Download the named log file (admin)" })
+  async downloadLogFile(@Param("name") name: string) {
+    const dl = this.logFileWriter.openDownload(name);
     return new StreamableFile(dl.stream, {
       type: "application/octet-stream",
       disposition: `attachment; filename="${dl.name}"`,
