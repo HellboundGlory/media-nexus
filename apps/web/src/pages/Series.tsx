@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CheckSquare, Search, Plus, Pencil, Tag, Trash2 } from "lucide-react";
 import { api } from "../api/client";
@@ -31,11 +31,16 @@ export default function Series() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
 
-  const series = useQuery({
+  // UNI-028 (pagination half): incremental loading via infinite query, matching Discover.tsx.
+  // Changing `search` changes the queryKey, so React Query resets back to page 1 automatically.
+  const series = useInfiniteQuery({
     queryKey: ["series", search],
-    queryFn: () => api.get<Paged<SeriesRow>>(`/series?search=${encodeURIComponent(search)}`),
+    queryFn: ({ pageParam }) => api.get<Paged<SeriesRow>>(`/series?search=${encodeURIComponent(search)}&page=${pageParam}`),
+    initialPageParam: 1,
+    getNextPageParam: (last) => (last.page * last.pageSize < last.total ? last.page + 1 : undefined),
   });
-  const items = series.data?.items ?? [];
+  const items = series.data?.pages.flatMap((p) => p.items) ?? [];
+  const total = series.data?.pages[0]?.total ?? 0;
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -82,7 +87,7 @@ export default function Series() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">Series</h2>
-          <p className="text-sm text-ink-dim">{series.data?.total ?? 0} shows in library</p>
+          <p className="text-sm text-ink-dim">{total} shows in library</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -101,7 +106,7 @@ export default function Series() {
 
       {selecting && selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-lg border border-rule bg-surface px-3 py-2">
-          <span className="text-sm text-ink">{selected.size} selected</span>
+          <span className="text-sm text-ink">{selected.size} selected{series.hasNextPage ? " of loaded titles" : ""}</span>
           <div className="ml-auto flex items-center gap-2">
             <button onClick={() => setBulkEditOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-rule bg-bg px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule"><Pencil className="h-3.5 w-3.5" /> Edit</button>
             <button onClick={() => setBulkTagsOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-rule bg-bg px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule"><Tag className="h-3.5 w-3.5" /> Set Tags</button>
@@ -134,30 +139,51 @@ export default function Series() {
       ) : items.length === 0 ? (
         <EmptyState title="No series yet" hint="Add a show to start building the TV library." />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-rule">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-bg text-[10px] font-semibold uppercase tracking-wide text-ink-dim">
-              <tr>
-                {selecting && (
-                  <th className="w-8 px-3 py-2"><input type="checkbox" checked={selected.size > 0 && selected.size === items.length} onChange={(e) => setSelected(e.target.checked ? new Set(items.map((s) => s.id)) : new Set())} className="h-4 w-4" /></th>
-                )}
-                <th className="px-3 py-2">Title</th><th className="px-3 py-2">Year</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Monitored</th><th className="px-3 py-2 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-rule">
-              {items.map((s) => (
-                <tr key={s.id} className="hover:bg-bg/60">
-                  {selecting && <td className="px-3 py-2"><input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} className="h-4 w-4" /></td>}
-                  <td className="px-3 py-2 font-medium text-ink"><Link to={`/series/${s.id}`} className="hover:text-accent">{s.title}</Link></td>
-                  <td className="px-3 py-2 text-ink-dim">{s.firstAirYear ?? "—"}</td>
-                  <td className="px-3 py-2"><Badge tone="neutral">{s.seriesType}</Badge></td>
-                  <td className="px-3 py-2"><Badge tone={s.monitored ? "ok" : "warn"}>{s.monitored ? "monitored" : "unmonitored"}</Badge></td>
-                  <td className="px-3 py-2 text-right"><button onClick={() => remove.mutate(s.id)} className="text-xs text-err hover:underline">Remove</button></td>
+        <>
+          <div className="overflow-hidden rounded-lg border border-rule">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-bg text-[10px] font-semibold uppercase tracking-wide text-ink-dim">
+                <tr>
+                  {selecting && (
+                    <th className="w-8 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={selected.size > 0 && selected.size === items.length}
+                        onChange={(e) => setSelected(e.target.checked ? new Set(items.map((s) => s.id)) : new Set())}
+                        title={series.hasNextPage ? "Selects all currently loaded titles — Load more to select more" : "Select all"}
+                        className="h-4 w-4"
+                      />
+                    </th>
+                  )}
+                  <th className="px-3 py-2">Title</th><th className="px-3 py-2">Year</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Monitored</th><th className="px-3 py-2 text-right">Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-rule">
+                {items.map((s) => (
+                  <tr key={s.id} className="hover:bg-bg/60">
+                    {selecting && <td className="px-3 py-2"><input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} className="h-4 w-4" /></td>}
+                    <td className="px-3 py-2 font-medium text-ink"><Link to={`/series/${s.id}`} className="hover:text-accent">{s.title}</Link></td>
+                    <td className="px-3 py-2 text-ink-dim">{s.firstAirYear ?? "—"}</td>
+                    <td className="px-3 py-2"><Badge tone="neutral">{s.seriesType}</Badge></td>
+                    <td className="px-3 py-2"><Badge tone={s.monitored ? "ok" : "warn"}>{s.monitored ? "monitored" : "unmonitored"}</Badge></td>
+                    <td className="px-3 py-2 text-right"><button onClick={() => remove.mutate(s.id)} className="text-xs text-err hover:underline">Remove</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {series.hasNextPage && (
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={() => series.fetchNextPage()}
+                disabled={series.isFetchingNextPage}
+                className="rounded-lg border border-rule bg-surface px-4 py-1.5 text-sm font-medium text-ink hover:bg-rule disabled:opacity-50"
+              >
+                {series.isFetchingNextPage ? "Loading…" : "Load more"}
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {bulkMsg && <p className="text-xs text-err">{bulkMsg}</p>}

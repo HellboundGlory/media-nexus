@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CheckSquare, Search, Plus, Database, Pencil, Tag, Trash2 } from "lucide-react";
 import { api } from "../api/client";
@@ -31,11 +31,19 @@ export default function Movies() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
 
-  const movies = useQuery({
+  // UNI-028 (pagination half): incremental loading via infinite query, matching Discover.tsx.
+  // Changing `search` changes the queryKey, so React Query resets back to page 1 automatically.
+  const movies = useInfiniteQuery({
     queryKey: ["movies", search],
-    queryFn: () => api.get<Paged<Movie>>(`/movies?search=${encodeURIComponent(search)}`),
+    queryFn: ({ pageParam }) => api.get<Paged<Movie>>(`/movies?search=${encodeURIComponent(search)}&page=${pageParam}`),
+    initialPageParam: 1,
+    // Paged<T> uses {items,total,page,pageSize}; there is more when the loaded pages haven't
+    // reached total yet.
+    getNextPageParam: (last) => (last.page * last.pageSize < last.total ? last.page + 1 : undefined),
   });
-  const items = movies.data?.items ?? [];
+  const items = movies.data?.pages.flatMap((p) => p.items) ?? [];
+  // The total count is identical on every page's response — page 0 is fine to read it from.
+  const total = movies.data?.pages[0]?.total ?? 0;
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -90,7 +98,7 @@ export default function Movies() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">Movies</h2>
-          <p className="text-sm text-ink-dim">{movies.data?.total ?? 0} titles in library</p>
+          <p className="text-sm text-ink-dim">{total} titles in library</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -113,7 +121,7 @@ export default function Movies() {
 
       {selecting && selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-lg border border-rule bg-surface px-3 py-2">
-          <span className="text-sm text-ink">{selected.size} selected</span>
+          <span className="text-sm text-ink">{selected.size} selected{movies.hasNextPage ? " of loaded titles" : ""}</span>
           <div className="ml-auto flex items-center gap-2">
             <button onClick={() => setBulkEditOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-rule bg-bg px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule"><Pencil className="h-3.5 w-3.5" /> Edit</button>
             <button onClick={() => setBulkTagsOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-rule bg-bg px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule"><Tag className="h-3.5 w-3.5" /> Set Tags</button>
@@ -148,39 +156,60 @@ export default function Movies() {
       ) : items.length === 0 ? (
         <EmptyState title="No movies yet" hint="Add a movie — the first release of the unified library." />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-rule">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-bg text-[10px] font-semibold uppercase tracking-wide text-ink-dim">
-              <tr>
-                {selecting && (
-                  <th className="w-8 px-3 py-2"><input type="checkbox" checked={selected.size > 0 && selected.size === items.length} onChange={(e) => setSelected(e.target.checked ? new Set(items.map((m) => m.id)) : new Set())} className="h-4 w-4" /></th>
-                )}
-                <th className="px-3 py-2">Title</th>
-                <th className="px-3 py-2">Year</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Monitored</th>
-                <th className="px-3 py-2 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-rule">
-              {items.map((m) => (
-                <tr key={m.id} className="hover:bg-bg/60">
-                  {selecting && <td className="px-3 py-2"><input type="checkbox" checked={selected.has(m.id)} onChange={() => toggle(m.id)} className="h-4 w-4" /></td>}
-                  <td className="px-3 py-2 font-medium text-ink"><Link to={`/movies/${m.id}`} className="hover:text-accent">{m.title}</Link></td>
-                  <td className="px-3 py-2 text-ink-dim">{m.releaseDate ? m.releaseDate.slice(0, 4) : "—"}</td>
-                  <td className="px-3 py-2"><Badge tone="neutral">{m.status}</Badge></td>
-                  <td className="px-3 py-2"><Badge tone={m.monitored ? "ok" : "warn"}>{m.monitored ? "monitored" : "unmonitored"}</Badge></td>
-                  <td className="px-3 py-2 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button onClick={() => meta.mutate(m.id)} title="Refresh from TMDB" className="rounded p-1 text-ink-dim hover:bg-rule hover:text-ink"><Database className="h-3.5 w-3.5" /></button>
-                      <button onClick={() => remove.mutate(m.id)} className="text-xs text-err hover:underline">Remove</button>
-                    </div>
-                  </td>
+        <>
+          <div className="overflow-hidden rounded-lg border border-rule">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-bg text-[10px] font-semibold uppercase tracking-wide text-ink-dim">
+                <tr>
+                  {selecting && (
+                    <th className="w-8 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={selected.size > 0 && selected.size === items.length}
+                        onChange={(e) => setSelected(e.target.checked ? new Set(items.map((m) => m.id)) : new Set())}
+                        title={movies.hasNextPage ? "Selects all currently loaded titles — Load more to select more" : "Select all"}
+                        className="h-4 w-4"
+                      />
+                    </th>
+                  )}
+                  <th className="px-3 py-2">Title</th>
+                  <th className="px-3 py-2">Year</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Monitored</th>
+                  <th className="px-3 py-2 text-right">Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-rule">
+                {items.map((m) => (
+                  <tr key={m.id} className="hover:bg-bg/60">
+                    {selecting && <td className="px-3 py-2"><input type="checkbox" checked={selected.has(m.id)} onChange={() => toggle(m.id)} className="h-4 w-4" /></td>}
+                    <td className="px-3 py-2 font-medium text-ink"><Link to={`/movies/${m.id}`} className="hover:text-accent">{m.title}</Link></td>
+                    <td className="px-3 py-2 text-ink-dim">{m.releaseDate ? m.releaseDate.slice(0, 4) : "—"}</td>
+                    <td className="px-3 py-2"><Badge tone="neutral">{m.status}</Badge></td>
+                    <td className="px-3 py-2"><Badge tone={m.monitored ? "ok" : "warn"}>{m.monitored ? "monitored" : "unmonitored"}</Badge></td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => meta.mutate(m.id)} title="Refresh from TMDB" className="rounded p-1 text-ink-dim hover:bg-rule hover:text-ink"><Database className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => remove.mutate(m.id)} className="text-xs text-err hover:underline">Remove</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {movies.hasNextPage && (
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={() => movies.fetchNextPage()}
+                disabled={movies.isFetchingNextPage}
+                className="rounded-lg border border-rule bg-surface px-4 py-1.5 text-sm font-medium text-ink hover:bg-rule disabled:opacity-50"
+              >
+                {movies.isFetchingNextPage ? "Loading…" : "Load more"}
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {bulkMsg && <p className="text-xs text-err">{bulkMsg}</p>}
