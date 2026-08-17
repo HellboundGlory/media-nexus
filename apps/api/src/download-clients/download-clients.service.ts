@@ -5,9 +5,9 @@ import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import type { CreateDownloadClient, UpdateDownloadClientBody } from "@medianexus/domain";
+import type { CreateDownloadClient, TestDownloadClientDraft, UpdateDownloadClientBody } from "@medianexus/domain";
 import { ProvidersService } from "../providers/demo.providers";
-import { redactSettings, REDACTED } from "../common/redact";
+import { redactSettings } from "../common/redact";
 import {
   sabnzbdSettingsSchema,
   qbittorrentSettingsSchema,
@@ -19,7 +19,7 @@ import { z } from "zod";
 import { EventTypes } from "@medianexus/events";
 import { EventsService } from "../events/events.service";
 import { ProviderStatusService } from "../providers/provider-status.service";
-import { DOWNLOAD_CLIENT_SECRET_FIELDS, decryptFields, encryptFields, getProviderSecret } from "../secrets/provider-secrets";
+import { DOWNLOAD_CLIENT_SECRET_FIELDS, decryptFields, encryptFields, getProviderSecret, mergeRedactionSentinels } from "../secrets/provider-secrets";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   sabnzbd: sabnzbdSettingsSchema,
@@ -103,8 +103,7 @@ export class DownloadClientsService {
       const fields = DOWNLOAD_CLIENT_SECRET_FIELDS[existing.implementation] ?? [];
       const decoded = decryptFields((existing.settings ?? {}) as Record<string, unknown>, fields, secret);
       const provided = input.settings as Record<string, unknown>;
-      const merged: Record<string, unknown> = { ...decoded, ...provided };
-      for (const f of fields) if (provided[f] === REDACTED) merged[f] = decoded[f];
+      const merged = mergeRedactionSentinels(decoded, provided, fields);
       const schemaCfg = settingsSchemas[existing.implementation];
       if (!schemaCfg) throw new ApiError({ code: "VALIDATION_ERROR", message: `Unsupported download client implementation "${existing.implementation}"` });
       const res = schemaCfg.safeParse(merged);
@@ -125,6 +124,66 @@ export class DownloadClientsService {
     this.providers.invalidateDownloadClient(id);
     const updated = { ...existing, ...mergedRow };
     return { ...updated, settings: redactSettings(updated.settings as Record<string, unknown>) };
+  }
+
+  /**
+   * Merge redaction sentinels for a draft test: if the provided settings contain `[REDACTED]`
+   * for a secret leaf, keep the stored (decrypted) value. Returns the merged plaintext settings.
+   * Uses the same shared J9 merge as update() so a draft test and a save can never diverge on
+   * a credential.
+   */
+  private mergeDraftClientSettings(existing: typeof schema.downloadClient.$inferSelect, provided: Record<string, unknown>): Record<string, unknown> {
+    const secret = getProviderSecret();
+    const fields = DOWNLOAD_CLIENT_SECRET_FIELDS[existing.implementation] ?? [];
+    const decoded = decryptFields((existing.settings ?? {}) as Record<string, unknown>, fields, secret);
+    return mergeRedactionSentinels(decoded, provided, fields);
+  }
+
+  /**
+   * Test a download client draft config without persisting anything.
+   * Body: { id?, name, implementation, kind, settings }
+   * If id is provided, [REDACTED] secrets are resolved against the stored row.
+   * Does NOT write provider_status, DownloadClientFailed event.
+   */
+  async testDraft(input: TestDownloadClientDraft): Promise<{ ok: boolean; latencyMs: number; message: string }> {
+    let settings: Record<string, unknown> = input.settings;
+
+    if (input.id) {
+      const rows = await this.db.select().from(schema.downloadClient).where(eq(schema.downloadClient.id, input.id)).limit(1);
+      if (rows[0]) {
+        settings = this.mergeDraftClientSettings(rows[0], input.settings);
+      }
+    }
+
+    // Validate settings against provider schema
+    const schemaCfg = settingsSchemas[input.implementation];
+    if (!schemaCfg) throw new ApiError({ code: "VALIDATION_ERROR", message: `Unsupported download client implementation "${input.implementation}" (supported: ${Object.keys(settingsSchemas).join(", ")})` });
+    const res = schemaCfg.safeParse(settings);
+    if (!res.success) throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid settings for ${input.implementation}`, details: res.error.issues });
+
+    // Build transient provider and test
+    const provider = this.providers.buildDownloadClientProvider({
+      implementation: input.implementation,
+      settings: res.data as Record<string, unknown>,
+    });
+
+    if (!provider) throw new ApiError({ code: "UNPROCESSABLE", message: "Provider not materializable" });
+    const health = await provider.healthcheck();
+
+    // CRITICAL: draft test must NOT persist anything — no provider_status, no DownloadClientFailed event
+    return { ok: health.ok, latencyMs: health.latencyMs ?? 0, message: health.message ?? (health.ok ? "OK" : "healthcheck failed") };
+  }
+
+  /** Health-check every enabled download client. */
+  async refreshAll(): Promise<{ checked: number; ok: number; failed: number }> {
+    const configured = await this.providers.configuredDownloadClients();
+    let ok = 0; let failed = 0;
+    for (const { row } of configured) {
+      if (!row) continue;
+      const r = await this.test(row.id).catch((e) => ({ ok: false as const, message: (e as Error).message }));
+      if (r.ok) ok++; else failed++;
+    }
+    return { checked: configured.length, ok, failed };
   }
 
   async remove(id: string) {

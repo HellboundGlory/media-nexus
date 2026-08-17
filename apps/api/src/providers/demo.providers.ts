@@ -1,6 +1,6 @@
 
 // SPDX-License-Identifier: MIT
-import { Global, Inject, Injectable, Module } from "@nestjs/common";
+import { Global, Inject, Injectable, Logger, Module } from "@nestjs/common";
 import { eq } from "drizzle-orm";
 import {
   buildFetcher,
@@ -54,6 +54,7 @@ export type ConfiguredClient = { row: (typeof schema.downloadClient.$inferSelect
  */
 @Injectable()
 export class ProvidersService {
+  private readonly logger = new Logger(ProvidersService.name);
   /** Download-client instances cached by row id so a provider keeps its session state
    *  (e.g. qBittorrent's SID cookie, Transmission's session-id) across polls — the
    *  session-reuse fix (gap report J5 / D3). Rebuilt only when the row's config changes
@@ -87,51 +88,109 @@ export class ProvidersService {
     this.clientFingerprints.delete(id);
   }
 
+  /**
+   * Build an indexer provider from a row-shaped object with ALREADY-DECRYPTED plaintext settings.
+   * This is the single construction path shared by configuredIndexers() and the draft test endpoint.
+   * Must NOT touch clientCache/clientFingerprints and must NOT filter on enabled.
+   * THROWS when the row cannot be materialized (e.g. a cardigann definition with no YAML body, or
+   * a definition row that was pruned) — callers on a hot path must catch and skip the row.
+   * `flareSolverrUrl` is resolved by the caller once (it reads config), not per row.
+   */
+  async buildIndexerProvider(row: {
+    id: string;
+    definitionKey: string;
+    protocol: "usenet" | "torrent";
+    implementation: string;
+    settings: Record<string, unknown>;
+    proxy: { type?: string; host?: string; port?: number; username?: string; password?: string; enabled?: boolean; flareSolverr?: boolean } | null;
+    sessionState?: string | null;
+  }, flareSolverrUrl?: string): Promise<IndexerContract> {
+    const def = row.implementation === "cardigann"
+      ? (await this.db.select().from(schema.indexerDefinition).where(eq(schema.indexerDefinition.key, row.definitionKey)).limit(1))[0]
+      : undefined;
+
+    const rawProxy = row.proxy;
+    // enabled default here MUST agree with indexerProxySchema (default false) — the stored row is
+    // written from the parsed schema output, so a missing flag means disabled, never enabled.
+    const fetcher = buildFetcher({
+      proxy: (rawProxy ? { enabled: rawProxy.enabled ?? false, type: rawProxy.type as never, host: rawProxy.host as string, port: rawProxy.port ?? 0, username: rawProxy.username, password: rawProxy.password } : null) as never,
+      flareSolverrUrl: rawProxy?.flareSolverr && flareSolverrUrl ? flareSolverrUrl : undefined,
+    });
+
+    if (row.implementation === "memory") {
+      return this.memIdx;
+    } else if (row.implementation === "newznab" || row.implementation === "torznab") {
+      return new NewznabProvider(row.id, row.protocol, row.settings as never, fetcher as never);
+    } else if (row.implementation === "cardigann") {
+      const yml = def?.cardigannYml;
+      if (!yml) throw new ApiError({ code: "VALIDATION_ERROR", message: "Cardigann definition has no YAML body" });
+      return new CardigannProvider({
+        key: row.id,
+        protocol: row.protocol,
+        definitionText: yml,
+        settings: row.settings as Record<string, never>,
+        fetcher: fetcher as never,
+        sessionState: row.sessionState ? decryptSessionValue(row.sessionState, getProviderSecret()) ?? undefined : undefined,
+      });
+    }
+    throw new ApiError({ code: "VALIDATION_ERROR", message: `Unknown indexer implementation: ${row.implementation}` });
+  }
+
+  /**
+   * Build a download client provider from a row-shaped object with ALREADY-DECRYPTED plaintext settings.
+   * This is the single construction path shared by configuredDownloadClients() and the draft test endpoint.
+   * Must NOT touch clientCache/clientFingerprints and must NOT filter on enabled.
+   * THROWS when the implementation is unknown — callers on a hot path must catch and skip the row.
+   */
+  buildDownloadClientProvider(row: {
+    implementation: string;
+    settings: Record<string, unknown>;
+  }): DownloadClientContract {
+    if (row.implementation === "sabnzbd") return new SabnzbdProvider(row.settings as never);
+    if (row.implementation === "qbittorrent") return new QbittorrentProvider(row.settings as never);
+    if (row.implementation === "transmission") return new TransmissionProvider(row.settings as never);
+    if (row.implementation === "nzbget") return new NzbgetProvider(row.settings as never);
+    if (row.implementation === "memory") return this.memClient;
+    throw new ApiError({ code: "VALIDATION_ERROR", message: `Unknown download client implementation: ${row.implementation}` });
+  }
+
   async configuredIndexers(): Promise<ConfiguredIndexer[]> {
     const rows = await this.db.select().from(schema.indexer).where(eq(schema.indexer.enabled, true));
-    const flare = (await this.config.get())["discovery.flareSolverrBaseUrl"] || undefined;
     const secret = getProviderSecret();
+    // Resolve once, hoisted above the loop — ConfigService.get() is uncached and this is a hot path
+    // (every search / RSS poll), so it must not run once per indexer row.
+    const flare = (await this.config.get())["discovery.flareSolverrBaseUrl"] || undefined;
     const out: ConfiguredIndexer[] = [];
     for (const row of rows) {
+      // J9: decrypt stored credentials before building a provider — tolerant, so a row
+      // that is still plaintext (e.g. mid-run upstream import) still works.
       const def = row.implementation === "cardigann"
         ? (await this.db.select().from(schema.indexerDefinition).where(eq(schema.indexerDefinition.key, row.definitionKey)).limit(1))[0]
         : undefined;
-      // J9: decrypt stored credentials before building a provider — tolerant, so a row
-      // that is still plaintext (e.g. mid-run upstream import) still works.
       const secretFields = row.implementation === "cardigann"
         ? cardigannSecretFields(def?.cardigannYml ? parseCardigannYaml(def.cardigannYml) : undefined)
         : (INDEXER_SETTINGS_SECRET_FIELDS[row.implementation] ?? []);
       const settings = decryptFields((row.settings ?? {}) as Record<string, unknown>, secretFields, secret);
       const rawProxy = row.proxy as { type?: string; host?: string; port?: number; username?: string; password?: string; enabled?: boolean; flareSolverr?: boolean } | null;
       const proxy = rawProxy ? decryptFields(rawProxy, PROXY_SECRET_FIELDS, secret) as typeof rawProxy : rawProxy;
-      const fetcher = buildFetcher({
-        proxy: (proxy ? { enabled: proxy.enabled ?? true, type: proxy.type as never, host: proxy.host as string, port: proxy.port ?? 0, username: proxy.username, password: proxy.password } : null) as never,
-        flareSolverrUrl: proxy?.flareSolverr && flare ? flare : undefined,
-      });
-      if (row.implementation === "memory") {
-        out.push({ row, provider: this.memIdx });
-      } else if (row.implementation === "newznab" || row.implementation === "torznab") {
-        out.push({
-          row,
-          provider: new NewznabProvider(row.id, row.protocol as "usenet" | "torrent", settings as never, fetcher as never),
-        });
-      } else if (row.implementation === "cardigann") {
-        const yml = def?.cardigannYml;
-        if (!yml) continue;
-        out.push({
-          row,
-          provider: new CardigannProvider({
-            key: row.id,
-            protocol: row.protocol as "usenet" | "torrent",
-            definitionText: yml,
-            settings: settings as Record<string, never>,
-            fetcher: fetcher as never,
-            // D4 Stage 2: decrypt the stored (J9 AES-256-GCM) session into a raw session value
-            // the provider can restore into its cookie jar; tolerant to plaintext.
-            sessionState: decryptSessionValue(row.sessionState ?? undefined, secret) ?? undefined,
-          }),
-        });
+      // One unbuildable row (e.g. a cardigann definition pruned by cardigann-sync) must never take
+      // down the whole list — skip it and keep the rest, matching the original `continue`.
+      let provider: IndexerContract;
+      try {
+        provider = await this.buildIndexerProvider({
+          id: row.id,
+          definitionKey: row.definitionKey,
+          protocol: row.protocol as "usenet" | "torrent",
+          implementation: row.implementation,
+          settings,
+          proxy,
+          sessionState: row.sessionState ?? undefined,
+        }, flare);
+      } catch (err) {
+        this.logger.warn(`skipping unbuildable indexer "${row.name}" (${row.id}): ${(err as Error).message}`);
+        continue;
       }
+      out.push({ row, provider });
     }
     return out;
   }
@@ -151,13 +210,15 @@ export class ProvidersService {
       }
       // J9: decrypt stored credentials before building a provider (tolerant to plaintext).
       const settings = decryptFields((row.settings ?? {}) as Record<string, unknown>, DOWNLOAD_CLIENT_SECRET_FIELDS[row.implementation] ?? [], secret);
+      // One unknown implementation must not take down configuredDownloadClients() (which feeds
+      // pickDownloadClient() and therefore every grab) — skip it, matching the original `continue`.
       let provider: DownloadClientContract;
-      if (row.implementation === "sabnzbd") provider = new SabnzbdProvider(settings as never);
-      else if (row.implementation === "qbittorrent") provider = new QbittorrentProvider(settings as never);
-      else if (row.implementation === "transmission") provider = new TransmissionProvider(settings as never);
-      else if (row.implementation === "nzbget") provider = new NzbgetProvider(settings as never);
-      else if (row.implementation === "memory") provider = this.memClient;
-      else continue;
+      try {
+        provider = this.buildDownloadClientProvider({ implementation: row.implementation, settings });
+      } catch (err) {
+        this.logger.warn(`skipping unbuildable download client "${row.name}" (${row.id}): ${(err as Error).message}`);
+        continue;
+      }
       const configured: ConfiguredClient = { row, provider };
       this.clientCache.set(row.id, configured);
       this.clientFingerprints.set(row.id, fingerprint);

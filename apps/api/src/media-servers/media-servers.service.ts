@@ -5,12 +5,13 @@ import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import { redactSettings, REDACTED } from "../common/redact";
+import { redactSettings } from "../common/redact";
 import { JellyfinMediaServerProvider, PlexMediaServerProvider } from "@medianexus/integrations";
 import type { MediaServerContract } from "@medianexus/integrations";
-import { decryptFields, encryptFields, getProviderSecret, MEDIA_SERVER_SECRET_FIELDS } from "../secrets/provider-secrets";
+import { decryptFields, encryptFields, getProviderSecret, MEDIA_SERVER_SECRET_FIELDS, mergeRedactionSentinels } from "../secrets/provider-secrets";
 import { z } from "zod";
 import type { MediaServerConfig } from "@medianexus/shared";
+import type { TestMediaServerDraft } from "@medianexus/domain";
 
 const settingsSchema = z.object({ host: z.string().min(1), apiKey: z.string().optional() });
 
@@ -28,19 +29,21 @@ export class MediaServersService {
     @Inject(DB_TOKEN) private readonly db: Db,
   ) {}
 
-  /** Build one provider from a stored (possibly encrypted-at-rest) media_server row. */
+  /** Build one provider from a media_server row's ALREADY-DECRYPTED plaintext settings.
+   *  Single construction path shared by providers()/test()/testDraft() — callers decrypt.
+   *  THROWS on an unknown implementation; hot-path callers on rows catch + skip. */
   private buildProvider(row: { implementation: string; settings: Record<string, unknown> }): MediaServerContract {
-    const settings = decryptFields(row.settings, MEDIA_SERVER_SECRET_FIELDS, getProviderSecret());
     return row.implementation === "plex"
-      ? new PlexMediaServerProvider({ host: String(settings.host ?? ""), token: String(settings.apiKey ?? "") })
-      : new JellyfinMediaServerProvider({ host: String(settings.host ?? ""), apiKey: String(settings.apiKey ?? "") });
+      ? new PlexMediaServerProvider({ host: String(row.settings.host ?? ""), token: String(row.settings.apiKey ?? "") })
+      : new JellyfinMediaServerProvider({ host: String(row.settings.host ?? ""), apiKey: String(row.settings.apiKey ?? "") });
   }
 
   async providers(): Promise<{ cfg: MediaServerConfig; provider: MediaServerContract }[]> {
     const rows = await this.db.select().from(schema.mediaServer).where(eq(schema.mediaServer.enabled, true));
+    const secret = getProviderSecret();
     const out: { cfg: MediaServerConfig; provider: MediaServerContract }[] = [];
     for (const server of rows) {
-      const settings = decryptFields(server.settings, MEDIA_SERVER_SECRET_FIELDS, getProviderSecret()) as Record<string, unknown>;
+      const settings = decryptFields(server.settings, MEDIA_SERVER_SECRET_FIELDS, secret) as Record<string, unknown>;
       out.push({
         cfg: {
           name: server.name,
@@ -48,7 +51,7 @@ export class MediaServersService {
           enabled: server.enabled,
           settings,
         },
-        provider: this.buildProvider(server),
+        provider: this.buildProvider({ implementation: server.implementation, settings }),
       });
     }
     return out;
@@ -101,8 +104,7 @@ export class MediaServersService {
     if (input.settings) {
       const decoded = decryptFields(existing.settings, MEDIA_SERVER_SECRET_FIELDS, secret);
       const provided = input.settings;
-      const merged: Record<string, unknown> = { ...decoded, ...provided };
-      if (provided.apiKey === REDACTED) merged.apiKey = decoded.apiKey;
+      const merged = mergeRedactionSentinels(decoded, provided, MEDIA_SERVER_SECRET_FIELDS);
       const res = settingsSchema.safeParse(merged);
       if (!res.success) {
         throw new ApiError({ code: "VALIDATION_ERROR", message: "Invalid media server settings", details: res.error.issues });
@@ -168,8 +170,48 @@ export class MediaServersService {
   async test(id: string): Promise<{ ok: boolean; message?: string }> {
     const rows = await this.db.select().from(schema.mediaServer).where(eq(schema.mediaServer.id, id)).limit(1);
     if (!rows[0]) return { ok: false, message: "not found" };
-    const provider = this.buildProvider(rows[0]);
+    const settings = decryptFields(rows[0].settings, MEDIA_SERVER_SECRET_FIELDS, getProviderSecret());
+    const provider = this.buildProvider({ implementation: rows[0].implementation, settings });
     const h = await provider.healthcheck();
+    return { ok: h.ok, message: h.message };
+  }
+
+  /**
+   * Merge redaction sentinels for a draft test: if the provided settings contain `[REDACTED]`
+   * for a secret leaf, keep the stored (decrypted) value. Returns the merged plaintext settings.
+   * Uses the same shared J9 merge as update().
+   */
+  private mergeDraftMediaServerSettings(existing: typeof schema.mediaServer.$inferSelect, provided: Record<string, unknown>): Record<string, unknown> {
+    const secret = getProviderSecret();
+    const decoded = decryptFields(existing.settings, MEDIA_SERVER_SECRET_FIELDS, secret);
+    return mergeRedactionSentinels(decoded, provided, MEDIA_SERVER_SECRET_FIELDS);
+  }
+
+  /**
+   * Test a media server draft config without persisting anything.
+   * Body: { id?, name, implementation, settings }
+   * If id is provided, [REDACTED] secrets are resolved against the stored row.
+   * Does NOT write anything to the DB.
+   */
+  async testDraft(input: TestMediaServerDraft): Promise<{ ok: boolean; message?: string }> {
+    let settings: Record<string, unknown> = input.settings;
+
+    if (input.id) {
+      const rows = await this.db.select().from(schema.mediaServer).where(eq(schema.mediaServer.id, input.id)).limit(1);
+      if (rows[0]) {
+        settings = this.mergeDraftMediaServerSettings(rows[0], input.settings);
+      }
+    }
+
+    // Validate settings
+    const res = settingsSchema.safeParse(settings);
+    if (!res.success) throw new ApiError({ code: "VALIDATION_ERROR", message: "Invalid media server settings", details: res.error.issues });
+
+    // Build transient provider (same construction path as test()/providers()) and test
+    const provider = this.buildProvider({ implementation: input.implementation, settings: res.data as Record<string, unknown> });
+    const h = await provider.healthcheck();
+
+    // CRITICAL: draft test must NOT persist anything
     return { ok: h.ok, message: h.message };
   }
 }

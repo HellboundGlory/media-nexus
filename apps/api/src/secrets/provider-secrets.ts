@@ -85,6 +85,26 @@ export function decryptFields<T extends Record<string, unknown>>(
   return out as T;
 }
 
+/**
+ * J9 "unchanged" merge (gap report C5): merge client-provided `provided` settings over the
+ * decrypted stored `decoded` settings, preserving the stored secret wherever the client
+ * re-sent the `[REDACTED]` sentinel for a secret leaf. This is the single implementation of
+ * that rule, shared by `IndexersService.update()`/`DownloadClientsService.update()`/
+ * `MediaServersService.update()` and the draft-test endpoints (UNI-018) — never fork a
+ * second copy of it, or the two paths could silently diverge on a credential.
+ */
+export function mergeRedactionSentinels(
+  decoded: Record<string, unknown>,
+  provided: Record<string, unknown>,
+  secretFields: readonly string[],
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...decoded, ...provided };
+  for (const f of secretFields) {
+    if (provided[f] === "[REDACTED]") merged[f] = decoded[f];
+  }
+  return merged;
+}
+
 // Secret leaf fields per provider implementation (`settings` JSON blobs).
 // `memory` is test infra only — no credentials.
 export const INDEXER_SETTINGS_SECRET_FIELDS: Record<string, string[]> = {

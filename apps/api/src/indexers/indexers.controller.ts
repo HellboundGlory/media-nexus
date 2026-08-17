@@ -3,7 +3,8 @@ import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from "@nes
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import {
-  createIndexerSchema, updateIndexerSchema, grabRequestSchema, type CreateIndexer, type GrabRequest, type UpdateIndexerBody,
+  createIndexerSchema, updateIndexerSchema, grabRequestSchema, testIndexerDraftSchema,
+  type CreateIndexer, type GrabRequest, type TestIndexerDraft, type UpdateIndexerBody,
 } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { IndexersService } from "./indexers.service";
@@ -47,6 +48,12 @@ export class IndexersController {
     return this.indexers.create(body);
   }
 
+  @Post("indexers/refresh-all")
+  @ApiOperation({ summary: "Health-check every enabled indexer" })
+  refreshAll() {
+    return this.indexers.refreshAll();
+  }
+
   @Put("indexers/:id")
   @ApiOperation({ summary: "Edit an indexer (credentials re-encrypted at rest; [REDACTED] means unchanged)" })
   update(@Param("id") id: string, @Body(new ZodValidationPipe(updateIndexerSchema)) body: UpdateIndexerBody) {
@@ -57,6 +64,12 @@ export class IndexersController {
   @ApiOperation({ summary: "Health-check an indexer and persist the result" })
   test(@Param("id") id: string) {
     return this.indexers.test(id);
+  }
+
+  @Post("indexers/test")
+  @ApiOperation({ summary: "Health-check an indexer draft config (no persistence)" })
+  testDraft(@Body(new ZodValidationPipe(testIndexerDraftSchema)) body: TestIndexerDraft) {
+    return this.indexers.testDraft(body);
   }
 
   @Get("indexers/statistics")

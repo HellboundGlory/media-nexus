@@ -204,6 +204,17 @@ export interface DownloadClient {
   createdAt: string;
 }
 
+/** An indexer proxy config (mirrors indexerProxySchema). */
+export interface IndexerProxy {
+  enabled: boolean;
+  type: "http" | "socks4" | "socks5";
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+  flareSolverr: boolean;
+}
+
 export interface RootFolder {
   id: string;
   path: string;
@@ -329,6 +340,21 @@ export interface IndexerRow {
   implementation: string;
   status: string;
   lastError?: string | null;
+  settings: Record<string, unknown>;
+  priority: number;
+  tags: string[];
+  proxy: IndexerProxy | null;
+  lastSyncAt?: string | null;
+}
+
+/** A GET /media-servers row. `settings` is redacted (apiKey/token may be [REDACTED]). */
+export interface MediaServer {
+  id: string;
+  name: string;
+  implementation: "jellyfin" | "plex";
+  enabled: boolean;
+  settings: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface JobRun {

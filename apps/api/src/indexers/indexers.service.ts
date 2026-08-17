@@ -5,14 +5,14 @@ import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import type { Release, CreateIndexer, UpdateIndexerBody } from "@medianexus/domain";
+import type { Release, CreateIndexer, TestIndexerDraft, UpdateIndexerBody } from "@medianexus/domain";
 import { ProvidersService } from "../providers/demo.providers";
-import { redactSettings, REDACTED } from "../common/redact";
+import { redactSettings } from "../common/redact";
 import { tagApplies } from "../common/tags";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 import { z } from "zod";
-import { newznabSettingsSchema, torznabSettingsSchema, memoryIndexerSettingsSchema } from "@medianexus/integrations";
+import { newznabSettingsSchema, torznabSettingsSchema, memoryIndexerSettingsSchema, indexerProxySchema } from "@medianexus/integrations";
 import { ConfigService } from "../system/config.service";
 import { join, resolve } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -20,7 +20,7 @@ import { episodeQueryTag } from "@medianexus/domain";
 import { parseCardigannYaml, cardigannSettingsSchema, cardigannDefinitionStatus } from "@medianexus/integrations";
 import { DecisionService } from "../decision/decision.service";
 import { ProviderStatusService } from "../providers/provider-status.service";
-import { cardigannSecretFields, decryptFields, decryptSessionValue, encryptFields, encryptSessionValue, getProviderSecret, INDEXER_SETTINGS_SECRET_FIELDS, PROXY_SECRET_FIELDS } from "../secrets/provider-secrets";
+import { cardigannSecretFields, decryptFields, decryptSessionValue, encryptFields, encryptSessionValue, getProviderSecret, INDEXER_SETTINGS_SECRET_FIELDS, mergeRedactionSentinels, PROXY_SECRET_FIELDS } from "../secrets/provider-secrets";
 
 const settingsSchemas: Record<string, z.ZodType> = {
   memory: memoryIndexerSettingsSchema,
@@ -148,6 +148,15 @@ export class IndexersService {
       secretFields = INDEXER_SETTINGS_SECRET_FIELDS[impl] ?? [];
     }
 
+    // Validate proxy before building the row, and persist the PARSED data (schema defaults, e.g.
+    // `enabled` -> false and `type` -> "http", applied once) so the stored row agrees with the
+    // schema — the fetcher that actually makes requests reads that same stored value.
+    let parsedProxy: Record<string, unknown> | null = null;
+    if (input.proxy) {
+      const proxyRes = indexerProxySchema.safeParse(input.proxy);
+      if (!proxyRes.success) throw new ApiError({ code: "VALIDATION_ERROR", message: "Invalid proxy configuration", details: proxyRes.error.issues });
+      parsedProxy = proxyRes.data as Record<string, unknown>;
+    }
     const now = new Date().toISOString();
     const secret = getProviderSecret();
     const row = {
@@ -159,7 +168,7 @@ export class IndexersService {
       implementation: impl,
       // J9: store credentials encrypted at rest (decrypted on read when providers are built).
       settings: encryptFields(parsedSettings, secretFields, secret),
-      proxy: input.proxy ? encryptFields(input.proxy, PROXY_SECRET_FIELDS, secret) : null,
+      proxy: parsedProxy ? encryptFields(parsedProxy, PROXY_SECRET_FIELDS, secret) : null,
       priority: input.priority ?? 25,
       status: "ok",
       tags: input.tags ?? [],
@@ -198,8 +207,7 @@ export class IndexersService {
     if (input.settings) {
       const decoded = decryptFields((existing.settings ?? {}) as Record<string, unknown>, secretFields, secret);
       const provided = input.settings as Record<string, unknown>;
-      const merged: Record<string, unknown> = { ...decoded, ...provided };
-      for (const f of secretFields) if (provided[f] === REDACTED) merged[f] = decoded[f];
+      const merged = mergeRedactionSentinels(decoded, provided, secretFields);
       if (existing.implementation === "cardigann") {
         const def = (await this.db.select().from(schema.indexerDefinition).where(eq(schema.indexerDefinition.key, existing.definitionKey)).limit(1))[0];
         if (!def?.cardigannYml) throw new ApiError({ code: "VALIDATION_ERROR", message: "Cardigann definition has no YAML body" });
@@ -221,9 +229,12 @@ export class IndexersService {
     } else if (input.proxy) {
       const decodedProxy = (existing.proxy ? decryptFields(existing.proxy as Record<string, unknown>, PROXY_SECRET_FIELDS, secret) : {}) as Record<string, unknown>;
       const providedProxy = input.proxy as Record<string, unknown>;
-      const mergedProxy: Record<string, unknown> = { ...decodedProxy, ...providedProxy };
-      if (providedProxy.password === REDACTED) mergedProxy.password = decodedProxy.password;
-      proxy = encryptFields(mergedProxy, PROXY_SECRET_FIELDS, secret) as typeof existing.proxy;
+      const mergedProxy = mergeRedactionSentinels(decodedProxy, providedProxy, PROXY_SECRET_FIELDS);
+      // Validate merged proxy against indexerProxySchema. Persist the PARSED output so defaults
+      // are applied exactly once and the stored row agrees with the schema (and the fetcher).
+      const proxyRes = indexerProxySchema.safeParse(mergedProxy);
+      if (!proxyRes.success) throw new ApiError({ code: "VALIDATION_ERROR", message: "Invalid proxy configuration", details: proxyRes.error.issues });
+      proxy = encryptFields(proxyRes.data as Record<string, unknown>, PROXY_SECRET_FIELDS, secret) as typeof existing.proxy;
     }
 
     const mergedRow = {
@@ -242,6 +253,83 @@ export class IndexersService {
       settings: redactSettings(updated.settings as Record<string, unknown>),
       proxy: updated.proxy ? redactSettings(updated.proxy as Record<string, unknown>) : null,
     };
+  }
+
+  /**
+   * Merge redaction sentinels for a draft test: if the provided settings contain `[REDACTED]`
+   * for a secret leaf, keep the stored (decrypted) value. Returns the merged plaintext settings.
+   */
+  private async mergeDraftIndexerSettings(existing: typeof schema.indexer.$inferSelect, provided: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const secret = getProviderSecret();
+    const secretFields = await this.indexerSecretFields(existing);
+    const decoded = decryptFields((existing.settings ?? {}) as Record<string, unknown>, secretFields, secret);
+    return mergeRedactionSentinels(decoded, provided, secretFields);
+  }
+
+  /**
+   * Test an indexer draft config without persisting anything.
+   * Body: { id?, definitionKey, name, protocol, implementation, settings, proxy? }
+   * If id is provided, [REDACTED] secrets are resolved against the stored row.
+   * Does NOT write provider_status, indexer.status, lastSyncAt, capabilities, or IndexerFailed event.
+   */
+  async testDraft(input: TestIndexerDraft): Promise<{ ok: boolean; latencyMs: number; message: string }> {
+    let settings: Record<string, unknown> = input.settings;
+    let proxy = (input.proxy ?? null) as { type?: string; host?: string; port?: number; username?: string; password?: string; enabled?: boolean; flareSolverr?: boolean } | null;
+
+    if (input.id) {
+      const rows = await this.db.select().from(schema.indexer).where(eq(schema.indexer.id, input.id)).limit(1);
+      if (rows[0]) {
+        settings = await this.mergeDraftIndexerSettings(rows[0], input.settings);
+        if (input.proxy) {
+          const secret = getProviderSecret();
+          const decodedProxy = rows[0].proxy ? decryptFields(rows[0].proxy as Record<string, unknown>, PROXY_SECRET_FIELDS, secret) : {};
+          const providedProxy = input.proxy as Record<string, unknown>;
+          proxy = mergeRedactionSentinels(decodedProxy, providedProxy, PROXY_SECRET_FIELDS) as typeof proxy;
+        }
+      }
+    }
+
+    // Validate settings against provider schema
+    const def = await this.db.select().from(schema.indexerDefinition).where(eq(schema.indexerDefinition.key, input.definitionKey)).limit(1);
+    if (!def[0]) throw new ApiError({ code: "VALIDATION_ERROR", message: `Unknown indexer definition key "${input.definitionKey}"` });
+    const impl = def[0].implementation;
+
+    if (impl === "cardigann") {
+      if (!def[0].cardigannYml) throw new ApiError({ code: "VALIDATION_ERROR", message: "Cardigann definition has no YAML body" });
+      const res = cardigannSettingsSchema(parseCardigannYaml(def[0].cardigannYml)).safeParse(settings);
+      if (!res.success) throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid settings for ${def[0].name}`, details: res.error.issues });
+    } else {
+      const s = settingsSchemas[impl];
+      if (!s) throw new ApiError({ code: "VALIDATION_ERROR", message: `Indexer implementation "${impl}" not available yet` });
+      const res = s.safeParse(settings);
+      if (!res.success) throw new ApiError({ code: "VALIDATION_ERROR", message: `Invalid settings for ${impl}`, details: res.error.issues });
+    }
+
+    // Validate proxy if present and use the PARSED value (schema defaults applied once, matching
+    // create()/update()) so a draft test tests the same proxy the fetcher would use.
+    if (proxy) {
+      const proxyRes = indexerProxySchema.safeParse(proxy);
+      if (!proxyRes.success) throw new ApiError({ code: "VALIDATION_ERROR", message: "Invalid proxy configuration", details: proxyRes.error.issues });
+      proxy = proxyRes.data as typeof proxy;
+    }
+
+    // Build transient provider and test (resolve flare once — a draft test is a single row)
+    const flare = (await this.config.get())["discovery.flareSolverrBaseUrl"] || undefined;
+    const provider = await this.providers.buildIndexerProvider({
+      id: input.id ?? "draft",
+      definitionKey: input.definitionKey,
+      protocol: input.protocol,
+      implementation: impl,
+      settings,
+      proxy,
+      sessionState: undefined,
+    }, flare);
+
+    if (!provider) throw new ApiError({ code: "UNPROCESSABLE", message: "No provider for this indexer" });
+    const health = await provider.healthcheck();
+
+    // CRITICAL: draft test must NOT persist anything — no provider_status, no indexer.status write, no lastSyncAt, no capability write, no IndexerFailed event
+    return { ok: health.ok, latencyMs: health.latencyMs ?? 0, message: health.message ?? (health.ok ? "OK" : "healthcheck failed") };
   }
 
   /** Run a live health check on one configured indexer and persist the result.

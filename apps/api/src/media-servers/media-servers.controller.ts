@@ -5,6 +5,7 @@ import { z } from "zod";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { MediaServersService } from "./media-servers.service";
 import { AdminGuard } from "../common/admin.guard";
+import { testMediaServerDraftSchema, type TestMediaServerDraft } from "@medianexus/domain";
 
 const createBody = z.object({
   name: z.string().min(1),
@@ -56,4 +57,11 @@ export class MediaServersController {
   @Post(":id/test")
   @ApiOperation({ summary: "Health-check a configured media server" })
   test(@Param("id") id: string) { return this.servers.test(id); }
+
+  @UseGuards(AdminGuard)
+  @Post("test")
+  @ApiOperation({ summary: "Health-check a media server draft config (no persistence)" })
+  testDraft(@Body(new ZodValidationPipe(testMediaServerDraftSchema)) body: TestMediaServerDraft) {
+    return this.servers.testDraft(body);
+  }
 }

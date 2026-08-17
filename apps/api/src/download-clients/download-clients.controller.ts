@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { Body, Controller, Delete, Get, Param, Post, Put } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { createDownloadClientSchema, updateDownloadClientSchema, type CreateDownloadClient, type UpdateDownloadClientBody } from "@medianexus/domain";
+import { createDownloadClientSchema, updateDownloadClientSchema, testDownloadClientDraftSchema, type CreateDownloadClient, type TestDownloadClientDraft, type UpdateDownloadClientBody } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { DownloadClientsService } from "./download-clients.service";
 
@@ -38,5 +38,17 @@ export class DownloadClientsController {
   @ApiOperation({ summary: "Health-check a download client" })
   test(@Param("id") id: string) {
     return this.clients.test(id);
+  }
+
+  @Post("test")
+  @ApiOperation({ summary: "Health-check a download client draft config (no persistence)" })
+  testDraft(@Body(new ZodValidationPipe(testDownloadClientDraftSchema)) body: TestDownloadClientDraft) {
+    return this.clients.testDraft(body);
+  }
+
+  @Post("refresh-all")
+  @ApiOperation({ summary: "Health-check every enabled download client" })
+  refreshAll() {
+    return this.clients.refreshAll();
   }
 }

@@ -161,6 +161,42 @@ export const updateRemotePathMappingSchema = z.object({
 });
 export type UpdateRemotePathMappingBody = z.infer<typeof updateRemotePathMappingSchema>;
 
+// ---------- Draft provider test bodies (UNI-018, decision 5) ----------
+// The modal Test button validates the UNSAVED typed config via POST /indexers/test,
+// /download-clients/test, /media-servers/test (note: no :id in the path — distinct from the
+// existing POST /:id/test recovery routes). `settings`/`proxy` stay loose records because they
+// may carry the `[REDACTED]` sentinel for an unchanged secret; the provider schema validates the
+// real values after the redaction merge. An `id` (when present) resolves redacted secrets against
+// the stored row; the draft is never persisted.
+
+export const testIndexerDraftSchema = z.object({
+  id: z.string().optional(),
+  definitionKey: z.string().min(1),
+  name: z.string().min(1),
+  protocol: z.enum(["usenet", "torrent"]),
+  implementation: z.string().min(1),
+  settings: z.record(z.string(), z.unknown()).default({}),
+  proxy: z.record(z.string(), z.unknown()).nullish(),
+});
+export type TestIndexerDraft = z.infer<typeof testIndexerDraftSchema>;
+
+export const testDownloadClientDraftSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(1),
+  implementation: z.string().min(1),
+  kind: z.enum(["usenet", "torrent"]),
+  settings: z.record(z.string(), z.unknown()).default({}),
+});
+export type TestDownloadClientDraft = z.infer<typeof testDownloadClientDraftSchema>;
+
+export const testMediaServerDraftSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(1),
+  implementation: z.enum(["jellyfin", "plex"]),
+  settings: z.record(z.string(), z.unknown()).default({}),
+});
+export type TestMediaServerDraft = z.infer<typeof testMediaServerDraftSchema>;
+
 export const upsertSettingSchema = z.record(z.string(), z.unknown());
 
 // ---------- Tags (roadmap P2, gap report C6) ----------
