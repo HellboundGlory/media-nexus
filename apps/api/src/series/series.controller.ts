@@ -18,6 +18,12 @@ const setMonitoredBody = z.object({ monitored: z.boolean() });
 
 const listQuerySchema = z.object({
   search: z.string().optional(),
+  monitored: z.enum(["true", "false"]).optional(),
+  // UNI-029: server-side sort. Series has NO "missing" filter (no per-show file-completeness
+  // signal), so `filter` only accepts "all" — a movies-only "missing" is rejected with a 400.
+  sort: z.enum(["title", "year", "added", "monitored"]).optional(),
+  sortDir: z.enum(["asc", "desc"]).optional(),
+  filter: z.enum(["all"]).optional(),
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().max(100).optional(),
 });
@@ -65,9 +71,9 @@ export class SeriesController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: "List series (paginated/filterable)" })
+  @ApiOperation({ summary: "List series (paginated/filterable/sortable)" })
   list(@Query(new ZodValidationPipe(listQuerySchema)) query: unknown) {
-    return this.series.list(query as { search?: string; page?: number; pageSize?: number });
+    return this.series.list(query as { search?: string; monitored?: string; filter?: string; sort?: string; sortDir?: "asc" | "desc"; page?: number; pageSize?: number });
   }
 
   @Get(":id")

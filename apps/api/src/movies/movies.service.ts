@@ -22,7 +22,7 @@ import { EventTypes } from "@medianexus/events";
 import { AutoTagsService } from "../auto-tags/auto-tags.service";
 import { IndexersService } from "../indexers/indexers.service";
 
-export interface ListQuery { search?: string; monitored?: string; sort?: string; page?: number; pageSize?: number }
+export interface ListQuery { search?: string; monitored?: string; filter?: string; sort?: string; sortDir?: "asc" | "desc"; page?: number; pageSize?: number }
 
 /** One row of a rename preview (DETAILPAGE-BE4): what a file would be renamed to now. */
 export interface RenamePreviewItem {
@@ -148,12 +148,26 @@ export class MoviesService {
   }
 
   async list(q: ListQuery) {
+    // UNI-029: `filter=missing` is the more specific ask — when present it wins over (and
+    // suppresses) the otherwise-contradictory `monitored=true/false` conditions.
     const where = combine([
       titleSearchCondition(schema.movie.title, q.search),
-      q.monitored === "true" ? eq(schema.movie.monitored, true) : undefined,
-      q.monitored === "false" ? eq(schema.movie.monitored, false) : undefined,
+      q.filter === "missing" ? undefined
+        : q.monitored === "true" ? eq(schema.movie.monitored, true)
+        : q.monitored === "false" ? eq(schema.movie.monitored, false)
+        : undefined,
+      q.filter === "missing" ? and(eq(schema.movie.monitored, true), eq(schema.movie.hasFile, false)) : undefined,
     ]);
-    return listPaged<typeof schema.movie.$inferSelect>(this.db, schema.movie, where, q);
+    return listPaged<typeof schema.movie.$inferSelect>(this.db, schema.movie, where, q, {
+      // Movie "year" is releaseDate; series uses firstAirYear (different column/type) — the
+      // caller supplies the map so the two never get conflated.
+      sortColumns: {
+        title: schema.movie.title,
+        year: schema.movie.releaseDate,
+        added: schema.movie.addedAt,
+        monitored: schema.movie.monitored,
+      },
+    });
   }
 
   async get(id: string) {

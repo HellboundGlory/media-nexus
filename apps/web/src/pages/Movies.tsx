@@ -1,29 +1,39 @@
 // SPDX-License-Identifier: MIT
 import { useState } from "react";
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { CheckSquare, Search, Plus, Database, Pencil, Tag, Trash2, LayoutGrid, Rows3 } from "lucide-react";
+import { CheckSquare, Search, Plus, Database, Pencil, Tag, Trash2, LayoutGrid, Rows3, SlidersHorizontal } from "lucide-react";
 import { api } from "../api/client";
-import type { Movie, Paged } from "../api/types";
+import type { Movie, Paged, QualityProfile } from "../api/types";
 import { Badge, EmptyState, ErrorState } from "../lib/ui";
 import { useAppStore } from "../store/useAppStore";
 import { AddTitleModal, type AddTitleBody } from "../components/AddTitleModal";
 import { BulkEditModal, type BulkEditPatch } from "../components/BulkEditModal";
 import { BulkTagsModal } from "../components/BulkTagsModal";
 import { BulkDeleteModal, type BulkDeleteOptions } from "../components/BulkDeleteModal";
-import { MediaPosterCard } from "../components/MediaPosterCard";
+import { MediaPosterCard, posterGridClass } from "../components/MediaPosterCard";
+import { OptionsModal } from "../components/OptionsModal";
 
 interface BulkResult {
   updated: string[];
   failed: { id: string; error: string }[];
 }
 
+const selectCls = "rounded-lg border border-rule bg-surface px-2 py-1.5 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
+
 export default function Movies() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const viewMode = useAppStore((s) => s.libraryView);
   const setViewMode = useAppStore((s) => s.setLibraryView);
+  const posterSize = useAppStore((s) => s.posterSize);
+  const showTitle = useAppStore((s) => s.showTitle);
+  const showQualityProfile = useAppStore((s) => s.showQualityProfile);
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState(""); // "" = server default (added desc)
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [filter, setFilter] = useState(""); // "" | monitored | unmonitored | missing
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ title: "", tmdbId: "" });
   const [draft, setDraft] = useState<{ title: string; tmdbId?: number } | null>(null);
@@ -37,15 +47,25 @@ export default function Movies() {
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
 
   // UNI-028 (pagination half): incremental loading via infinite query, matching Discover.tsx.
-  // Changing `search` changes the queryKey, so React Query resets back to page 1 automatically.
+  // Changing search/sort/sortDir/filter changes the queryKey, so React Query resets to page 1.
   const movies = useInfiniteQuery({
-    queryKey: ["movies", search],
-    queryFn: ({ pageParam }) => api.get<Paged<Movie>>(`/movies?search=${encodeURIComponent(search)}&page=${pageParam}`),
+    queryKey: ["movies", search, sort, sortDir, filter],
+    queryFn: ({ pageParam }) => {
+      const p = new URLSearchParams({ page: String(pageParam) });
+      if (search) p.set("search", search);
+      if (sort) { p.set("sort", sort); p.set("sortDir", sortDir); }
+      if (filter === "monitored") p.set("monitored", "true");
+      else if (filter === "unmonitored") p.set("monitored", "false");
+      else if (filter === "missing") p.set("filter", "missing");
+      return api.get<Paged<Movie>>(`/movies?${p.toString()}`);
+    },
     initialPageParam: 1,
     // Paged<T> uses {items,total,page,pageSize}; there is more when the loaded pages haven't
     // reached total yet.
     getNextPageParam: (last) => (last.page * last.pageSize < last.total ? last.page + 1 : undefined),
   });
+  const profilesQuery = useQuery({ queryKey: ["quality-profiles"], queryFn: () => api.get<QualityProfile[]>("/quality-profiles") });
+  const profileName = (id: string | null | undefined): string | null => id ? profilesQuery.data?.find((p) => p.id === id)?.name ?? null : null;
   const items = movies.data?.pages.flatMap((p) => p.items) ?? [];
   // The total count is identical on every page's response — page 0 is fine to read it from.
   const total = movies.data?.pages[0]?.total ?? 0;
@@ -115,6 +135,21 @@ export default function Movies() {
               className="w-56 rounded-lg border border-rule bg-surface px-3 py-1.5 pl-8 pr-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
             />
           </div>
+          <select value={sort} onChange={(e) => setSort(e.target.value)} className={selectCls} aria-label="Sort">
+            <option value="">Default</option>
+            <option value="title">Title</option>
+            <option value="year">Year</option>
+            <option value="added">Added</option>
+            <option value="monitored">Monitored</option>
+          </select>
+          <button disabled={!sort} onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")} title="Sort direction" aria-label="Toggle sort direction" className="flex items-center rounded-lg border border-rule bg-surface px-2 py-1.5 text-xs text-ink-dim hover:bg-rule hover:text-ink disabled:opacity-40">{sortDir === "asc" ? "↑" : "↓"}</button>
+          <select value={filter} onChange={(e) => setFilter(e.target.value)} className={selectCls} aria-label="Filter">
+            <option value="">All</option>
+            <option value="monitored">Monitored</option>
+            <option value="unmonitored">Unmonitored</option>
+            <option value="missing">Missing</option>
+          </select>
+          <button onClick={() => setOptionsOpen(true)} title="Display options" aria-label="Display options" className="flex items-center rounded-lg border border-rule bg-surface px-2 py-1.5 text-ink-dim hover:bg-rule hover:text-ink"><SlidersHorizontal className="h-4 w-4" /></button>
           <div className="flex gap-1 rounded-lg border border-rule bg-surface p-1">
             <button onClick={() => setViewMode("posters")} title="Poster view" aria-label="Poster view" className={`rounded px-2 py-1.5 ${viewMode === "posters" ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-bg hover:text-ink"}`}><LayoutGrid className="h-4 w-4" /></button>
             <button onClick={() => setViewMode("table")} title="Table view" aria-label="Table view" className={`rounded px-2 py-1.5 ${viewMode === "table" ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-bg hover:text-ink"}`}><Rows3 className="h-4 w-4" /></button>
@@ -167,7 +202,7 @@ export default function Movies() {
       ) : (
         <>
           {viewMode === "posters" ? (
-            <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
+            <div className={`grid gap-4 ${posterGridClass(posterSize)}`}>
               {items.map((m) => (
                 <MediaPosterCard
                   key={m.id}
@@ -181,6 +216,8 @@ export default function Movies() {
                   selected={selected.has(m.id)}
                   onToggleSelect={toggle}
                   onClick={(id) => navigate(`/movies/${id}`)}
+                  showTitle={showTitle}
+                  qualityProfileName={showQualityProfile ? profileName(m.qualityProfileId) : null}
                 />
               ))}
             </div>
@@ -257,6 +294,7 @@ export default function Movies() {
       {bulkEditOpen && <BulkEditModal mediaType="movie" count={selected.size} onSave={(patch) => bulkEdit.mutate(patch)} onClose={() => setBulkEditOpen(false)} busy={bulkEdit.isPending} />}
       {bulkTagsOpen && <BulkTagsModal onSave={(tagIds, mode) => bulkTags.mutate({ tagIds, mode })} onClose={() => setBulkTagsOpen(false)} busy={bulkTags.isPending} />}
       {bulkDeleteOpen && <BulkDeleteModal mediaType="movie" names={selectedTitles} onConfirm={(opts) => bulkDelete.mutate(opts)} onClose={() => setBulkDeleteOpen(false)} busy={bulkDelete.isPending} />}
+      {optionsOpen && <OptionsModal onClose={() => setOptionsOpen(false)} />}
     </div>
   );
 }

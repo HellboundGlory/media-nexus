@@ -13,6 +13,11 @@ import { LibraryScanService } from "../library-scan/library-scan.service";
 const listQuerySchema = z.object({
   search: z.string().optional(),
   monitored: z.enum(["true", "false"]).optional(),
+  // UNI-029: server-side sort + filter (movies has the "missing" filter; Monitored/Unmonitored
+  // come through `monitored`). Anything outside these enums is rejected with a clean 400.
+  sort: z.enum(["title", "year", "added", "monitored"]).optional(),
+  sortDir: z.enum(["asc", "desc"]).optional(),
+  filter: z.enum(["all", "missing"]).optional(),
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().max(100).optional(),
 });

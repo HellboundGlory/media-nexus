@@ -22,6 +22,12 @@ import type { RecycleBinService } from "./recycle-bin.service";
 export interface LibraryListQuery {
   search?: string;
   monitored?: string;
+  /** UNI-029: a recognized sort-column key (title/year/added/monitored) resolved via the
+   *  caller's sortColumns map; absent/unknown falls back to the default addedAt-descending order. */
+  sort?: string;
+  sortDir?: "asc" | "desc";
+  /** UNI-029: movies-only list filter, e.g. "missing" -> monitored && fileless. */
+  filter?: string;
   page?: number;
   pageSize?: number;
 }
@@ -58,16 +64,22 @@ export function combine(conds: (SQL | undefined)[]): SQL | undefined {
 /**
  * One paginated list query for any library table with a title and an addedAt column.
  * Runs the page and the count in parallel — they are independent.
+ * `opts.sortColumns` maps a requested `q.sort` key to the actual column (the caller supplies it
+ * because movie and series differ — movie "year" is `releaseDate`, series "year" is
+ * `firstAirYear`). An absent/unknown `q.sort` keeps the historical `desc(addedAt)` default.
  */
 export async function listPaged<T>(
   db: Db,
   table: SQLiteTable & { addedAt: SQLiteColumn },
   where: SQL | undefined,
   q: LibraryListQuery,
+  opts?: { sortColumns?: Record<string, SQLiteColumn> },
 ): Promise<PagedResult<T>> {
   const { page, pageSize, offset } = normalizePaging(q);
+  const sortCol = q.sort ? opts?.sortColumns?.[q.sort] : undefined;
+  const order = sortCol ? [q.sortDir === "asc" ? asc(sortCol) : desc(sortCol)] : [desc(table.addedAt)];
   const [rows, totals] = await Promise.all([
-    db.select().from(table).where(where).orderBy(desc(table.addedAt)).limit(pageSize).offset(offset),
+    db.select().from(table).where(where).orderBy(...order).limit(pageSize).offset(offset),
     db.select({ n: sql<number>`count(*)` }).from(table).where(where),
   ]);
   return { items: rows as T[], total: Number(totals[0]?.n ?? 0), page, pageSize };

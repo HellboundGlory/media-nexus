@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { extname, join } from "node:path";
 import { LocalStorageProvider } from "@medianexus/integrations";
-import { ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition, attachMatchedFormats } from "../media/library.helpers";
+import { ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition, attachMatchedFormats, combine } from "../media/library.helpers";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import type { RuntimeSettings } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
@@ -160,9 +160,23 @@ export class SeriesService {
     return attachMatchedFormats(this.db, files);
   }
 
-  async list(q: { search?: string; page?: number; pageSize?: number }) {
-    const where = titleSearchCondition(schema.series.title, q.search);
-    return listPaged<typeof schema.series.$inferSelect>(this.db, schema.series, where, q);
+  async list(q: { search?: string; monitored?: string; filter?: string; sort?: string; sortDir?: "asc" | "desc"; page?: number; pageSize?: number }) {
+    // UNI-029: Series supports All/Monitored/Unmonitored (via `monitored`), but deliberately has
+    // NO "missing" branch — the list response has no per-show file-completeness signal, so a
+    // missing filter would be a fake condition (the controller also rejects `filter=missing`).
+    const where = combine([
+      titleSearchCondition(schema.series.title, q.search),
+      q.monitored === "true" ? eq(schema.series.monitored, true) : undefined,
+      q.monitored === "false" ? eq(schema.series.monitored, false) : undefined,
+    ]);
+    return listPaged<typeof schema.series.$inferSelect>(this.db, schema.series, where, q, {
+      sortColumns: {
+        title: schema.series.title,
+        year: schema.series.firstAirYear,
+        added: schema.series.addedAt,
+        monitored: schema.series.monitored,
+      },
+    });
   }
 
   async get(id: string) {
