@@ -12,6 +12,7 @@ import { api } from "../../api/client";
 import type { RootFolder } from "../../api/types";
 import { Badge, EmptyState } from "../../lib/ui";
 import { Modal } from "../../components/Modal";
+import { PathField } from "../../components/PathField";
 
 const inputCls = "w-full rounded-lg border border-rule bg-transparent px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
 const numCls = "w-full rounded-lg border border-rule bg-transparent px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
@@ -140,7 +141,7 @@ export function MediaManagementTab() {
           </label>
           <label className="block">
             <span className={labelCls}>Recycle bin path</span>
-            <input value={d.recycleBinPath} onChange={(e) => set("recycleBinPath", e.target.value)} placeholder="/data/recycle-bin (empty = delete)" className={monoCls} />
+            <PathField value={d.recycleBinPath} onChange={(v) => set("recycleBinPath", v)} placeholder="/data/recycle-bin (empty = delete)" />
           </label>
           <label className="block">
             <span className={labelCls}>Recycle bin retention (days)</span>
@@ -148,7 +149,7 @@ export function MediaManagementTab() {
           </label>
           <label className="block">
             <span className={labelCls}>Downloads staging root</span>
-            <input value={d.downloadsPath} onChange={(e) => set("downloadsPath", e.target.value)} placeholder="/data/downloads" className={monoCls} />
+            <PathField value={d.downloadsPath} onChange={(v) => set("downloadsPath", v)} placeholder="/data/downloads" />
           </label>
         </div>
 
@@ -218,7 +219,7 @@ export function MediaManagementTab() {
           <div className="space-y-3 p-4">
             <label className="block">
               <span className={labelCls}>Path (must exist on disk)</span>
-              <input value={newRootPath} onChange={(e) => setNewRootPath(e.target.value)} placeholder="/data/media" className={monoCls} />
+              <PathField value={newRootPath} onChange={setNewRootPath} placeholder="/data/media" />
             </label>
             <label className="block">
               <span className={labelCls}>Name (optional)</span>

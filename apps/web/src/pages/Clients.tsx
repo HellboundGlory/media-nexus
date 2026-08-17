@@ -14,6 +14,7 @@ import { EmptyState, ErrorState } from "../lib/ui";
 import { Modal } from "../components/Modal";
 import { ProviderCard } from "../components/ProviderCard";
 import { TagPicker } from "../components/TagPicker";
+import { PathField } from "../components/PathField";
 
 const REDACTED = "[REDACTED]";
 
@@ -244,7 +245,7 @@ export default function Clients() {
           <div className="space-y-3">
             <label className="block">
               <span className={labelCls}>Downloads root (staging)</span>
-              <input defaultValue={downloads || (cfg.data?.["paths.downloads"] as string) || ""} onChange={(e) => setDownloads(e.target.value)} placeholder="/data/downloads" className={monoCls} />
+              <PathField value={downloads || (cfg.data?.["paths.downloads"] as string) || ""} onChange={setDownloads} placeholder="/data/downloads" />
             </label>
             <button
               disabled={savePaths.isPending}
@@ -481,7 +482,7 @@ export default function Clients() {
             </label>
             <label className="block">
               <span className={labelCls}>Local path (as this app sees it)</span>
-              <input value={rpmLocal} onChange={(e) => setRpmLocal(e.target.value)} placeholder="/mnt/downloads" className={monoCls} />
+              <PathField value={rpmLocal} onChange={setRpmLocal} placeholder="/mnt/downloads" />
             </label>
             {saveMapping.isError && <p className={errTxt}>{saveMapping.error instanceof Error ? saveMapping.error.message : "Save failed"}</p>}
           </div>

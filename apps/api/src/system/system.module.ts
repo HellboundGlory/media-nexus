@@ -6,6 +6,7 @@ import { ParseService } from "./parse.service";
 import { LogsService } from "./logs.service";
 import { LogBuffer, logBuffer } from "./log-buffer";
 import { LogFileWriter, logFileWriter } from "./log-file-writer";
+import { FilesystemService } from "./filesystem.service";
 import { UpdateCheckService } from "./update-check.service";
 import { SettingsModule } from "./settings.module";
 import { AdminGuard } from "../common/admin.guard";
@@ -16,10 +17,10 @@ import { BackupService } from "./backup.service";
   imports: [SettingsModule],
   providers: [
     SystemStatusService, AdminGuard, HousekeepingService, BackupService,
-    ParseService, LogsService, UpdateCheckService, { provide: LogBuffer, useValue: logBuffer },
+    ParseService, LogsService, UpdateCheckService, FilesystemService, { provide: LogBuffer, useValue: logBuffer },
     { provide: LogFileWriter, useValue: logFileWriter },
   ],
   controllers: [SystemController],
-  exports: [SystemStatusService, HousekeepingService, BackupService, LogBuffer, UpdateCheckService, LogFileWriter],
+  exports: [SystemStatusService, HousekeepingService, BackupService, LogBuffer, UpdateCheckService, LogFileWriter, FilesystemService],
 })
 export class SystemModule {}

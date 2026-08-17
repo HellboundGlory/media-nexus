@@ -6,9 +6,9 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, RotateCw, Eye, EyeOff, Copy, Check, Lock, Archive } from "lucide-react";
 import { api } from "../../api/client";
+import { PathField } from "../../components/PathField";
 
 const inputCls = "rounded-lg border border-rule bg-transparent px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
-const monoCls = "w-full rounded-lg border border-rule bg-transparent px-3 py-1.5 font-mono text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
 const labelCls = "mb-1 block text-xs text-ink-dim";
 
 // Backup settings draft (UNI-024) — the two real /system/config keys consumed by BackupService:
@@ -128,7 +128,7 @@ export function GeneralTab() {
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block">
             <span className={labelCls}>Backup folder</span>
-            <input value={bd.backupPath} onChange={(e) => setBd((p) => ({ ...p, backupPath: e.target.value }))} placeholder="/data/backups" className={monoCls} />
+            <PathField value={bd.backupPath} onChange={(v) => setBd((p) => ({ ...p, backupPath: v }))} placeholder="/data/backups" />
             <p className="mt-1 text-xs text-ink-dim">Leave empty to disable backups.</p>
           </label>
           <label className="block">

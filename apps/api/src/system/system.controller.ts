@@ -17,6 +17,7 @@ import { BackupService } from "./backup.service";
 import { ParseService } from "./parse.service";
 import { LogsService } from "./logs.service";
 import { LogFileWriter } from "./log-file-writer";
+import { FilesystemService } from "./filesystem.service";
 import { UpdateCheckService } from "./update-check.service";
 
 const upsertSchema = z.record(z.string(), z.unknown());
@@ -48,6 +49,7 @@ export class SystemController {
     private readonly parseSvc: ParseService,
     private readonly logsSvc: LogsService,
     private readonly logFileWriter: LogFileWriter,
+    private readonly filesystemSvc: FilesystemService,
     private readonly updateCheckSvc: UpdateCheckService,
     @Inject(DB_HANDLE_TOKEN) private readonly dbHandle: DbHandle,
   ) {}
@@ -125,6 +127,13 @@ export class SystemController {
       type: "application/octet-stream",
       disposition: `attachment; filename="${dl.name}"`,
     });
+  }
+
+  @Get("filesystem")
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "Browse the host filesystem (admin): list the subdirectories of the given path. Falls back to the nearest readable ancestor when the requested path doesn't exist / isn't a directory / isn't readable — the response 'path' is what was actually listed. Defaults to / when omitted." })
+  filesystem(@Query("path") path?: string) {
+    return this.filesystemSvc.list(path);
   }
 
   @Post("backups/upload")
