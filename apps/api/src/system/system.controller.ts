@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MIT
-import { Body, Controller, Get, Put, Query } from "@nestjs/common";
-import { ApiBody, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { Body, Controller, Get, Inject, Param, Post, Put, Query, StreamableFile, UploadedFile, UseInterceptors } from "@nestjs/common";
+import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import { ApiError, runtimeSettingsSchema } from "@medianexus/shared";
 import { UseGuards } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { validateNamingTemplate, namingPreview as buildNamingPreview } from "@medianexus/domain";
+import type { DbHandle } from "@medianexus/database";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { redactDeep } from "../common/redact";
 import { AdminGuard } from "../common/admin.guard";
+import { DB_HANDLE_TOKEN } from "../db/database.module";
 import { SystemStatusService } from "./system-status.service";
 import { ConfigService } from "./config.service";
 import { BackupService } from "./backup.service";
@@ -16,6 +19,23 @@ import { LogsService } from "./logs.service";
 import { UpdateCheckService } from "./update-check.service";
 
 const upsertSchema = z.record(z.string(), z.unknown());
+
+// Multer cap for the LAN-admin upload endpoint. Comfortably fits a real library DB (the
+// *arr single-file DBs are typically tens of MB to a few hundred MB; this leaves headroom).
+const UPLOAD_MAX_BYTES = 1024 * 1024 * 1024; // 1 GiB
+
+// Give the restore HTTP response time to flush to the client on a LAN before the process
+// dies. Nest's shutdown hook does NOT call process.exit() itself, so we close the DB handle
+// and exit explicitly — docker compose's `restart: unless-stopped` relaunches the container.
+const RESTART_DELAY_MS = 600;
+
+/** Minimal structural shape of the file multer hands to the upload handler (no @types/multer
+ *  is installed; this is the only subset we read). */
+interface UploadedBackupFile {
+  buffer: Buffer;
+  originalname: string;
+  size: number;
+}
 
 @ApiTags("system")
 @Controller("api/v1/system")
@@ -27,6 +47,7 @@ export class SystemController {
     private readonly parseSvc: ParseService,
     private readonly logsSvc: LogsService,
     private readonly updateCheckSvc: UpdateCheckService,
+    @Inject(DB_HANDLE_TOKEN) private readonly dbHandle: DbHandle,
   ) {}
 
   @Get("logs")
@@ -54,6 +75,48 @@ export class SystemController {
   @ApiOperation({ summary: "List backup files produced by the system.backup job (admin)" })
   async backups() {
     return this.backupSvc.list();
+  }
+
+  @Post("backups/:name/restore")
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "Restore the named backup in place (admin). Replaces the ENTIRE live database, then the app restarts automatically." })
+  async restoreBackup(@Param("name") name: string) {
+    // The file swap + safety copy + audit insert all complete inside restore() before it
+    // returns, so a rejection here means the live DB was never touched. Only after the swap
+    // succeeds do we arm the restart.
+    const result = await this.backupSvc.restore(name);
+    setTimeout(() => {
+      try {
+        this.dbHandle.close();
+      } catch {
+        /* connection already gone */
+      }
+      process.exit(0);
+    }, RESTART_DELAY_MS);
+    return result;
+  }
+
+  @Get("backups/:name/download")
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "Download the named backup file (admin)" })
+  async downloadBackup(@Param("name") name: string) {
+    const dl = await this.backupSvc.openDownload(name);
+    return new StreamableFile(dl.stream, {
+      type: "application/octet-stream",
+      disposition: `attachment; filename="${dl.name}"`,
+    });
+  }
+
+  @Post("backups/upload")
+  @UseGuards(AdminGuard)
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: UPLOAD_MAX_BYTES } }))
+  @ApiConsumes("multipart/form-data")
+  @ApiOperation({ summary: "Upload a MediaNexus backup file (admin). Validated then added to the backups list; restoring it is a separate deliberate action." })
+  async uploadBackup(@UploadedFile() file: UploadedBackupFile) {
+    if (!file || !Buffer.isBuffer(file.buffer) || file.size === 0) {
+      throw new ApiError({ code: "VALIDATION_ERROR", message: "No file uploaded (expected multipart field 'file')" });
+    }
+    return this.backupSvc.upload(file.buffer, file.originalname);
   }
 
   @Get("status")

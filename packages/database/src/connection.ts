@@ -29,6 +29,10 @@ export interface DbHandle {
   close: () => void;
   /** Dialect of the live connection, for deterministic per-dialect branching. */
   dialect: DbDialect;
+  /** Absolute path of the live SQLite database file. `undefined` for in-memory DBs and
+   *  on Postgres (which has no single-file counterpart). Needed by restore to swap a
+   *  backup in over the live file. */
+  path?: string;
   /** Apply pending migrations. Awaited by the bootstrap factory — Postgres's migrator is
    *  async (SQLite's runs synchronously, but returning a resolved promise is harmless). */
   runMigrations: () => Promise<void>;
@@ -116,6 +120,7 @@ export function createDb(url: string): DbHandle {
   return {
     db,
     dialect: "sqlite",
+    path: filePath === ":memory:" ? undefined : resolve(filePath),
     close: () => sqlite.close(),
     runMigrations: async () => {
       sqliteMigrate(db, { migrationsFolder: MIGRATIONS_DIR });
@@ -129,3 +134,36 @@ export function createDb(url: string): DbHandle {
 }
 
 export type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+
+/**
+ * Validate that `filePath` is a genuine MediaNexus SQLite backup BEFORE it is allowed to
+ * touch the live database (restore) or be accepted into the backup folder (upload). Opens
+ * the candidate read-only, verifies the `setting` table (present in every migrated
+ * MediaNexus DB) exists in `sqlite_master`, and runs a full `integrity_check`.
+ *
+ * The live database is never opened here — this is a static check of an off-DB file, and
+ * it always closes the candidate before returning. Throws a plain `Error` with a
+ * descriptive message on any failure; callers map it to an `ApiError` (BACKUPRESTORE-1).
+ */
+export function validateBackupFile(filePath: string): void {
+  let db: Database.Database;
+  try {
+    db = new Database(filePath, { readonly: true, fileMustExist: true });
+  } catch (err) {
+    throw new Error(`not a readable SQLite file: ${(err as Error).message}`, { cause: err });
+  }
+  try {
+    const setting = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'setting'")
+      .get();
+    if (!setting) {
+      throw new Error("not a MediaNexus backup (missing the 'setting' table)");
+    }
+    const integrity = db.pragma("integrity_check", { simple: true }) as unknown;
+    if (integrity !== "ok") {
+      throw new Error(`corrupt database (integrity check: ${String(integrity)})`);
+    }
+  } finally {
+    db.close();
+  }
+}

@@ -81,7 +81,22 @@ Beyond the manual `data.bak` copy above (for upgrades), MediaNexus can back itse
   tables (including credentials — see [docs/security.md](../security.md) on credentials being stored in plaintext
   today), so it's a complete, restorable snapshot on its own.
 
-**To restore a backup** (manual — there's no in-app restore button, matching how upgrades themselves are handled):
+**To restore a backup** — the in-app flow (System → Backup) is now the normal path:
+
+- **Restore** a listed backup: the per-row restore icon opens a confirm dialog. It replaces the
+  *entire* live database with the selected backup (a trim-exempt **safety copy of the current
+  database is written automatically first** into the same backup folder), then the app restarts
+  itself and the UI reloads when it returns.
+- **Download** any listed backup (`GET /api/v1/system/backups/:name/download`) to move it off
+  the host, and **Upload** a backup (`POST /api/v1/system/backups/upload`, multipart field
+  `file`) to add one from another host. Uploaded backups are validated (read-only open + a
+  `setting`-table marker + `integrity_check`) *before* being accepted, and are deliberately
+  left out of the retention trim so an off-box safety net is never silently deleted.
+- Restoring restarts the process via the container's `restart: unless-stopped`, matching
+  Radarr's own "Restore / Restart / Reload" behavior.
+
+The manual file-swap procedure below is still valid (e.g. restoring a backup that was never
+run through the app) and doubles as the fallback for a host that won't come back:
 
 1. Stop the app (`docker compose down`, or stop the process).
 2. Replace the live database file (`DATABASE_URL`'s path, `./data/media-nexus.db` by default) with the backup file
