@@ -24,6 +24,29 @@ const manageApplyBodySchema = z.object({
   importUntracked: z.array(z.string()).default([]),
 });
 
+// ---- Bulk actions (UNI-020): one request fans out over the existing single-item update()/
+// remove(). The per-item edit patch reuses updateMovieSchema (all-optional = "No Change" when a
+// field is omitted) via .pick(), excluding title/folderName/tags which bulk-edit doesn't touch
+// (tags has its own endpoint; title/folderName bulk-editing makes no sense).
+const bulkEditMovieSchema = updateMovieSchema.pick({
+  monitored: true,
+  qualityProfileId: true,
+  rootFolderPath: true,
+  minimumAvailability: true,
+}).extend({ ids: z.array(z.string()).min(1, "select at least one movie") });
+
+const bulkTagsSchema = z.object({
+  ids: z.array(z.string()).min(1, "select at least one movie"),
+  tagIds: z.array(z.string()).default([]),
+  mode: z.enum(["add", "remove", "replace"]),
+});
+
+const bulkDeleteMovieSchema = z.object({
+  ids: z.array(z.string()).min(1, "select at least one movie"),
+  deleteFiles: z.boolean().optional(),
+  addImportExclusion: z.boolean().optional(),
+});
+
 @ApiTags("movies")
 @Controller("api/v1/movies")
 export class MoviesController {
@@ -90,6 +113,25 @@ export class MoviesController {
   @ApiOperation({ summary: "Add a movie to the library" })
   create(@Body(new ZodValidationPipe(createMovieSchema)) body: CreateMovie) {
     return this.movies.create(body);
+  }
+
+  @Post("bulk-edit")
+  @ApiOperation({ summary: "Bulk-edit selected movies (UNI-020): only fields present are applied per item; per-id success/failure is reported" })
+  bulkEdit(@Body(new ZodValidationPipe(bulkEditMovieSchema)) body: z.infer<typeof bulkEditMovieSchema>) {
+    const { ids, ...patch } = body;
+    return this.movies.bulkEdit(ids, patch);
+  }
+
+  @Post("bulk-tags")
+  @ApiOperation({ summary: "Bulk-set tags on selected movies (UNI-020): add/remove/replace; empty tagIds clears on replace" })
+  bulkTags(@Body(new ZodValidationPipe(bulkTagsSchema)) body: { ids: string[]; tagIds: string[]; mode: "add" | "remove" | "replace" }) {
+    return this.movies.bulkTags(body.ids, body.tagIds, body.mode);
+  }
+
+  @Post("bulk-delete")
+  @ApiOperation({ summary: "Remove selected movies (UNI-020): per-id success/failure; opt-in deleteFiles/addImportExclusion forwarded per item" })
+  bulkDelete(@Body(new ZodValidationPipe(bulkDeleteMovieSchema)) body: { ids: string[]; deleteFiles?: boolean; addImportExclusion?: boolean }) {
+    return this.movies.bulkDelete(body.ids, { deleteFiles: body.deleteFiles, addImportExclusion: body.addImportExclusion });
   }
 
   @Put(":id")

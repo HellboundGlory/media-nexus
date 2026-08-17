@@ -279,6 +279,51 @@ export class MoviesService {
     });
   }
 
+  /** Bulk operations (UNI-020) — fan out over the existing single-item methods (update()/
+   *  remove()), never re-implementing their logic. Per-id success/failure is aggregated so a
+   *  single bad id in a large selection is surfaced rather than silently dropping the batch. */
+  async bulkEdit(ids: string[], patch: Partial<UpdateMovieBody>): Promise<{ updated: string[]; failed: { id: string; error: string }[] }> {
+    const updated: string[] = [];
+    const failed: { id: string; error: string }[] = [];
+    for (const id of ids) {
+      try { await this.update(id, patch); updated.push(id); }
+      catch (err) { failed.push({ id, error: (err as Error).message }); }
+    }
+    return { updated, failed };
+  }
+
+  /** Set tags across a selection. Add = union, Remove = set-difference, Replace = overwrite
+   *  (empty tagIds clears). Writes through update(id, { tags }) so auto-tag rules layer on
+   *  exactly as they do for a single-item tag edit. */
+  async bulkTags(ids: string[], tagIds: string[], mode: "add" | "remove" | "replace"): Promise<{ updated: string[]; failed: { id: string; error: string }[] }> {
+    const updated: string[] = [];
+    const failed: { id: string; error: string }[] = [];
+    for (const id of ids) {
+      try {
+        const row = await this.get(id);
+        const current = row.tags ?? [];
+        let next: string[];
+        if (mode === "add") next = [...new Set([...current, ...tagIds])];
+        else if (mode === "remove") next = current.filter((t) => !tagIds.includes(t));
+        else next = [...tagIds]; // replace
+        await this.update(id, { tags: next });
+        updated.push(id);
+      } catch (err) { failed.push({ id, error: (err as Error).message }); }
+    }
+    return { updated, failed };
+  }
+
+  /** Remove a whole selection at once, forwarding the same opt-in delete options each item. */
+  async bulkDelete(ids: string[], opts: { deleteFiles?: boolean; addImportExclusion?: boolean }): Promise<{ updated: string[]; failed: { id: string; error: string }[] }> {
+    const updated: string[] = [];
+    const failed: { id: string; error: string }[] = [];
+    for (const id of ids) {
+      try { await this.remove(id, opts); updated.push(id); }
+      catch (err) { failed.push({ id, error: (err as Error).message }); }
+    }
+    return { updated, failed };
+  }
+
   /** Want/Missing: monitored movies without a file, past their minimum-availability gate
    *  (roadmap C1). The gate depends on Date.now(), so it can't be pushed into SQL —
    *  overfetch past `limit` and filter in JS, mirroring the shape of

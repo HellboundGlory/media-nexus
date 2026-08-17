@@ -34,6 +34,28 @@ const manageApplyBodySchema = z.object({
   importUntracked: z.array(z.string()).default([]),
 });
 
+// ---- Bulk actions (UNI-020): fan out over existing single-item update()/remove(). Reuses
+// updateSeriesSchema's all-optional "No Change" patch via .pick() — title/folderName/tags are
+// excluded (tags has its own endpoint; title/folderName bulk-editing makes no sense).
+const bulkEditSeriesSchema = updateSeriesSchema.pick({
+  monitored: true,
+  qualityProfileId: true,
+  rootFolderPath: true,
+  seriesType: true,
+}).extend({ ids: z.array(z.string()).min(1, "select at least one series") });
+
+const bulkTagsSchema = z.object({
+  ids: z.array(z.string()).min(1, "select at least one series"),
+  tagIds: z.array(z.string()).default([]),
+  mode: z.enum(["add", "remove", "replace"]),
+});
+
+const bulkDeleteSeriesSchema = z.object({
+  ids: z.array(z.string()).min(1, "select at least one series"),
+  deleteFiles: z.boolean().optional(),
+  addImportExclusion: z.boolean().optional(),
+});
+
 @ApiTags("series")
 @Controller("api/v1/series")
 export class SeriesController {
@@ -64,6 +86,25 @@ export class SeriesController {
   @ApiOperation({ summary: "Add a series to the library" })
   create(@Body(new ZodValidationPipe(createSeriesSchema)) body: CreateSeries) {
     return this.series.create(body);
+  }
+
+  @Post("bulk-edit")
+  @ApiOperation({ summary: "Bulk-edit selected series (UNI-020): only fields present are applied per item; per-id success/failure is reported" })
+  bulkEdit(@Body(new ZodValidationPipe(bulkEditSeriesSchema)) body: z.infer<typeof bulkEditSeriesSchema>) {
+    const { ids, ...patch } = body;
+    return this.series.bulkEdit(ids, patch);
+  }
+
+  @Post("bulk-tags")
+  @ApiOperation({ summary: "Bulk-set tags on selected series (UNI-020): add/remove/replace; empty tagIds clears on replace" })
+  bulkTags(@Body(new ZodValidationPipe(bulkTagsSchema)) body: { ids: string[]; tagIds: string[]; mode: "add" | "remove" | "replace" }) {
+    return this.series.bulkTags(body.ids, body.tagIds, body.mode);
+  }
+
+  @Post("bulk-delete")
+  @ApiOperation({ summary: "Remove selected series (UNI-020): per-id success/failure; opt-in deleteFiles/addImportExclusion forwarded per item" })
+  bulkDelete(@Body(new ZodValidationPipe(bulkDeleteSeriesSchema)) body: { ids: string[]; deleteFiles?: boolean; addImportExclusion?: boolean }) {
+    return this.series.bulkDelete(body.ids, { deleteFiles: body.deleteFiles, addImportExclusion: body.addImportExclusion });
   }
 
   @Put(":id")
