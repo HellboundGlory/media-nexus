@@ -427,6 +427,7 @@ export interface QualityRegistryItem {
   title: string;
   source: string;
   resolution: string;
+  modifier: string;
 }
 
 /** A quality profile row as returned by GET /quality-profiles. `items` is an ordered
@@ -449,10 +450,19 @@ export interface QualityProfile {
 
 /** The discriminated union a custom format spec can be (mirrors customFormatSpecSchema). */
 export type CustomFormatSpec =
-  | { type: "term"; term: string; useRegex: boolean; negate: boolean; caseSensitive: boolean }
-  | { type: "size"; min?: number; max?: number; negate: boolean; caseSensitive: boolean }
-  | { type: "language"; language: string; negate: boolean; caseSensitive: boolean }
-  | { type: "indexer"; indexerId: string; negate: boolean; caseSensitive: boolean };
+  | { type: "term"; term: string; useRegex: boolean; negate: boolean; required?: boolean; caseSensitive: boolean }
+  | { type: "size"; min?: number; max?: number; negate: boolean; required?: boolean; caseSensitive: boolean }
+  | { type: "language"; language: string; negate: boolean; required?: boolean; caseSensitive: boolean }
+  | { type: "indexer"; indexerId: string; negate: boolean; required?: boolean; caseSensitive: boolean }
+  | { type: "resolution"; resolution: ResolutionValue; negate: boolean; required?: boolean; caseSensitive: boolean }
+  | { type: "source"; source: SourceValue; negate: boolean; required?: boolean; caseSensitive: boolean }
+  | { type: "modifier"; modifier: ModifierValue; negate: boolean; required?: boolean; caseSensitive: boolean }
+  | { type: "releaseGroup"; releaseGroup: string; useRegex?: boolean; negate: boolean; required?: boolean; caseSensitive: boolean }
+  | { type: "releaseType"; releaseType: "single" | "multi" | "season"; negate: boolean; required?: boolean; caseSensitive: boolean };
+
+export type ResolutionValue = "unknown" | "480p" | "576p" | "720p" | "1080p" | "2160p";
+export type SourceValue = "unknown" | "sd" | "dvd" | "hdtv" | "web" | "webdl" | "webrip" | "bluray";
+export type ModifierValue = "none" | "brdisk" | "remux";
 
 export interface CustomFormat {
   id: string;

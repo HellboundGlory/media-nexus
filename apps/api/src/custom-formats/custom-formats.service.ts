@@ -5,7 +5,7 @@ import { newEntityId, ApiError } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
-import type { CustomFormatBody, UpdateCustomFormatBody } from "@medianexus/domain";
+import { customFormatToUpstream, upstreamToCustomFormat, type CustomFormatBody, type UpdateCustomFormatBody, type UpstreamCustomFormat } from "@medianexus/domain";
 
 /**
  * Native CRUD for custom formats (roadmap P2, gap report B4/D6). A custom format is a
@@ -60,5 +60,69 @@ export class CustomFormatsService {
     // format-catalog concern, and matches the tags module's write-least behaviour.
     await this.db.delete(schema.customFormat).where(eq(schema.customFormat.id, id));
     return { removed: id };
+  }
+
+  /** Serialize one format into the upstream (Sonarr/Radarr) wire shape for export. */
+  async exportFormat(id: string) {
+    const row = await this.get(id);
+    return {
+      name: row.name,
+      includeCustomFormatWhenRenaming: false,
+      specifications: customFormatToUpstream(row.specs),
+    };
+  }
+
+  /** Import an upstream-shaped format. The mapper reports any unsupported conditions
+   *  (never silently dropped); a body that yields zero supported conditions is rejected
+   *  so an import can't silently become a no-op. */
+  async importFormat(body: UpstreamCustomFormat) {
+    const parsed = upstreamToCustomFormat(body);
+    if (!parsed.name.trim()) throw new ApiError({ code: "VALIDATION_ERROR", message: "Imported format must have a name" });
+    if (parsed.specs.length === 0) {
+      throw new ApiError({
+        code: "VALIDATION_ERROR",
+        message: `No supported conditions to import (${parsed.skipped.length} skipped: ${parsed.skipped.map((s) => s.implementation).join(", ")})`,
+      });
+    }
+    const dup = await this.db.select().from(schema.customFormat).where(eq(schema.customFormat.name, parsed.name)).limit(1);
+    if (dup[0]) throw new ApiError({ code: "CONFLICT", message: `Custom format "${parsed.name}" already exists` });
+    const now = new Date().toISOString();
+    const row = { id: newEntityId("cf"), name: parsed.name, specs: parsed.specs, createdAt: now, updatedAt: now };
+    await this.db.insert(schema.customFormat).values(row);
+    return { format: row, imported: parsed.specs.length, skipped: parsed.skipped };
+  }
+
+  // --- Upstream-wire views (shared with the Sonarr/Radarr compat surface, UNI-026) ---
+  async listUpstream() {
+    const rows = await this.list();
+    return rows.map((r) => ({ id: r.id, name: r.name, includeCustomFormatWhenRenaming: false, specifications: customFormatToUpstream(r.specs) }));
+  }
+  async getUpstream(id: string) {
+    const r = await this.get(id);
+    return { id: r.id, name: r.name, includeCustomFormatWhenRenaming: false, specifications: customFormatToUpstream(r.specs) };
+  }
+  async createFromUpstream(body: UpstreamCustomFormat) {
+    const res = await this.importFormat(body);
+    return {
+      id: res.format.id, name: res.format.name, includeCustomFormatWhenRenaming: false,
+      specifications: customFormatToUpstream(res.format.specs),
+      // Honest per-condition report — surfaced as extra (non-wire) fields so a compat
+      // client is never left wondering about an unsupported condition it sent.
+      imported: res.imported,
+      skipped: res.skipped,
+    };
+  }
+  async updateFromUpstream(id: string, body: UpstreamCustomFormat) {
+    await this.get(id);
+    const parsed = upstreamToCustomFormat(body);
+    if (!parsed.name.trim()) throw new ApiError({ code: "VALIDATION_ERROR", message: "Imported format must have a name" });
+    if (parsed.specs.length === 0) {
+      throw new ApiError({
+        code: "VALIDATION_ERROR",
+        message: `No supported conditions to update (${parsed.skipped.length} skipped: ${parsed.skipped.map((s) => s.implementation).join(", ")})`,
+      });
+    }
+    const updated = await this.update(id, { name: parsed.name, specs: parsed.specs as never });
+    return { id, name: updated.name, includeCustomFormatWhenRenaming: false, specifications: customFormatToUpstream(updated.specs) };
   }
 }

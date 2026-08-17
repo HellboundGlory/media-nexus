@@ -52,7 +52,7 @@ describe("GET /api/v1/system/parse", () => {
     expect(r.episodeInfo.episodes).toEqual([2]);
     expect(r.episodeInfo.confidence).toBe(1);
     expect(r.quality.quality.resolution).toBe("1080p");
-    expect(r.quality.quality.source).toBe("web");
+    expect(r.quality.quality.source).toBe("webdl");
     expect(r.matchedSeriesId).toBe("s1");
   });
 

@@ -9,7 +9,7 @@ describe("episode release parser", () => {
     expect(m.episodes).toEqual([16]);
     expect(m.isMultiEpisode).toBe(false);
     expect(m.quality.resolution).toBe("1080p");
-    expect(m.quality.source).toBe("web");
+    expect(m.quality.source).toBe("webdl");
     expect(m.confidence).toBe(1);
     expect(normalizeReleaseSeriesName(m.seriesTitle ?? "")).toBe("breaking bad");
   });

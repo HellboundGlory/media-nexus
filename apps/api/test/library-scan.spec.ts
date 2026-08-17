@@ -82,7 +82,7 @@ describe("LibraryScanService — movie", () => {
     expect(movie.hasFile).toBe(true);
     const files = await h.db.select().from(schema.mediaFile).where(eq(schema.mediaFile.mediaId, "m1"));
     expect(files).toHaveLength(1);
-    expect(files[0].quality).toEqual({ source: "bluray", resolution: "1080p", edition: "" });
+    expect(files[0].quality).toEqual({ source: "bluray", resolution: "1080p", edition: "", modifier: "none" });
   });
 
   it("re-scanning an already-tracked movie is a no-op", async () => {

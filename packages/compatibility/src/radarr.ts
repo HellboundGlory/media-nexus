@@ -2,7 +2,7 @@
 /** Radarr v3-compatible surface builder (native → Radarr wire shapes). */
 import { createSurface, type CompatRoute, type CompatContext } from "./types";
 import { json } from "./endpoints";
-import type { CompatMovie, CompatQualityProfile } from "./wire-shapes";
+import type { CompatMovie, CompatQualityProfile, CompatCustomFormat } from "./wire-shapes";
 
 export interface RadarrNativeSource {
   appVersion(): string; appName(): string; started(): string; databaseVersion(): string;
@@ -12,7 +12,31 @@ export interface RadarrNativeSource {
   updateMovie(id: string, input: Record<string, unknown>): Promise<CompatMovie | null>;
   removeMovie(id: string): Promise<void>;
   qualityProfiles(): Promise<CompatQualityProfile[]>;
+  listCustomFormats(): Promise<CompatCustomFormat[]>;
+  createCustomFormat(input: Record<string, unknown>): Promise<CompatCustomFormat>;
+  updateCustomFormat(id: string, input: Record<string, unknown>): Promise<CompatCustomFormat | null>;
+  deleteCustomFormat(id: string): Promise<void>;
+  customFormatSchema(): Promise<unknown>;
   runCommand(name: string, body: Record<string, unknown>): Promise<{ id: string; name: string }>;
+}
+
+function customFormatRoutes(s: RadarrNativeSource): CompatRoute[] {
+  return [
+    { method: "GET", path: "/customformat", handler: async () => json(await s.listCustomFormats()) },
+    { method: "POST", path: "/customformat", handler: async (ctx) => json(await s.createCustomFormat((ctx.body ?? {}) as Record<string, unknown>), 201) },
+    {
+      method: "PUT", path: "/customformat/:id",
+      handler: async (ctx) => {
+        const row = await s.updateCustomFormat(ctx.params.id, (ctx.body ?? {}) as Record<string, unknown>);
+        return row ? json(row) : json({ message: "Not Found" }, 404);
+      },
+    },
+    {
+      method: "DELETE", path: "/customformat/:id",
+      handler: async (ctx) => { await s.deleteCustomFormat(ctx.params.id); return json(null, 200); },
+    },
+    { method: "GET", path: "/customformat/schema", handler: async () => json(await s.customFormatSchema()) },
+  ];
 }
 
 function routes(s: RadarrNativeSource): CompatRoute[] {
@@ -63,7 +87,7 @@ function routes(s: RadarrNativeSource): CompatRoute[] {
       return json(await s.runCommand(body.name, body), 201);
     },
   };
-  return [status, list, get, add, update, del, qp, command];
+  return [status, list, get, add, update, del, qp, ...customFormatRoutes(s), command];
 }
 
 export function buildRadarrV3Surface(s: RadarrNativeSource) {

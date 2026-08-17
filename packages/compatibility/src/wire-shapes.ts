@@ -45,6 +45,22 @@ export interface CompatQualityProfile {
   cutoffFormatScore?: number;
 }
 
+/** Upstream CustomFormatResource (Sonarr/Radarr v3 /customformat) — a custom format with
+ *  its conditions in the upstream `implementation` + `fields.value` wire shape (UNI-026).
+ *  Structurally compatible with the domain's UpstreamCustomFormat + id. */
+export interface CompatCustomFormat {
+  id: string;
+  name: string;
+  includeCustomFormatWhenRenaming: boolean;
+  specifications: {
+    name?: string;
+    implementation: string;
+    negate?: boolean;
+    required?: boolean;
+    fields?: Record<string, unknown>;
+  }[];
+}
+
 export interface CompatEpisode {
   seriesId: string;
   tvdbId?: number | null;

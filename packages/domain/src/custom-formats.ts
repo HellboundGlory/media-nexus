@@ -1,18 +1,33 @@
 // SPDX-License-Identifier: MIT
 import { z } from "zod";
 import type { Release } from "./release";
-import type { Quality } from "./quality";
-import { parseLanguages } from "./parser";
+import { qualityModifierSchema, qualitySourceSchema, resolutionSchema, type Quality, type QualitySource, type QualityModifier, type Resolution } from "./quality";
+import { parseLanguages, parseReleaseGroup } from "./parser";
+import { parseEpisodeRelease } from "./episodes";
 
 /**
- * Custom-format matching and scoring (roadmap P2, gap report B4 remainder + D6).
+ * Custom-format matching and scoring (roadmap P2, gap report B4/D6 + SON-025/RAD-010).
  *
- * A custom format is a named collection of `specs`. Each spec tests one thing about
- * a parsed release — a title term/regex, a size range, a language, or the indexer it
- * came from. A format *matches* a release when every one of its specs passes
- * (respecting each spec's `negate`). Each quality profile then assigns the format an
- * integer score; a release's total `formatScore` for a profile is the sum of the
- * scores of every format that matches it.
+ * A custom format is a named collection of `specs`. Each spec tests one thing about a
+ * parsed release — a title term/regex, a size range, a language, a source/resolution/
+ * modifier, a release group, a release type, or the indexer it came from.
+ *
+ * MATCHING ALGORITHM (SON-025 — this is the real upstream algorithm, from
+ * `CustomFormatCalculationService.cs` + `SpecificationMatchesGroup.cs`):
+ *   - A format's specs are grouped by their TYPE (all Source specs together, etc.).
+ *   - A group "DidMatch" = `!( any(required member did NOT match) || all members did NOT match )`.
+ *     i.e. same-type specs are OR'd together UNLESS one is marked `required`, in which case
+ *     that member must also pass. Both conditions apply: a required member failing kills the
+ *     group regardless of others, AND at least one member must have matched.
+ *   - `negate` is applied per-spec BEFORE grouping (matchSpec returns the already-negated
+ *     boolean); the grouping/required logic only ever sees that final per-spec boolean.
+ *   - The format matches only if EVERY group's DidMatch is true (AND across different types).
+ *
+ *   The historical flat-AND `matchFormat` (every spec must pass, all types) made it
+ *   impossible for a real tiered format to ever match — e.g. a format with N non-required
+ *   same-type ReleaseGroup specs could never match any release (a release has one group).
+ *   `required` was added (defaulting TRUE so pre-existing single-member formats behave
+ *   exactly as before) to express the OR-sets community formats rely on.
  *
  * This is the pure, DB-free core upstream Sonarr/Radarr express as
  * `CustomFormatCalculationService` + the individual `*Specification` classes — here
@@ -23,8 +38,9 @@ import { parseLanguages } from "./parser";
  * Specs evaluate against a `CustomFormatMatchInput` — the parts of a release the
  * specs are allowed to look at. Releases supply the full view. An *existing library
  * file* only has what `media_file` stores (its filename, size, parsed quality), so it
- * is scored from a reduced view: title-term and size specs can match, but language
- * and indexer specs cannot (we no longer have that metadata) — a conservative floor.
+ * is scored from a reduced view: title-term, size, release-group and release-type
+ * specs can match from the filename, but language and indexer specs cannot — a
+ * conservative floor.
  */
 
 export const customFormatSpecSchema = z.discriminatedUnion("type", [
@@ -36,6 +52,8 @@ export const customFormatSpecSchema = z.discriminatedUnion("type", [
     useRegex: z.boolean().default(false),
     /** Invert the match — the format matches when the term is NOT present. */
     negate: z.boolean().default(false),
+    /** This member must pass for its same-type group to pass (see algorithm above). */
+    required: z.boolean().default(true),
     caseSensitive: z.boolean().default(false),
   }),
   z.object({
@@ -45,6 +63,7 @@ export const customFormatSpecSchema = z.discriminatedUnion("type", [
     /** Inclusive upper bound in bytes. */
     max: z.number().nonnegative().optional(),
     negate: z.boolean().default(false),
+    required: z.boolean().default(true),
     caseSensitive: z.boolean().default(false),
   }),
   z.object({
@@ -52,6 +71,7 @@ export const customFormatSpecSchema = z.discriminatedUnion("type", [
     /** ISO 639-1 / 639-2 code present on the release (e.g. "en", "fr", "de"). */
     language: z.string().min(1),
     negate: z.boolean().default(false),
+    required: z.boolean().default(true),
     caseSensitive: z.boolean().default(false),
   }),
   z.object({
@@ -59,10 +79,67 @@ export const customFormatSpecSchema = z.discriminatedUnion("type", [
     /** Indexer id the release must (or must not) have come from. */
     indexerId: z.string().min(1),
     negate: z.boolean().default(false),
+    required: z.boolean().default(true),
+    caseSensitive: z.boolean().default(false),
+  }),
+  z.object({
+    type: z.literal("resolution"),
+    /** Release resolution the spec matches (compared to input.quality.resolution). */
+    resolution: resolutionSchema,
+    negate: z.boolean().default(false),
+    required: z.boolean().default(true),
+    caseSensitive: z.boolean().default(false),
+  }),
+  z.object({
+    type: z.literal("source"),
+    /** Release source the spec matches (compared to input.quality.source). "Web"/"WebDL"/
+     *  "WebRip"/"Bluray"/etc. — the RAD-010 granular values. */
+    source: qualitySourceSchema,
+    negate: z.boolean().default(false),
+    required: z.boolean().default(true),
+    caseSensitive: z.boolean().default(false),
+  }),
+  z.object({
+    type: z.literal("modifier"),
+    /** Release modifier the spec matches (compared to input.quality.modifier): none/brdisk/
+     *  remux. Lets "Not Remux" / "Full Disc (BRDISK)" be expressed as conditions. */
+    modifier: qualityModifierSchema,
+    negate: z.boolean().default(false),
+    required: z.boolean().default(true),
+    caseSensitive: z.boolean().default(false),
+  }),
+  z.object({
+    type: z.literal("releaseGroup"),
+    /** The trailing release group token (e.g. "DON", "RARBG") or, with useRegex, a regex
+     *  pattern the parsed group is matched against (upstream's ReleaseGroupSpecification
+     *  value is always a regex). */
+    releaseGroup: z.string().min(1),
+    useRegex: z.boolean().default(false),
+    negate: z.boolean().default(false),
+    required: z.boolean().default(true),
+    caseSensitive: z.boolean().default(false),
+  }),
+  z.object({
+    type: z.literal("releaseType"),
+    /** Series-only: single episode / multi-episode / season pack. A movie release has no
+     *  release type and never satisfies this spec (see releaseTypeMatches). */
+    releaseType: z.enum(["single", "multi", "season"]),
+    negate: z.boolean().default(false),
+    required: z.boolean().default(true),
     caseSensitive: z.boolean().default(false),
   }),
 ]);
-export type CustomFormatSpec = z.infer<typeof customFormatSpecSchema>;
+export type CustomFormatSpec =
+  | { type: "term"; term: string; useRegex?: boolean; negate?: boolean; required?: boolean; caseSensitive?: boolean }
+  | { type: "size"; min?: number; max?: number; negate?: boolean; required?: boolean; caseSensitive?: boolean }
+  | { type: "language"; language: string; negate?: boolean; required?: boolean; caseSensitive?: boolean }
+  | { type: "indexer"; indexerId: string; negate?: boolean; required?: boolean; caseSensitive?: boolean }
+  | { type: "resolution"; resolution: Resolution; negate?: boolean; required?: boolean; caseSensitive?: boolean }
+  | { type: "source"; source: QualitySource; negate?: boolean; required?: boolean; caseSensitive?: boolean }
+  | { type: "modifier"; modifier: QualityModifier; negate?: boolean; required?: boolean; caseSensitive?: boolean }
+  | { type: "releaseGroup"; releaseGroup: string; useRegex?: boolean; negate?: boolean; required?: boolean; caseSensitive?: boolean }
+  | { type: "releaseType"; releaseType: ReleaseTypeValue; negate?: boolean; required?: boolean; caseSensitive?: boolean };
+export type ReleaseTypeValue = "single" | "multi" | "season";
 
 export const customFormatSchema = z.object({
   name: z.string().min(1),
@@ -96,6 +173,12 @@ export interface CustomFormatMatchInput {
   languages: string[];
   /** Present for live releases; absent when scoring an existing library file. */
   indexerId?: string;
+  /** Trailing release-group token parsed from the title/filename (undefined when none
+   *  was confidently parsed — releaseGroup specs then cannot match non-negated). */
+  releaseGroup?: string;
+  /** Series release type derived from episode multiplicity; undefined for a movie or
+   *  a title that names no episode (releaseType specs never satisfy an undefined input). */
+  releaseType?: ReleaseTypeValue;
 }
 
 export function releaseMatchInput(release: Release): CustomFormatMatchInput {
@@ -108,13 +191,16 @@ export function releaseMatchInput(release: Release): CustomFormatMatchInput {
     // correct (parseLanguages returns [] rather than guessing).
     languages: release.languages?.length ? release.languages : parseLanguages(release.title),
     indexerId: release.indexerId,
+    releaseGroup: parseReleaseGroup(release.title) ?? undefined,
+    releaseType: deriveReleaseType(release.title),
   };
 }
 
 /**
- * A reduced view for an existing library file: only its filename, size and parsed
- * quality. Language and indexer specs can't match here (metadata is gone), so formats
- * that require them never contribute — a conservative floor for existing files.
+ * A reduced view for an existing library file: its filename, size and parsed quality.
+ * Language and indexer specs can't match here (metadata is gone), so formats that require
+ * them never contribute — a conservative floor. Release-group and release-type specs CAN
+ * match from the filename (the same way term specs do).
  */
 export function existingFileMatchInput(existing: {
   relativePath: string;
@@ -127,7 +213,18 @@ export function existingFileMatchInput(existing: {
     size: existing.size,
     quality: existing.quality,
     languages: [],
+    releaseGroup: parseReleaseGroup(basename) ?? undefined,
+    releaseType: deriveReleaseType(basename),
   };
+}
+
+/** Derive a release's type (single/multi/season) from its title episode structure. */
+function deriveReleaseType(title: string): ReleaseTypeValue | undefined {
+  const ep = parseEpisodeRelease(title);
+  if (ep.isSeasonPack) return "season";
+  if (ep.isMultiEpisode) return "multi";
+  if (ep.episodes.length > 0) return "single";
+  return undefined;
 }
 
 function termMatches(spec: Extract<CustomFormatSpec, { type: "term" }>, input: CustomFormatMatchInput): boolean {
@@ -166,19 +263,91 @@ function indexerMatches(spec: Extract<CustomFormatSpec, { type: "indexer" }>, in
   return spec.negate ? !matched : matched;
 }
 
-/** Whether a single spec passes for a given release view. */
+function resolutionMatches(spec: Extract<CustomFormatSpec, { type: "resolution" }>, input: CustomFormatMatchInput): boolean {
+  const matched = input.quality.resolution === spec.resolution;
+  return spec.negate ? !matched : matched;
+}
+
+function sourceMatches(spec: Extract<CustomFormatSpec, { type: "source" }>, input: CustomFormatMatchInput): boolean {
+  const matched = input.quality.source === spec.source;
+  return spec.negate ? !matched : matched;
+}
+
+function modifierMatches(spec: Extract<CustomFormatSpec, { type: "modifier" }>, input: CustomFormatMatchInput): boolean {
+  const matched = (input.quality.modifier ?? "none") === spec.modifier;
+  return spec.negate ? !matched : matched;
+}
+
+function releaseGroupMatches(spec: Extract<CustomFormatSpec, { type: "releaseGroup" }>, input: CustomFormatMatchInput): boolean {
+  // undefined group (existing file with no parsed group, or unparseable title) never
+  // equals a concrete group: non-negated fails, negated passes (conservative floor).
+  if (input.releaseGroup === undefined) return spec.negate ? true : false;
+  let matched: boolean;
+  if (spec.useRegex) {
+    // Upstream ReleaseGroupSpecification values are regex patterns (imports set useRegex).
+    try {
+      matched = new RegExp(spec.releaseGroup, spec.caseSensitive ? "" : "i").test(input.releaseGroup);
+    } catch {
+      matched = false;
+    }
+  } else {
+    matched = spec.caseSensitive
+      ? input.releaseGroup === spec.releaseGroup
+      : input.releaseGroup.toLowerCase() === spec.releaseGroup.toLowerCase();
+  }
+  return spec.negate ? !matched : matched;
+}
+
+function releaseTypeMatches(spec: Extract<CustomFormatSpec, { type: "releaseType" }>, input: CustomFormatMatchInput): boolean {
+  // A movie release (or a title that names no episode) has no release type. It must never
+  // satisfy this spec — regardless of negate — the way upstream never exposes a Release
+  // Type condition to a movie at all.
+  if (input.releaseType === undefined) return false;
+  const matched = input.releaseType === spec.releaseType;
+  return spec.negate ? !matched : matched;
+}
+
+/** Whether a single spec passes for a given release view (negate already applied). */
 export function matchSpec(spec: CustomFormatSpec, input: CustomFormatMatchInput): boolean {
   switch (spec.type) {
     case "term": return termMatches(spec, input);
     case "size": return sizeMatches(spec, input);
     case "language": return languageMatches(spec, input);
     case "indexer": return indexerMatches(spec, input);
+    case "resolution": return resolutionMatches(spec, input);
+    case "source": return sourceMatches(spec, input);
+    case "modifier": return modifierMatches(spec, input);
+    case "releaseGroup": return releaseGroupMatches(spec, input);
+    case "releaseType": return releaseTypeMatches(spec, input);
   }
 }
 
-/** A format matches when every spec passes. */
+/**
+ * A format matches when every same-type GROUP's DidMatch is true, where a group's
+ * DidMatch = !( any required member failed || all members failed ). See file header for
+ * the full reasoning — this is SON-025's core fix over the old flat-AND.
+ */
 export function matchFormat(format: Pick<CustomFormat, "specs">, input: CustomFormatMatchInput): boolean {
-  return format.specs.every((spec) => matchSpec(spec, input));
+  const groups = new Map<CustomFormatSpec["type"], CustomFormatSpec[]>();
+  for (const spec of format.specs) {
+    const arr = groups.get(spec.type);
+    if (arr) arr.push(spec);
+    else groups.set(spec.type, [spec]);
+  }
+  for (const specs of groups.values()) {
+    if (!groupDidMatch(specs, input)) return false;
+  }
+  return true;
+}
+
+/** DidMatch formula for one same-type group. `spec.required !== false` treats an absent
+ *  `required` key (a pre-required-backfill stored row) as required — preserving the
+ *  legacy every-spec-must-pass behavior for those rows. */
+function groupDidMatch(specs: CustomFormatSpec[], input: CustomFormatMatchInput): boolean {
+  const results = specs.map((s) => matchSpec(s, input));
+  const anyFailedRequired = specs.some((s, i) => s.required !== false && !results[i]);
+  const allFailed = results.every((r) => !r);
+  return !(anyFailedRequired || allFailed);
 }
 
 /**

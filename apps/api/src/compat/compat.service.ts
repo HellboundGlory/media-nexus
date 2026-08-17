@@ -13,11 +13,10 @@ import {
   type CompatQualityProfile,
   type CompatIndexerDef,
   type CompatSearchResult,
+  type CompatCustomFormat,
 } from "@medianexus/compatibility";
-import type { SonarrNativeSource } from "@medianexus/compatibility";
-import type { RadarrNativeSource } from "@medianexus/compatibility";
-import type { ProwlarrNativeSource } from "@medianexus/compatibility";
-import { qualityMeta, type MinimumAvailability } from "@medianexus/domain";
+import type { SonarrNativeSource, RadarrNativeSource, ProwlarrNativeSource } from "@medianexus/compatibility";
+import { qualityMeta, SUPPORTED_IMPLEMENTATIONS, type MinimumAvailability, type UpstreamCustomFormat } from "@medianexus/domain";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
@@ -26,6 +25,7 @@ import { SeriesService } from "../series/series.service";
 import { MoviesService } from "../movies/movies.service";
 import { JobsService } from "../jobs/jobs.service";
 import { IndexersService } from "../indexers/indexers.service";
+import { CustomFormatsService } from "../custom-formats/custom-formats.service";
 import { redactSettings } from "../common/redact";
 
 /** Map our ordered-registry profile shape onto the Sonarr/Radarr wire shape:
@@ -101,6 +101,7 @@ export class CompatService {
     private readonly movies: MoviesService,
     private readonly jobs: JobsService,
     private readonly indexers: IndexersService,
+    private readonly customFormats: CustomFormatsService,
   ) {
     this.surfaces = [
       buildSonarrV3SurfaceSource(this.sonarrSource()),
@@ -112,6 +113,34 @@ export class CompatService {
   private app(): { version: string; name: string; started: string; db: string } {
     const s = this.statusSvc.status();
     return { version: s.version, name: "MediaNexus", started: s.started, db: "1" };
+  }
+
+  /** Shared Sonarr/Radarr /customformat source methods (identical for both surfaces) —
+   *  the upstream wire shape is produced/consumed by the same domain mapper the native
+   *  import/export uses (UNI-026), so behavior never diverges. */
+  private customFormatsSource() {
+    return {
+      listCustomFormats: () => this.customFormats.listUpstream(),
+      createCustomFormat: (input: Record<string, unknown>) =>
+        this.customFormats.createFromUpstream(input as unknown as UpstreamCustomFormat),
+      updateCustomFormat: async (id: string, input: Record<string, unknown>): Promise<CompatCustomFormat | null> => {
+        try {
+          return await this.customFormats.updateFromUpstream(id, input as unknown as UpstreamCustomFormat);
+        } catch {
+          // A nonexistent id on update mirrors the pretty-404 the movie/series routes return.
+          return null;
+        }
+      },
+      deleteCustomFormat: async (id: string): Promise<void> => {
+        try {
+          await this.customFormats.remove(id);
+        } catch {
+          /* idempotent delete — a missing format is not an error for a destroying client */
+        }
+      },
+      customFormatSchema: async () =>
+        SUPPORTED_IMPLEMENTATIONS.map((implementation) => ({ implementation, name: implementation, fields: [] })),
+    };
   }
 
   // ---------- Sonarr v3 ----------
@@ -187,6 +216,7 @@ export class CompatService {
         const rows = await this.db.select().from(schema.qualityProfile);
         return rows.map(toCompatQualityProfile);
       },
+      ...this.customFormatsSource(),
       episodes: async (sid, season) => {
         const rows = await this.series.episodes(sid, season);
         return rows.map((r) => ({
@@ -242,6 +272,7 @@ export class CompatService {
       },
       removeMovie: async (id) => { await this.movies.remove(id); },
       qualityProfiles: async () => (await this.db.select().from(schema.qualityProfile)).map(toCompatQualityProfile),
+      ...this.customFormatsSource(),
       runCommand: async (name, _body) => {
         if (name === "MoviesSearch" || name.startsWith("MovieSearch")) await this.jobs.dispatch({ jobKey: "media.missingSearch", trigger: "manual" });
         else if (name === "RefreshMovie") await this.jobs.dispatch({ jobKey: "discovery.indexerRefresh", trigger: "manual" });

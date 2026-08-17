@@ -27,7 +27,7 @@ describe("database", () => {
       expect(p.items).toContain(p.cutoffQualityId);
     }
     const qualityDefs = handle.db.select().from(sqliteSchema.qualityDefinition).all();
-    expect(qualityDefs.length).toBe(36);
+    expect(qualityDefs.length).toBe(144); // 8 sources x 6 resolutions x 3 modifiers (RAD-010)
     const defs = handle.db.select().from(sqliteSchema.indexerDefinition).all();
     expect(defs.some((d) => d.key === "memory")).toBe(true);
     const jobs = handle.db.select().from(sqliteSchema.jobDefinition).all();

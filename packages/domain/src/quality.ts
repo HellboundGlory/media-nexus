@@ -1,79 +1,111 @@
 // SPDX-License-Identifier: MIT
 import { z } from "zod";
 
-/** Quality sources (subset sufficient for the scaffold; extends later). */
+/** Quality sources (subset sufficient for the scaffold + the RAD-010 split).
+ *  `webdl`/`webrip` are the granular values the parser now produces; `web` is the
+ *  legacy coarse label KEPT so that pre-split persisted quality ids remap losslessly
+ *  (an old "web" row is genuinely ambiguous between webdl and webrip — keeping the
+ *  coarse value avoids guessing and corrupting an existing profile's ranking). */
 export const qualitySourceSchema = z.enum([
-  "unknown", "sd", "hdtv", "web", "bluray", "dvd",
+  "unknown", "sd", "dvd", "hdtv", "web", "webdl", "webrip", "bluray",
 ]);
+/** Orthogonal quality modifier axis (RAD-010): Remux/BR-DISK are NOT sources, they're a
+ *  second axis applied to a source. Only the two values Hellbound's real formats use are
+ *  modeled; CAM/TELESYNC/etc. and REGIONAL/SCREENER/RAWHD are deliberately out of scope. */
+export const qualityModifierSchema = z.enum(["none", "brdisk", "remux"]);
 export const resolutionSchema = z.enum([
   "unknown", "480p", "576p", "720p", "1080p", "2160p",
 ]);
 
-export const qualitySchema = z.object({
+// The zod object provides RUNTIME defaults (incl. modifier -> "none"). It is annotated to
+// the optional-modifier `Quality` type so `z.infer<typeof qualitySchema>` and hand-built
+// Quality literals agree (many pre-RAD-010 constructions omit the modifier axis); every read
+// site normalizes `q.modifier ?? "none"`. See qualityId/compareQuality/modifier matching.
+export const qualitySchema: z.ZodType<Quality> = z.object({
   source: qualitySourceSchema.default("unknown"),
   resolution: resolutionSchema.default("unknown"),
   edition: z.string().default(""),
-});
-export type Quality = z.infer<typeof qualitySchema>;
+  modifier: qualityModifierSchema.default("none"),
+}) as z.ZodType<Quality>;
+export type Quality = {
+  source: QualitySource;
+  resolution: Resolution;
+  edition: string;
+  modifier?: QualityModifier;
+};
 export type QualitySource = z.infer<typeof qualitySourceSchema>;
+export type QualityModifier = z.infer<typeof qualityModifierSchema>;
 export type Resolution = z.infer<typeof resolutionSchema>;
 
 /**
- * Ordered quality registry (gap report B4 / roadmap P0.2).
+ * Ordered quality registry (gap report B4 / roadmap P0.2, expanded by RAD-010).
  *
  * Replaces the old `sourceRank*10 + resolutionRank` arithmetic, which put
  * `bluray/480p` above `web/2160p` and `dvd` above `web` — the only ranking
  * auto-grab used, so automation systematically preferred worse releases (bug I4).
  *
- * Every (source, resolution) pair the parser can produce gets one stable
- * integer id, generated once below from two ordered arrays. Resolution
- * dominates the order (a 2160p release always outranks any 480p release);
- * source only breaks ties within the same resolution. Comparison is then a
- * single index lookup (`qualityId`), not a formula evaluated at decision time.
+ * Every (source, resolution, modifier) triple the parser can produce gets one stable
+ * integer id, generated once below from three ordered arrays. Resolution dominates
+ * the order (a 2160p release always outranks any 480p release); source then modifier
+ * break ties within the same resolution. Comparison is then a single index lookup
+ * (`qualityId`), not a formula evaluated at decision time.
  *
- * These ids are persisted (quality_profile.items/cutoffQualityId,
- * quality_definition.id) and the exact assignment is mirrored in migration
- * 0007 — do not reorder RESOLUTION_ORDER / SOURCE_ORDER without a new
- * migration to re-map existing rows.
+ * RAD-010 restructured this from a 6×6 2D grid to a 6×8×3 3D grid (source split
+ * web→webdl/webrip, modifier=none/brdisk/remux added). Because the id arithmetic
+ * depends on the array lengths (the row-stride changed), EVERY previously-persisted
+ * quality id changes meaning — the id remap is done by a non-destructive startup
+ * backfill (`apps/api/src/quality-profiles/quality-id-backfill.ts`, with the OLD
+ * arrays kept as local references there), not by reordering these arrays again.
  */
 const RESOLUTION_ORDER: Resolution[] = ["unknown", "480p", "576p", "720p", "1080p", "2160p"];
-const SOURCE_ORDER: QualitySource[] = ["unknown", "sd", "dvd", "hdtv", "web", "bluray"];
+const SOURCE_ORDER: QualitySource[] = ["unknown", "sd", "dvd", "hdtv", "web", "webdl", "webrip", "bluray"];
+// Within a source, plain < full-disc(brdisk) < remux — matches upstream's Modifier
+// ordering (NONE < ... < BRDISK < REMUX) and Hellbound's "Remux as strict upgrade
+// over plain Bluray at the same resolution".
+const MODIFIER_ORDER: QualityModifier[] = ["none", "brdisk", "remux"];
 
 export interface QualityDefinitionMeta {
   id: number;
-  key: string; // `${source}:${resolution}` — stable lookup key
+  key: string; // `${source}:${resolution}:${modifier}` — stable lookup key
   title: string;
   source: QualitySource;
   resolution: Resolution;
+  modifier: QualityModifier;
 }
 
 const SOURCE_LABEL: Record<QualitySource, string> = {
-  unknown: "", sd: "SD", dvd: "DVD", hdtv: "HDTV", web: "WEB", bluray: "Bluray",
+  unknown: "", sd: "SD", dvd: "DVD", hdtv: "HDTV", web: "WEB", webdl: "WEBDL", webrip: "WEBRip", bluray: "Bluray",
+};
+const MODIFIER_LABEL: Record<QualityModifier, string> = {
+  none: "", brdisk: "BR-DISK", remux: "Remux",
 };
 
-function title(source: QualitySource, resolution: Resolution): string {
-  const s = SOURCE_LABEL[source];
-  const r = resolution === "unknown" ? "" : resolution;
-  return [s, r].filter(Boolean).join(" ") || "Unknown";
+function title(source: QualitySource, resolution: Resolution, modifier: QualityModifier): string {
+  const base = [SOURCE_LABEL[source], resolution === "unknown" ? "" : resolution].filter(Boolean).join(" ") || "Unknown";
+  return modifier === "none" ? base : `${base} ${MODIFIER_LABEL[modifier]}`;
 }
 
 export const QUALITY_REGISTRY: readonly QualityDefinitionMeta[] = RESOLUTION_ORDER.flatMap(
-  (resolution, resIdx) => SOURCE_ORDER.map((source, srcIdx): QualityDefinitionMeta => ({
-    id: resIdx * SOURCE_ORDER.length + srcIdx,
-    key: `${source}:${resolution}`,
-    title: title(source, resolution),
-    source,
-    resolution,
-  })),
+  (resolution, resIdx) => SOURCE_ORDER.flatMap((source, srcIdx) =>
+    MODIFIER_ORDER.map((modifier, modIdx): QualityDefinitionMeta => ({
+      id: resIdx * SOURCE_ORDER.length * MODIFIER_ORDER.length + srcIdx * MODIFIER_ORDER.length + modIdx,
+      key: `${source}:${resolution}:${modifier}`,
+      title: title(source, resolution, modifier),
+      source,
+      resolution,
+      modifier,
+    })),
+  ),
 );
 
 const BY_KEY = new Map(QUALITY_REGISTRY.map((q) => [q.key, q]));
 const BY_ID = new Map(QUALITY_REGISTRY.map((q) => [q.id, q]));
 
-/** Resolve a parsed/reported quality to its registry id. Every (source, resolution)
- *  combination is covered by construction, so this never falls through. */
+/** Resolve a parsed/reported quality to its registry id. Every (source, resolution,
+ *  modifier) combination is covered by construction, so this never falls through. */
 export function qualityId(q: Quality): number {
-  return (BY_KEY.get(`${q.source}:${q.resolution}`) ?? BY_KEY.get("unknown:unknown")!).id;
+  const modifier = q.modifier ?? "none";
+  return (BY_KEY.get(`${q.source}:${q.resolution}:${modifier}`) ?? BY_KEY.get("unknown:unknown:none")!).id;
 }
 
 export function qualityMeta(id: number): QualityDefinitionMeta | undefined {

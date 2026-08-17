@@ -6,6 +6,8 @@ import { seedStatic } from "@medianexus/database";
 import { parseEnv } from "@medianexus/shared";
 import { runSecretBackfill } from "../secrets/secret-backfill";
 import { runSettingsBlobBackfill } from "../notifications/settings-blob-backfill";
+import { runQualityIdBackfill } from "../quality-profiles/quality-id-backfill";
+import { runCustomFormatRequiredBackfill } from "../custom-formats/custom-format-required-backfill";
 
 export const DB_TOKEN = Symbol("DATABASE");
 export const DB_HANDLE_TOKEN = Symbol("DATABASE_HANDLE");
@@ -33,6 +35,16 @@ export class DatabaseLifecycle implements OnModuleDestroy {
         const env = parseEnv();
         const handle = createDb(env.DATABASE_URL);
         if (env.AUTO_MIGRATE) await handle.runMigrations();
+        // SON-025/RAD-010: remap every persisted quality id from the old 2D registry to the
+        // new 3D registry (modifier axis + webdl/webrip split). MUST run BEFORE seedStatic so
+        // the newly-representable quality_definition rows don't collide with remapped old rows.
+        if (env.AUTO_MIGRATE) {
+          const result = await runQualityIdBackfill(handle.db);
+          if (!result.skipped) {
+            // eslint-disable-next-line no-console
+            console.log(`quality-id backfill: ${result.profilesUpdated} profiles, ${result.definitionsMoved} definitions remapped`);
+          }
+        }
         await seedStatic(handle.db);
         // Gap report J9 — encrypt pre-existing plaintext provider credentials in place.
         // Idempotent + non-destructive: re-runs every boot and no-ops once everything is
@@ -47,6 +59,14 @@ export class DatabaseLifecycle implements OnModuleDestroy {
         // runMigrations so the `notification`/`media_server` tables exist.
         if (env.AUTO_MIGRATE) {
           await runSettingsBlobBackfill(handle.db);
+        }
+        // SON-025: stamp the new `required` key onto pre-existing custom-format specs.
+        if (env.AUTO_MIGRATE) {
+          const n = await runCustomFormatRequiredBackfill(handle.db);
+          if (n > 0) {
+            // eslint-disable-next-line no-console
+            console.log(`custom-format required backfill: ${n} formats updated`);
+          }
         }
         return handle;
       },

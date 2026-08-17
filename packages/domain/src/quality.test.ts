@@ -10,15 +10,15 @@ const q = (source: string, resolution: string): Quality => ({
 });
 
 describe("quality registry", () => {
-  it("covers every (source, resolution) combination exactly once", () => {
+  it("covers every (source, resolution, modifier) combination exactly once", () => {
     const keys = new Set(QUALITY_REGISTRY.map((r) => r.key));
     expect(keys.size).toBe(QUALITY_REGISTRY.length);
-    expect(QUALITY_REGISTRY.length).toBe(36); // 6 resolutions x 6 sources
+    expect(QUALITY_REGISTRY.length).toBe(144); // 8 sources x 6 resolutions x 3 modifiers (RAD-010)
   });
 
   it("ids are unique and dense from 0", () => {
     const ids = QUALITY_REGISTRY.map((r) => r.id).sort((a, b) => a - b);
-    expect(ids).toEqual([...Array(36).keys()]);
+    expect(ids).toEqual([...Array(144).keys()]);
   });
 
   it("resolution dominates the ordering: a 2160p release always outranks a 480p one", () => {
@@ -33,6 +33,22 @@ describe("quality registry", () => {
   it("within a resolution, bluray outranks web outranks hdtv", () => {
     expect(qualityId(q("bluray", "1080p"))).toBeGreaterThan(qualityId(q("web", "1080p")));
     expect(qualityId(q("web", "1080p"))).toBeGreaterThan(qualityId(q("hdtv", "1080p")));
+  });
+
+  it("splits webdl / webrip and ranks them below bluray and above hdtv (RAD-010)", () => {
+    // upstream enum order: ... DVD < TV < WEBDL < WEBRIP < BLURAY
+    expect(qualityId(q("hdtv", "1080p"))).toBeLessThan(qualityId(q("webdl", "1080p")));
+    expect(qualityId(q("webdl", "1080p"))).toBeLessThan(qualityId(q("webrip", "1080p")));
+    expect(qualityId(q("webrip", "1080p"))).toBeLessThan(qualityId(q("bluray", "1080p")));
+  });
+
+  it("modifier ranks within a source: plain < brdisk < remux (RAD-010)", () => {
+    expect(qualityId(q("bluray", "1080p"))).toBeLessThan(qualityId({ ...q("bluray", "1080p"), modifier: "brdisk" }));
+    expect(qualityId({ ...q("bluray", "1080p"), modifier: "brdisk" })).toBeLessThan(qualityId({ ...q("bluray", "1080p"), modifier: "remux" }));
+  });
+
+  it("remux at a resolution outranks plain bluray at the same resolution (the tier-upgrade reading)", () => {
+    expect(qualityId(q("bluray", "1080p"))).toBeLessThan(qualityId({ ...q("bluray", "1080p"), modifier: "remux" }));
   });
 
   it("compareQuality mirrors qualityId ordering", () => {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { z } from "zod";
+import { qualitySchema } from "./quality";
 
 /** Normalized search result — the native contract shared by every indexer provider. */
 export const releaseSchema = z.object({
@@ -22,11 +23,8 @@ export const releaseSchema = z.object({
   downloadUrl: z.string().nullish(),
   magnetUrl: z.string().nullish(),
   infoUrl: z.string().nullish(),
-  quality: z.object({
-    source: z.enum(["unknown", "sd", "hdtv", "web", "bluray", "dvd"]),
-    resolution: z.enum(["unknown", "480p", "576p", "720p", "1080p", "2160p"]),
-    edition: z.string().default(""),
-  }),
+  // Shared quality schema: source/resolution/edition + the RAD-010 modifier axis.
+  quality: qualitySchema,
   isFreeleech: z.boolean().default(false),
   isProper: z.boolean().default(false),
   isRepack: z.boolean().default(false),

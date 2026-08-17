@@ -7,7 +7,7 @@
  */
 import { createSurface, type CompatRoute } from "./types";
 import { json } from "./endpoints";
-import type { CompatSeries, CompatEpisode, CompatQualityProfile } from "./wire-shapes";
+import type { CompatSeries, CompatEpisode, CompatQualityProfile, CompatCustomFormat } from "./wire-shapes";
 
 export interface SonarrNativeSource {
   appVersion(): string;
@@ -20,11 +20,37 @@ export interface SonarrNativeSource {
   updateSeries(id: string, input: Record<string, unknown>): Promise<CompatSeries | null>;
   removeSeries(id: string): Promise<void>;
   qualityProfiles(): Promise<CompatQualityProfile[]>;
+  listCustomFormats(): Promise<CompatCustomFormat[]>;
+  createCustomFormat(input: Record<string, unknown>): Promise<CompatCustomFormat>;
+  updateCustomFormat(id: string, input: Record<string, unknown>): Promise<CompatCustomFormat | null>;
+  deleteCustomFormat(id: string): Promise<void>;
+  customFormatSchema(): Promise<unknown>;
   episodes(seriesId: string, season?: number): Promise<CompatEpisode[]>;
   /** Bulk episode monitoring (`PUT /episode/monitor`), Sonarr's real write shape. */
   updateEpisodesMonitor(seriesId: string, episodeIds: string[], monitored: boolean): Promise<void>;
   runCommand(name: string, body: Record<string, unknown>): Promise<{ id: string; name: string }>;
 }
+
+function customFormatRoutes(s: SonarrNativeSource): CompatRoute[] {
+  return [
+    { method: "GET", path: "/customformat", handler: async () => json(await s.listCustomFormats()) },
+    { method: "POST", path: "/customformat", handler: async (ctx) => json(await s.createCustomFormat((ctx.body ?? {}) as Record<string, unknown>), 201) },
+    {
+      method: "PUT", path: "/customformat/:id",
+      handler: async (ctx) => {
+        const row = await s.updateCustomFormat(ctx.params.id, (ctx.body ?? {}) as Record<string, unknown>);
+        return row ? json(row) : json({ message: "Not Found" }, 404);
+      },
+    },
+    {
+      method: "DELETE", path: "/customformat/:id",
+      handler: async (ctx) => { await s.deleteCustomFormat(ctx.params.id); return json(null, 200); },
+    },
+    { method: "GET", path: "/customformat/schema", handler: async () => json(await s.customFormatSchema()) },
+  ];
+}
+
+export { customFormatRoutes };
 
 function seriesRoutes(s: SonarrNativeSource): CompatRoute[] {
   const status: CompatRoute = {
@@ -94,7 +120,7 @@ function seriesRoutes(s: SonarrNativeSource): CompatRoute[] {
       return json(await s.runCommand(body.name, body), 201);
     },
   };
-  return [status, list, get, add, update, del, qp, episodes, monitorEpisodes, command];
+  return [status, list, get, add, update, del, qp, ...customFormatRoutes(s), episodes, monitorEpisodes, command];
 }
 
 export function buildSonarrV3SurfaceSource(s: SonarrNativeSource) {
