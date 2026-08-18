@@ -48,11 +48,13 @@ After it's up, add it in-app as a download client (System → Settings → Downl
 
 Two things worth knowing about this setup: gluetun's DNS-over-TLS (encrypts every DNS lookup, on by default) has no
 way to resolve a Docker-internal name like `postgres` — rather than turning it off, `postgres` gets a static IP on
-the `media-nexus` network and `media-nexus` gets an `extra_hosts` entry pointing at it, so that one connection never
-needs DNS at all and DoT stays fully on for everything else. `media-nexus` ↔ `nzbget` needs no such workaround since
-sharing gluetun's network namespace means they talk over `127.0.0.1`, which never needs DNS in the first place. And
-`FIREWALL_OUTBOUND_SUBNETS` allow-lists your LAN (so the published UIs stay reachable) and the compose file's own
-docker network (so `media-nexus` can still reach `postgres` over it) without forcing either through the VPN tunnel.
+the `media-nexus` network and `DATABASE_URL` connects to that IP directly, so the connection never needs DNS at all
+and DoT stays fully on for everything else. (Docker also flatly rejects combining `extra_hosts` with
+`network_mode: "service:X"` — "conflicting options" — so a static IP is the only way to do this, not just the
+tidier one.) `media-nexus` ↔ `nzbget` needs no such workaround since sharing gluetun's network namespace means they
+talk over `127.0.0.1`, which never needs DNS in the first place. And `FIREWALL_OUTBOUND_SUBNETS` allow-lists your
+LAN (so the published UIs stay reachable) and the compose file's own docker network (so `media-nexus` can still
+reach `postgres` over it) without forcing either through the VPN tunnel.
 
 ## Volumes / persistence
 

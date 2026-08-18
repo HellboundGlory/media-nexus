@@ -25,7 +25,8 @@ services:
       WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:?set your WireGuard private key in .env}
       WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:?set your WireGuard address in .env}
       SERVER_COUNTRIES: ${VPN_SERVER_COUNTRIES:-}
-      # DoT stays on (gluetun's default) — postgres uses a static IP + extra_hosts below, never DNS.
+      # DoT stays on (gluetun's default) — media-nexus reaches postgres by its static IP below,
+      # never by hostname, so no DNS lookup (and no DoT conflict) is ever involved.
       FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNET:-192.168.1.0/24},172.28.0.0/24 # LAN + this docker net
     ports:
       - "${WEB_PORT:-7373}:7373" # published here — media-nexus has no ports of its own
@@ -80,8 +81,9 @@ services:
     container_name: media-nexus-app
     restart: unless-stopped
     network_mode: "service:gluetun" # shares gluetun's netns — no networks:/ports: here
-    extra_hosts:
-      - "postgres:172.28.0.10" # matches postgres's static IP above
+    # NOTE: extra_hosts can't be combined with network_mode: "service:X" — Docker rejects it
+    # outright ("conflicting options"). DATABASE_URL below uses postgres's static IP directly
+    # instead, so no hostname resolution (and no extra_hosts) is needed at all.
     depends_on:
       gluetun:
         condition: service_healthy
@@ -92,7 +94,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 7373
-      DATABASE_URL: postgres://${POSTGRES_USER:-medianexus}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-medianexus}
+      DATABASE_URL: postgres://${POSTGRES_USER:-medianexus}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@172.28.0.10:5432/${POSTGRES_DB:-medianexus}
       MEDIA_NEXUS_SECRET: ${MEDIA_NEXUS_SECRET:?set MEDIA_NEXUS_SECRET in .env}
       TZ: ${TZ:-UTC}
     volumes:
