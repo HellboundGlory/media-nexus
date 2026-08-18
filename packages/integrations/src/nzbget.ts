@@ -34,6 +34,17 @@ export class NzbgetProvider extends DownloadClientBase<NzbgetSettings> {
   readonly key = "nzbget";
   readonly kind = "usenet" as const;
 
+  constructor(settings: NzbgetSettings, fetchImpl: typeof fetch = fetch) {
+    super(settings, fetchImpl);
+    // NZBGet authenticates with HTTP Basic (its JSON-RPC runs over the WebGet API). NZBGet's own
+    // docs describe credentials embedded in the URL, but Node's native fetch refuses
+    // credentials-in-URL, so send the Authorization header explicitly — same mechanism and
+    // pattern as Transmission. Only set when a credential is provided; otherwise send unauthenticated.
+    if (settings.username || settings.password) {
+      this.headers["Authorization"] = "Basic " + Buffer.from(`${settings.username ?? ""}:${settings.password ?? ""}`).toString("base64");
+    }
+  }
+
   /** Issue a NZBGet JSON-RPC call and return the `result`, throwing on an error envelope. */
   private async call<T>(method: string, params: unknown[] = []): Promise<T> {
     const res = await this.request("/jsonrpc", {
@@ -51,11 +62,14 @@ export class NzbgetProvider extends DownloadClientBase<NzbgetSettings> {
     const release = input.release;
     const nzbUrl = release.downloadUrl;
     if (!nzbUrl) throw new Error("NZBGet requires a usenet nzb URL on the release");
-    // append(NZBName, NZBContent, Category, Priority, AddToTop, AddPaused, DupeKey, DupeMode,
-    //         DupeScore, AddUrl) — AddUrl=true makes NZBContent a URL for NZBGet to fetch.
+    // append(Filename, Content, Category, Priority, AddToTop, AddPaused, DupeKey, DupeScore,
+    //        DupeMode, AutoCategory, PPParameters) — 11 positional args per NZBGet's API.md.
+    // Filename is "" and Content is the URL: NZBGet reads the filename from the URL's headers and
+    // determines URL-vs-content itself (there is NO AddUrl param). DupeMode "SCORE" per APPEND.md's
+    // example; AutoCategory false (category is explicit); PPParameters [].
     const nzoId = await this.call<number>("append", [
       "", nzbUrl, input.category ?? this.settings.category ?? "movies",
-      this.settings.priority ?? 0, false, false, "", 0, 0, true,
+      this.settings.priority ?? 0, false, false, "", 0, "SCORE", false, [],
     ]);
     if (nzoId === undefined || nzoId === null) throw new Error("NZBGet append returned no id");
     return { downloadId: String(nzoId) };
@@ -64,7 +78,8 @@ export class NzbgetProvider extends DownloadClientBase<NzbgetSettings> {
   async getQueue(): Promise<ClientQueueItem[]> {
     const out: ClientQueueItem[] = [];
 
-    const groups = await this.call<NzbGroup[]>("listgroups");
+    // listgroups(int NumberOfLogEntries) — the param is mandatory even though deprecated, must be 0.
+    const groups = await this.call<NzbGroup[]>("listgroups", [0]);
     for (const g of groups ?? []) {
       const total = composeSize(g.FileSizeLo, g.FileSizeHi);
       const remaining = composeSize(g.RemainingSizeLo, g.RemainingSizeHi);
@@ -81,7 +96,7 @@ export class NzbgetProvider extends DownloadClientBase<NzbgetSettings> {
       });
     }
 
-    const hist = await this.call<NzbHistoryItem[]>("history");
+    const hist = await this.call<NzbHistoryItem[]>("history", [false]);
     for (const h of hist ?? []) {
       const status = (h.Status ?? "").toLowerCase();
       const downloadId = String(h.NZBID ?? "");
@@ -102,8 +117,19 @@ export class NzbgetProvider extends DownloadClientBase<NzbgetSettings> {
    */
   async remove(downloadId: string, deleteData = false): Promise<void> {
     const id = Number(downloadId);
-    const method = deleteData ? "GroupFinalDelete" : "GroupDelete";
-    await this.call("edit", [Number.isFinite(id) ? id : downloadId, method]);
+    if (!Number.isFinite(id)) throw new Error(`NZBGet remove: invalid download id "${downloadId}"`);
+    // Usenet downloads resolve quickly (complete or fail), so the item is usually already in
+    // HISTORY, not the active queue — Group-level commands only match the active queue and return
+    // `false` when nothing matched. Try the queue first, then fall back to history.
+    // File-deletion semantics (verified against HistoryCoordinator.cpp HistoryDelete): both
+    // History commands run DeleteDiskFiles for NZB items, so the download is removed from disk
+    // either way; the `final` flag (HistoryFinalDelete) additionally erases the history record
+    // outright, while HistoryDelete keeps it as a hidden DUP record.
+    const groupMethod = deleteData ? "GroupFinalDelete" : "GroupDelete";
+    const removedFromQueue = await this.call<boolean>("editqueue", [groupMethod, "", [id]]);
+    if (removedFromQueue) return;
+    const historyMethod = deleteData ? "HistoryFinalDelete" : "HistoryDelete";
+    await this.call<boolean>("editqueue", [historyMethod, "", [id]]);
   }
 
   healthcheck(): Promise<HealthResult> {

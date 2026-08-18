@@ -257,15 +257,15 @@ describe("TransmissionProvider (HTTP)", () => {
 });
 
 describe("NzbgetProvider (HTTP)", () => {
-  it("adds via append, reports queue + completed history and healthchecks", async () => {
-    const methods: string[] = [];
+  it("speaks real NZBGet JSON-RPC: append (11 args), listgroups(0), history(false), version()", async () => {
+    const calls: { method: string; params: unknown[] }[] = [];
     const { url, server } = await listen((req, res, u) => {
       if (u.pathname !== "/jsonrpc") { res.writeHead(404); res.end(); return; }
       let body = "";
       req.on("data", (c) => { body += c; });
       req.on("end", () => {
         const call = JSON.parse(body);
-        methods.push(call.method);
+        calls.push({ method: call.method, params: call.params });
         if (call.method === "append") json(res, { jsonrpc: "2.0", result: 12345, id: 1 });
         else if (call.method === "listgroups") json(res, { jsonrpc: "2.0", result: [{ NZBID: 12345, NZBName: "Movie.mkv", Status: "DOWNLOADING", FileSizeLo: 1000, RemainingSizeLo: 500 }], id: 1 });
         else if (call.method === "history") json(res, { jsonrpc: "2.0", result: [{ NZBID: 12346, NZBName: "Done.mkv", Status: "SUCCESS" }], id: 1 });
@@ -277,22 +277,31 @@ describe("NzbgetProvider (HTTP)", () => {
     const client = new NzbgetProvider({ host: url, category: "movies", priority: 0 });
     const { downloadId } = await client.addRelease({ release: { downloadUrl: "https://nzb/file.nzb" } as never });
     expect(downloadId).toBe("12345");
-    expect(methods).toContain("append");
     const statuses = (await client.getQueue()).map((i) => i.status);
     expect(statuses).toContain("downloading");
     expect(statuses).toContain("completed");
     expect((await client.healthcheck()).ok).toBe(true);
+
+    // append(Filename, Content, Category, Priority, AddToTop, AddPaused, DupeKey, DupeScore,
+    //       DupeMode, AutoCategory, PPParameters) — 11 positional args, exact shape.
+    const appendCall = calls.find((c) => c.method === "append");
+    expect(appendCall?.params).toEqual(["", "https://nzb/file.nzb", "movies", 0, false, false, "", 0, "SCORE", false, []]);
+    // listgroups(int NumberOfLogEntries) and history(bool Hidden) are mandatory single params.
+    expect(calls.find((c) => c.method === "listgroups")?.params).toEqual([0]);
+    expect(calls.find((c) => c.method === "history")?.params).toEqual([false]);
+    // version() takes no params.
+    expect(calls.find((c) => c.method === "version")?.params).toEqual([]);
   });
 
-  it("keeps files by default, deletes them when requested", async () => {
-    const edits: string[] = [];
+  it("removes via editqueue(Command, Param, [id]): GroupDelete by default, GroupFinalDelete when deleting files", async () => {
+    const calls: { method: string; params: unknown[] }[] = [];
     const { url, server } = await listen((req, res, u) => {
       if (u.pathname !== "/jsonrpc") { res.writeHead(404); res.end(); return; }
       let body = "";
       req.on("data", (c) => { body += c; });
       req.on("end", () => {
         const call = JSON.parse(body);
-        if (call.method === "edit") edits.push(call.params[1]);
+        calls.push({ method: call.method, params: call.params });
         json(res, { jsonrpc: "2.0", result: true, id: 1 });
       });
     });
@@ -300,7 +309,49 @@ describe("NzbgetProvider (HTTP)", () => {
     const client = new NzbgetProvider({ host: url, category: "movies", priority: 0 });
     await client.remove("12346");
     await client.remove("12346", true);
-    expect(edits[0]).toBe("GroupDelete");
-    expect(edits[1]).toBe("GroupFinalDelete");
+    expect(calls.map((c) => c.method)).toEqual(["editqueue", "editqueue"]);
+    // editqueue(Command, Param, IDs[]) — Command first, empty Param, one-element int array.
+    expect(calls[0].params).toEqual(["GroupDelete", "", [12346]]);
+    expect(calls[1].params).toEqual(["GroupFinalDelete", "", [12346]]);
+  });
+
+  it("falls back to the History editqueue command when the item is no longer in the active queue", async () => {
+    const calls: { method: string; params: unknown[] }[] = [];
+    const { url, server } = await listen((req, res, u) => {
+      if (u.pathname !== "/jsonrpc") { res.writeHead(404); res.end(); return; }
+      let body = ""; req.on("data", (c) => { body += c; });
+      req.on("end", () => {
+        const call = JSON.parse(body);
+        calls.push({ method: call.method, params: call.params });
+        // Group commands target the ACTIVE queue and return false once the item has moved to
+        // history (the normal usenet case) -> the provider must retry the matching History command.
+        const group = String(call.params[0]).startsWith("Group");
+        json(res, { jsonrpc: "2.0", result: !group, id: 1 });
+      });
+    });
+    servers.push(server);
+    const client = new NzbgetProvider({ host: url, category: "movies", priority: 0 });
+    await client.remove("12346");       // soft: queue miss -> HistoryDelete
+    await client.remove("12346", true); // hard: queue miss -> HistoryFinalDelete
+    expect(calls.length).toBe(4);
+    expect(calls[0].params).toEqual(["GroupDelete", "", [12346]]);
+    expect(calls[1].params).toEqual(["HistoryDelete", "", [12346]]);
+    expect(calls[2].params).toEqual(["GroupFinalDelete", "", [12346]]);
+    expect(calls[3].params).toEqual(["HistoryFinalDelete", "", [12346]]);
+  });
+
+  it("sends HTTP Basic Authorization when username/password are set", async () => {
+    const auths: (string | undefined)[] = [];
+    const { url, server } = await listen((req, res, u) => {
+      if (u.pathname !== "/jsonrpc") { res.writeHead(404); res.end(); return; }
+      auths.push(req.headers.authorization as string | undefined);
+      json(res, { jsonrpc: "2.0", result: "26.2", id: 1 });
+    });
+    servers.push(server);
+    // A real user configures host/username/password as separate settings fields, so the provider
+    // must send the Basic header itself (Node fetch refuses credentials-in-URL).
+    const client = new NzbgetProvider({ host: url, category: "movies", priority: 0, username: "admin", password: "admin" });
+    await client.healthcheck();
+    expect(auths[0]).toBe("Basic " + Buffer.from("admin:admin").toString("base64"));
   });
 });

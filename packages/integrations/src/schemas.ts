@@ -97,7 +97,9 @@ export const nzbgetSettingsSchema = z.object({
   username: z.string().optional(),
   password: z.string().optional(),
   category: z.string().default("movies"),
-  priority: z.number().int().default(0),
+  // Coerce: the Clients UI sends settings through a string-valued pipeline, and this is NZBGet's
+  // per-job int priority (distinct from the app's client-selection priority).
+  priority: z.coerce.number().int().default(0),
 });
 export type NzbgetSettings = z.infer<typeof nzbgetSettingsSchema>;
 

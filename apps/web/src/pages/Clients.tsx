@@ -42,10 +42,22 @@ const IMPL_FIELDS: Record<string, ImplSpec> = {
       { key: "tag", label: "Tag", def: "media-nexus" },
     ],
   },
+  nzbget: {
+    host: "NZBGet host (http://host:6789)",
+    apiKey: "",
+    extra: [
+      { key: "username", label: "Username", def: "nzbget" },
+      { key: "password", label: "Password", def: "", secret: true },
+      { key: "category", label: "Category", def: "movies" },
+      // NZBGet's per-job download priority (int), distinct from the client-selection
+      // "Priority" field above (cPriority) — never conflate the two (NZBGET-1).
+      { key: "priority", label: "Job priority", def: "0" },
+    ],
+  },
 };
 
 const CLIENT_IMPL_OPTIONS = Object.keys(IMPL_FIELDS);
-const implKinds: Record<string, "usenet" | "torrent"> = { sabnzbd: "usenet", qbittorrent: "torrent" };
+const implKinds: Record<string, "usenet" | "torrent"> = { sabnzbd: "usenet", nzbget: "usenet", qbittorrent: "torrent" };
 const SERVER_TOKEN_LABEL: Record<string, string> = { jellyfin: "API key", plex: "Token (X-Plex-Token)" };
 
 export default function Clients() {
@@ -150,13 +162,12 @@ export default function Clients() {
   const removeMapping = useMutation({ mutationFn: (id: string) => api.del(`/remote-path-mappings/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ["remote-path-mappings"] }) });
 
   function buildClientSettings(): Record<string, string> {
-    if (!clientModal.editing) {
-      if (cImpl === "sabnzbd") return { host: cSettings.host ?? "", apiKey: cSettings.apiKey ?? "", category: cSettings.category ?? "movies" };
-      return { host: cSettings.host ?? "", username: cSettings.username ?? "admin", password: cSettings.password ?? "", tag: cSettings.tag ?? "media-nexus" };
-    }
-    const impl = clientModal.editing.implementation;
-    if (impl === "sabnzbd") return { host: cSettings.host ?? "", apiKey: cSettings.apiKey ?? "", category: cSettings.category ?? "movies" };
-    return { host: cSettings.host ?? "", username: cSettings.username ?? "admin", password: cSettings.password ?? "", tag: cSettings.tag ?? "media-nexus" };
+    const impl = clientModal.editing?.implementation ?? cImpl;
+    const spec = IMPL_FIELDS[impl] ?? { host: "Host", extra: [] };
+    const settings: Record<string, string> = { host: cSettings.host ?? "" };
+    if (spec.secret) settings[spec.secret] = cSettings[spec.secret] ?? "";
+    for (const f of spec.extra ?? []) settings[f.key] = cSettings[f.key] ?? (f.def ?? "");
+    return settings;
   }
 
   function openClientAdd() {
@@ -210,7 +221,7 @@ export default function Clients() {
             </button>
           </div>
           {clients.data?.length === 0 ? (
-            <EmptyState title="No download clients" hint="Add an SABnzbd or qBittorrent client to enable real downloads." />
+            <EmptyState title="No download clients" hint="Add an SABnzbd, NZBGet or qBittorrent client to enable real downloads." />
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {clients.data?.map((c) => (
