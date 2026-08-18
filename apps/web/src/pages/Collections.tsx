@@ -11,6 +11,7 @@ import { api } from "../api/client";
 import type { QualityProfile, RootFolder } from "../api/types";
 import { Badge, EmptyState, ErrorState } from "../lib/ui";
 import { posterUrl } from "../components/detail/Poster";
+import { AddTitleModal, type AddTitleBody, type MinimumAvailability } from "../components/AddTitleModal";
 import { CollectionBulkEditModal, type CollectionBulkEditPatch } from "../components/CollectionBulkEditModal";
 
 interface CollectionPart {
@@ -43,6 +44,9 @@ export default function Collections() {
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editOpen, setEditOpen] = useState(false);
+  // COLLECTADD-1: the "+" on a missing poster opens AddTitleModal (pre-filled from the
+  // collection's own settings) instead of adding immediately — nothing is added until confirm.
+  const [addModal, setAddModal] = useState<{ c: CollectionRow; part: CollectionPart } | null>(null);
 
   const cols = useQuery({ queryKey: ["collections"], queryFn: () => api.get<CollectionRow[]>("/collections") });
   const profilesQ = useQuery({ queryKey: ["quality-profiles"], queryFn: () => api.get<QualityProfile[]>("/quality-profiles") });
@@ -51,6 +55,10 @@ export default function Collections() {
   const items = (cols.data ?? []).filter((c) => c.name.toLowerCase().includes(search.trim().toLowerCase()));
   const profileName = (id: string | null) => (id ? profilesQ.data?.find((p) => p.id === id)?.name ?? null : null);
   const rootName = (path: string) => rootsQ.data?.find((r) => r.path === path)?.name ?? (path || null);
+  // AddTitleModal's root picker keys on root-folder id, but the collection stores a path — map
+  // the collection's saved path back to its root-folder id so the modal pre-fills it. Undefined
+  // when the folder isn't configured anymore, in which case the modal falls back to the default.
+  const rootIdFor = (path: string) => rootsQ.data?.find((r) => r.path === path)?.id;
 
   const toggle = (id: string) => setSelected((prev) => {
     const next = new Set(prev);
@@ -67,8 +75,12 @@ export default function Collections() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["collections"] }),
   });
   const addPart = useMutation({
-    mutationFn: ({ id, tmdbId }: { id: string; tmdbId: number }) => api.post(`/collections/${id}/parts/${tmdbId}/add`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["collections"] }),
+    mutationFn: ({ id, tmdbId, body }: { id: string; tmdbId: number; body: AddTitleBody }) =>
+      api.post(`/collections/${id}/parts/${tmdbId}/add`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["collections"] });
+      setAddModal(null);
+    },
   });
   const bulkEdit = useMutation({
     mutationFn: (patch: CollectionBulkEditPatch) => api.post("/collections/bulk-edit", { ids: [...selected], ...patch }),
@@ -140,8 +152,7 @@ export default function Collections() {
                     <div key={p.tmdbId} title={`${p.title} (missing)`} className="relative h-20 w-14 shrink-0 overflow-hidden rounded border border-rule opacity-70">
                       {url ? <img src={url} alt={p.title} loading="lazy" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center bg-track text-[8px] text-ink-dim">{p.title[0] ?? "?"}</div>}
                       <button
-                        onClick={() => addPart.mutate({ id: c.id, tmdbId: p.tmdbId })}
-                        disabled={addPart.isPending && addPart.variables?.tmdbId === p.tmdbId && addPart.variables?.id === c.id}
+                        onClick={() => setAddModal({ c, part: p })}
                         title={`Add ${p.title}`}
                         className="absolute inset-0 flex items-center justify-center bg-black/40 text-white opacity-0 transition-opacity hover:opacity-100"
                       >
@@ -162,6 +173,23 @@ export default function Collections() {
           onSave={(patch) => bulkEdit.mutate(patch)}
           onClose={() => setEditOpen(false)}
           busy={bulkEdit.isPending}
+        />
+      )}
+
+      {addModal && (
+        <AddTitleModal
+          mediaType="movie"
+          title={addModal.part.title}
+          posterUrl={posterUrl(addModal.part.images)}
+          isPending={addPart.isPending}
+          error={addPart.error}
+          // Pre-fill from the collection's own saved settings; user can override before adding.
+          initialMonitored={addModal.c.monitored}
+          initialRootFolderId={rootIdFor(addModal.c.rootFolderPath)}
+          initialQualityProfileId={addModal.c.qualityProfileId ?? undefined}
+          initialMinimumAvailability={addModal.c.minimumAvailability as MinimumAvailability}
+          onClose={() => setAddModal(null)}
+          onSubmit={(body) => addPart.mutate({ id: addModal.c.id, tmdbId: addModal.part.tmdbId, body })}
         />
       )}
     </div>

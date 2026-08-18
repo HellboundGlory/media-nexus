@@ -16,6 +16,18 @@ export interface UpdateCollectionBody {
   searchOnAdd?: boolean;
 }
 
+/** Per-part add overrides (COLLECTADD-1): the optional fields collected by AddTitleModal.
+ *  Any omitted field falls back to the collection's own saved settings, so an empty/absent
+ *  body behaves exactly as the previous always-collection-defaults add. `null` qualityProfileId
+ *  (a real user choice, not "no preference") is treated as "no profile". */
+export interface AddPartOverrides {
+  qualityProfileId?: string | null;
+  rootFolderPath?: string;
+  monitored?: boolean;
+  minimumAvailability?: "announced" | "in_cinemas" | "released" | "deleted";
+  tags?: string[];
+}
+
 /**
  * Collections (UNI-021): TMDB movie collections as a real tracked entity.
  *
@@ -144,14 +156,25 @@ export class CollectionsService {
   }
 
   /** On-demand single-part add (the mockup's "+" on a missing poster): add that one movie, then
-   *  re-sync so the collection's parts/missing-count reflect the change immediately. */
-  async addPart(collectionId: string, tmdbId: number): Promise<{ added: boolean; tmdbId: number }> {
+   *  re-sync so the collection's parts/missing-count reflect the change immediately. `overrides`
+   *  (COLLECTADD-1) carry the user's AddTitleModal choices — monitored/root folder/quality
+   *  profile/minimum availability/tags — through to addFromDiscover; any omitted field falls back
+   *  to the collection's own saved settings (the pre-modal behaviour). */
+  async addPart(collectionId: string, tmdbId: number, overrides: AddPartOverrides = {}): Promise<{ added: boolean; tmdbId: number }> {
     const rows = await this.db.select().from(schema.collection).where(eq(schema.collection.id, collectionId)).limit(1);
     const row = rows[0];
     if (!row) throw ApiError.notFound("collection", collectionId);
+    // Explicit null means "no profile" (not "no preference"), which addFromDiscover expresses as
+    // undefined; absent means fall back to the collection's saved profile.
+    const qualityProfileId = overrides.qualityProfileId !== undefined
+      ? (overrides.qualityProfileId ?? undefined)
+      : (row.qualityProfileId ?? undefined);
     await this.metadata.addFromDiscover("movie", tmdbId, {
-      monitored: row.monitored, qualityProfileId: row.qualityProfileId ?? undefined, rootFolderPath: row.rootFolderPath,
-      minimumAvailability: row.minimumAvailability as "announced" | "in_cinemas" | "released" | "deleted",
+      monitored: overrides.monitored ?? row.monitored,
+      qualityProfileId,
+      rootFolderPath: overrides.rootFolderPath ?? row.rootFolderPath,
+      minimumAvailability: (overrides.minimumAvailability ?? row.minimumAvailability) as "announced" | "in_cinemas" | "released" | "deleted",
+      tags: overrides.tags,
     });
     await this.sync(collectionId);
     return { added: true, tmdbId };

@@ -45,6 +45,14 @@ export function AddTitleModal({
    *  default is deliberately non-overridable there, so rendering an editable field would be a
    *  silent no-op. Series/Movies quick-add and Library Import keep it editable. */
   lockMinimumAvailability,
+  /** Optional pre-fill (COLLECTADD-1): seed the pickers/checkbox from a caller's saved values
+   *  (e.g. a collection's own settings) instead of the isDefault-based defaults. Each falls
+   *  back to the existing default when left undefined — Discover and the other add paths are
+   *  unaffected. */
+  initialMonitored,
+  initialRootFolderId,
+  initialQualityProfileId,
+  initialMinimumAvailability,
   onSubmit,
   onClose,
 }: {
@@ -56,15 +64,19 @@ export function AddTitleModal({
   isPending?: boolean;
   error?: unknown;
   lockMinimumAvailability?: boolean;
+  initialMonitored?: boolean;
+  initialRootFolderId?: string;
+  initialQualityProfileId?: string;
+  initialMinimumAvailability?: MinimumAvailability;
   onSubmit: (body: AddTitleBody) => void;
   onClose: () => void;
 }) {
   const rootFolders = useQuery({ queryKey: ["root-folders"], queryFn: () => api.get<RootFolder[]>("/root-folders") });
   const profiles = useQuery({ queryKey: ["quality-profiles"], queryFn: () => api.get<QualityProfile[]>("/quality-profiles") });
-  const [monitored, setMonitored] = useState(true);
-  const [rootSel, setRootSel] = useState("");
-  const [profileSel, setProfileSel] = useState("");
-  const [minAvail, setMinAvail] = useState<MinimumAvailability>("released");
+  const [monitored, setMonitored] = useState(initialMonitored ?? true);
+  const [rootSel, setRootSel] = useState(initialRootFolderId ?? "");
+  const [profileSel, setProfileSel] = useState(initialQualityProfileId ?? "");
+  const [minAvail, setMinAvail] = useState<MinimumAvailability>(initialMinimumAvailability ?? "released");
   const [seriesType, setSeriesType] = useState<SeriesType>("standard");
   const [tags, setTags] = useState("");
 
