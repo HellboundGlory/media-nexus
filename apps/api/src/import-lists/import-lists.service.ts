@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
@@ -22,6 +22,8 @@ import type { CreateImportList, CreateImportExclusion, UpdateImportList } from "
  */
 @Injectable()
 export class ImportListsService {
+  private readonly logger = new Logger(ImportListsService.name);
+
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly metadata: MetadataService,
@@ -68,10 +70,24 @@ export class ImportListsService {
   }
 
   async addExclusion(input: CreateImportExclusion) {
+    // Resolve the title once at write time (IMPORTEXCLTITLE-1) so the exclusions list can show a
+    // real title instead of a raw id, rather than re-looking-up on every page load. Best-effort:
+    // a bad id / provider hiccup must not block creating the exclusion (it still prevents re-add,
+    // and the UI falls back to the raw id), so any failure is logged and the title is stored null.
+    let title: string | null = null;
+    let year: number | null = null;
+    try {
+      const p = await this.metadata.provider();
+      const details = await p.getDetails(input.mediaType, input.externalId);
+      title = details.title;
+      year = details.year ?? null;
+    } catch (err) {
+      this.logger.warn(`exclusion ${input.mediaType}/${input.externalId} title lookup failed: ${(err as Error).message}`);
+    }
     await this.db.insert(schema.importExclusion)
-      .values({ id: newEntityId("excl"), mediaType: input.mediaType, externalId: input.externalId, reason: input.reason ?? null, createdAt: new Date().toISOString() })
+      .values({ id: newEntityId("excl"), mediaType: input.mediaType, externalId: input.externalId, reason: input.reason ?? null, title, year, createdAt: new Date().toISOString() })
       .onConflictDoNothing();
-    return { added: true, mediaType: input.mediaType, externalId: input.externalId };
+    return { added: true, mediaType: input.mediaType, externalId: input.externalId, title };
   }
 
   async removeExclusion(id: string) {

@@ -287,6 +287,8 @@ export class MoviesService {
       rootFolderPath: row.rootFolderPath,
       folderName: resolvedMovieFolderName(row),
       tmdbId: row.tmdbId,
+      title: row.title,
+      year: row.releaseDate ? Number(row.releaseDate.slice(0, 4)) : null,
       deleteFiles,
       addImportExclusion,
       publish: (events, mid) => events.publish(EventTypes.MovieRemoved, { movieId: mid }, { aggType: "movie", aggId: mid }),

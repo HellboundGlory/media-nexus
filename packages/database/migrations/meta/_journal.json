@@ -57,6 +57,13 @@
       "when": 1787012432937,
       "tag": "0007_mature_boomerang",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787054004396,
+      "tag": "0008_robust_red_wolf",
+      "breakpoints": true
     }
   ]
 }

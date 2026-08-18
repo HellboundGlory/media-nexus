@@ -105,13 +105,19 @@ export function ImportListsTab() {
           <div className="overflow-hidden rounded-lg border border-rule">
             <table className="w-full text-left text-sm">
               <thead className="bg-bg text-[10px] font-semibold uppercase tracking-wide text-ink-dim">
-                <tr><th className="px-3 py-2">Type</th><th className="px-3 py-2">External id</th><th className="px-3 py-2">Reason</th><th className="px-3 py-2">Added</th><th className="px-3 py-2 text-right">Action</th></tr>
+                <tr><th className="px-3 py-2">Type</th><th className="px-3 py-2">Title</th><th className="px-3 py-2">Reason</th><th className="px-3 py-2">Added</th><th className="px-3 py-2 text-right">Action</th></tr>
               </thead>
               <tbody className="divide-y divide-rule">
                 {exclusionRows.map((x) => (
                   <tr key={x.id} className="hover:bg-bg/60">
                     <td className="px-3 py-2"><Badge tone="neutral">{x.mediaType}</Badge></td>
-                    <td className="px-3 py-2 font-mono text-xs text-ink">{x.externalId}</td>
+                    <td className="px-3 py-2 text-ink">
+                      {x.title ? (
+                        <span className="font-medium">{x.title}{x.year ? <span className="text-ink-dim"> ({x.year})</span> : null}</span>
+                      ) : (
+                        <span className="font-mono text-xs text-ink">{x.externalId}</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-ink-dim">{x.reason ?? "—"}</td>
                     <td className="px-3 py-2 text-ink-dim">{x.createdAt ? formatDate(x.createdAt) : "—"}</td>
                     <td className="px-3 py-2 text-right"><button onClick={() => removeExclusion.mutate(x.id)} className="rounded p-1 text-ink-dim hover:bg-err-bg hover:text-err" title="Remove exclusion"><Trash2 className="h-4 w-4" /></button></td>

@@ -339,6 +339,9 @@ export const importExclusion = pgTable("import_exclusion", {
   mediaType: text("media_type").notNull(),
   externalId: text("external_id").notNull(),
   reason: text("reason"),
+  // Resolved ONCE at write time (IMPORTEXCLTITLE-1) — Postgres mirror of the SQLite columns.
+  title: text("title"),
+  year: integer("year"),
   createdAt: iso("created_at"),
 }, (t) => [
   uniqueIndex("import_exclusion_media_ext_idx").on(t.mediaType, t.externalId),

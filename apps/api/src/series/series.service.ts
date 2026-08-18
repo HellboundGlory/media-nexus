@@ -288,6 +288,8 @@ export class SeriesService {
       rootFolderPath: row.rootFolderPath,
       folderName: resolvedSeriesFolderName(row),
       tmdbId: row.tmdbId,
+      title: row.title,
+      year: row.firstAirYear ?? null,
       deleteFiles,
       addImportExclusion,
       publish: (events, sid) => events.publish(EventTypes.SeriesRemoved, { seriesId: sid }, { aggType: "series", aggId: sid }),

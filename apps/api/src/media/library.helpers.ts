@@ -313,12 +313,14 @@ export async function removeMediaItem(
     rootFolderPath: string | null;
     folderName: string;
     tmdbId: number | null;
+    title: string;
+    year: number | null;
     deleteFiles: boolean;
     addImportExclusion: boolean;
     publish: (events: EventsService, id: string) => void;
   },
 ): Promise<{ removed: string }> {
-  const { mediaType, id, rootFolderPath, folderName, tmdbId, deleteFiles, addImportExclusion, publish } = opts;
+  const { mediaType, id, rootFolderPath, folderName, tmdbId, title, year, deleteFiles, addImportExclusion, publish } = opts;
   // Before the DB cascade: physically delete each file and the title's folder when requested
   // (opt-in — a bare DELETE on its own does nothing to disk, matching upstream).
   if (deleteFiles) {
@@ -334,10 +336,12 @@ export async function removeMediaItem(
       if (mediaType === "movie") await tx.delete(schema.movie).where(eq(schema.movie.id, id));
       else await tx.delete(schema.series).where(eq(schema.series.id, id));
       // C2 import lists: only exclude from re-import when explicitly requested (opt-in).
+      // The title is already in scope in the caller — captured here so the exclusions list can
+      // display a real title instead of a raw id (IMPORTEXCLTITLE-1), with zero external calls.
       if (addImportExclusion && tmdbId != null) {
         await tx.insert(schema.importExclusion).values({
           id: `excl-${mediaType}-${tmdbId}`, mediaType, externalId: String(tmdbId),
-          reason: "removed from library", createdAt: new Date().toISOString(),
+          reason: "removed from library", title, year, createdAt: new Date().toISOString(),
         }).onConflictDoNothing();
       }
     });
@@ -349,7 +353,7 @@ export async function removeMediaItem(
       if (addImportExclusion && tmdbId != null) {
         tx.insert(schema.importExclusion).values({
           id: `excl-${mediaType}-${tmdbId}`, mediaType, externalId: String(tmdbId),
-          reason: "removed from library", createdAt: new Date().toISOString(),
+          reason: "removed from library", title, year, createdAt: new Date().toISOString(),
         }).onConflictDoNothing().run();
       }
     });

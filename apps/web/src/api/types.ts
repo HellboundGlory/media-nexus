@@ -579,6 +579,9 @@ export interface ImportExclusion {
   id: string;
   mediaType: string;
   externalId: string;
+  // Resolved once at write time (IMPORTEXCLTITLE-1) — shown instead of the raw id when present.
+  title?: string | null;
+  year?: number | null;
   reason: string | null;
   createdAt: string | null;
 }

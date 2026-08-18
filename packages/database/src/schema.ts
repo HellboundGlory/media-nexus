@@ -394,6 +394,11 @@ export const importExclusion = sqliteTable("import_exclusion", {
   mediaType: text("media_type").notNull(), // movie | series
   externalId: text("external_id").notNull(), // tmdbId as string (provider-scoped id)
   reason: text("reason"),
+  // Resolved ONCE at write time (IMPORTEXCLTITLE-1) so the exclusions list shows a real title
+  // instead of a raw id — null when nothing could be resolved (legacy rows, failed lookups). Not
+  // re-fetched on read: captured by the removal path for free, via one TMDB call for manual adds.
+  title: text("title"),
+  year: integer("year"),
   createdAt: iso("created_at"),
 }, (t) => [
   uniqueIndex("import_exclusion_media_ext_idx").on(t.mediaType, t.externalId),
