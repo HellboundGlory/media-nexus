@@ -7,7 +7,7 @@
 // (POST /queue/bulk-remove).
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RotateCcw, FolderOpen, Trash2 } from "lucide-react";
+import { RotateCcw, FolderOpen, Trash2, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import type { QueueRow } from "../api/types";
 import { Badge, EmptyState, ErrorState, formatBytes, formatDate, ProgressBar, statusTone, FormatsBadges } from "../lib/ui";
@@ -44,13 +44,25 @@ export default function Downloads() {
     if (path !== null) manualImport.mutate({ id: q.id, path: path.trim() || undefined });
   };
 
-  const rows = queue.data?.items ?? [];
+  // Imported/removed entries are resolved and kept server-side for lineage only (e.g. torrent
+  // seed-goal tracking) -- this page is "active grabs", so they're excluded here rather than
+  // lingering forever. Failed/stalled stay visible since they need the retry/manual-import
+  // actions below.
+  const rows = (queue.data?.items ?? []).filter((q) => q.status !== "imported" && q.status !== "removed");
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">Downloads</h2>
-        <p className="text-sm text-ink-dim">Active grabs and their import progress.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-display text-2xl font-bold uppercase tracking-[0.05em] text-ink">Downloads</h2>
+          <p className="text-sm text-ink-dim">Active grabs and their import progress.</p>
+        </div>
+        <button
+          onClick={refresh}
+          className="flex items-center gap-1.5 rounded-lg border border-rule bg-bg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule"
+        >
+          <RefreshCw className="h-3.5 w-3.5" /> Refresh
+        </button>
       </div>
 
       {selected.size > 0 && (
