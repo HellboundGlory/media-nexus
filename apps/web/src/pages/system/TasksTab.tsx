@@ -3,8 +3,9 @@
 // every job in the definitions list gets its own "Run Now" button (the trigger mutation was
 // already generic; only a single hardcoded "run health check" existed before). Cancel remains
 // for cancellable in-flight runs.
+import { Fragment, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Play } from "lucide-react";
+import { ChevronDown, ChevronRight, Play } from "lucide-react";
 import { api } from "../../api/client";
 import type { JobRun, JobDefinition } from "../../api/types";
 import { Badge, statusTone, ErrorState, formatDate } from "../../lib/ui";
@@ -15,6 +16,17 @@ export function TasksTab() {
   const qc = useQueryClient();
   const runs = useQuery({ queryKey: ["job-runs"], queryFn: () => api.get<JobRun[]>("/system/jobs/runs") });
   const jobDefs = useQuery({ queryKey: ["job-defs"], queryFn: () => api.get<JobDefinition[]>("/system/jobs") });
+  // The engine persists a run's failure detail onto `run.error` (packages/jobs engine.ts
+  // -> store.fail) but the runs table never rendered it — BACKUPFAIL-1 surfaces it as an
+  // expandable detail row so failures are visible for every job, not just Backup.
+  const [expandedErr, setExpandedErr] = useState<Set<string>>(new Set());
+  const toggleError = (id: string) =>
+    setExpandedErr((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const trigger = useMutation({
     mutationFn: (jobKey: string) => api.post(`/system/commands/${jobKey}`),
@@ -59,20 +71,49 @@ export function TasksTab() {
               <tr><th className="pb-2">Job</th><th className="pb-2">Status</th><th className="pb-2">Trigger</th><th className="pb-2">Attempt</th><th className="pb-2">Finished</th><th className="pb-2"></th></tr>
             </thead>
             <tbody className="divide-y divide-rule">
-              {(runs.data ?? []).slice(0, 15).map((r) => (
-                <tr key={r.id}>
-                  <td className="py-2 font-mono text-xs">{r.jobKey}</td>
-                  <td className="py-2"><Badge tone={statusTone(r.status)}>{r.status}</Badge></td>
-                  <td className="py-2 text-ink-dim">{r.trigger}</td>
-                  <td className="py-2 text-ink-dim">{r.attempt}</td>
-                  <td className="py-2 text-ink-dim">{formatDate(r.finishedAt)}</td>
-                  <td className="py-2 text-right">
-                    {CANCELLABLE_STATUSES.has(r.status) && (
-                      <button onClick={() => cancelRun.mutate(r.id)} disabled={cancelRun.isPending} className="rounded-md px-2 py-1 text-xs font-medium text-err hover:bg-err-bg disabled:opacity-50">Cancel</button>
+              {(runs.data ?? []).slice(0, 15).map((r) => {
+                const hasError = Boolean(r.error);
+                const showErr = hasError && expandedErr.has(r.id);
+                return (
+                  <Fragment key={r.id}>
+                    <tr>
+                      <td className="py-2 font-mono text-xs">{r.jobKey}</td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-1.5">
+                          <Badge tone={statusTone(r.status)}>{r.status}</Badge>
+                          {hasError && (
+                            <button
+                              onClick={() => toggleError(r.id)}
+                              title={showErr ? "Hide error detail" : "Show error detail"}
+                              className="inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wide text-err hover:underline"
+                            >
+                              {showErr ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                              error
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2 text-ink-dim">{r.trigger}</td>
+                      <td className="py-2 text-ink-dim">{r.attempt}</td>
+                      <td className="py-2 text-ink-dim">{formatDate(r.finishedAt)}</td>
+                      <td className="py-2 text-right">
+                        {CANCELLABLE_STATUSES.has(r.status) && (
+                          <button onClick={() => cancelRun.mutate(r.id)} disabled={cancelRun.isPending} className="rounded-md px-2 py-1 text-xs font-medium text-err hover:bg-err-bg disabled:opacity-50">Cancel</button>
+                        )}
+                      </td>
+                    </tr>
+                    {showErr && (
+                      <tr>
+                        <td colSpan={6} className="py-0 pl-10 pr-4">
+                          <div className="mb-2 whitespace-pre-wrap break-words rounded-md border-l-2 border-err/60 bg-err-bg/40 px-3 py-2 text-xs text-err-ink">
+                            {r.error}
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                </tr>
-              ))}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
           {(runs.data?.length ?? 0) === 0 && <p className="py-3 text-sm text-ink-dim">No job runs yet.</p>}

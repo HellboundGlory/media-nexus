@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DatabaseBackup, Download, Loader2, Play, RotateCcw, Upload } from "lucide-react";
 import { api, ApiClientError, API_BASE } from "../../api/client";
+import type { JobRun } from "../../api/types";
 import { EmptyState, ErrorState, formatDate, formatBytes } from "../../lib/ui";
 import { RestoreConfirmModal } from "../../components/system/RestoreConfirmModal";
 
@@ -21,6 +22,23 @@ interface BackupFile {
 // mean the swap happened and the app is restarting, and we treat them the same.
 const READY_POLL_MS = 2000;
 const READY_POLL_CAP_S = 60;
+
+// "Backup Now" (POST /system/commands/system.backup) only enqueues a job run and returns its
+// queued JobRunRecord — the actual backup runs asynchronously in the job engine, which
+// persists the outcome (including any failure's error string) back onto that run row. We
+// poll GET /system/commands/:id until the run is terminal so a real failure (e.g. a
+// misconfigured backup path causing ENOENT) is surfaced inline instead of the old blind
+// setTimeout that made failures invisible (BACKUPFAIL-1).
+const BACKUP_POLL_MS = 1000;
+const BACKUP_POLL_CAP_S = 60;
+const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
+
+type BackupRunState =
+  | { status: "idle" }
+  | { status: "running"; runId: string }
+  | { status: "succeeded"; runId: string; message: string }
+  | { status: "failed"; runId?: string; message: string }
+  | { status: "cancelled"; runId?: string; message: string };
 
 function RestartingOverlay() {
   const [timedOut, setTimedOut] = useState(false);
@@ -82,10 +100,67 @@ export function BackupTab() {
   const [error, setError] = useState<string | null>(null);
 
   const backups = useQuery({ queryKey: ["backups"], queryFn: () => api.get<BackupFile[]>("/system/backups") });
+  const [backupRun, setBackupRun] = useState<BackupRunState>({ status: "idle" });
   const trigger = useMutation({
-    mutationFn: () => api.post("/system/commands/system.backup"),
-    onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["backups"] }), 800),
+    mutationFn: () => api.post<JobRun>("/system/commands/system.backup"),
+    onMutate: () => setBackupRun({ status: "idle" }),
+    onSuccess: (run) => setBackupRun({ status: "running", runId: run.id }),
+    onError: (err) =>
+      setBackupRun({
+        status: "failed",
+        message: err instanceof Error ? err.message : "Backup could not be started",
+      }),
   });
+
+  // Poll the dispatched run until it reaches a terminal state, then surface success or the
+  // engine-persisted error inline (mirroring the Indexers/Clients test-button pattern). A
+  // real backup failure is captured on the run row by the job engine, so polling the run is
+  // how the UI learns about it.
+  const runId = backupRun.status === "running" ? backupRun.runId : null;
+  useEffect(() => {
+    if (!runId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const startedAt = Date.now();
+    const poll = async () => {
+      try {
+        const run = await api.get<JobRun>(`/system/commands/${runId}`);
+        if (cancelled) return;
+        if (TERMINAL_RUN_STATUSES.has(run.status)) {
+          qc.invalidateQueries({ queryKey: ["backups"] });
+          if (run.status === "succeeded") {
+            setBackupRun({ status: "succeeded", runId: run.id, message: "Backup created." });
+          } else if (run.status === "failed" || run.status === "timed_out") {
+            setBackupRun({ status: "failed", runId: run.id, message: run.error || `Backup ${run.status}` });
+          } else {
+            setBackupRun({ status: "cancelled", runId: run.id, message: "Backup was cancelled." });
+          }
+          return;
+        }
+        if (Date.now() - startedAt > BACKUP_POLL_CAP_S * 1000) {
+          setBackupRun({
+            status: "failed",
+            runId: run.id,
+            message: `Backup is still running after ${BACKUP_POLL_CAP_S}s — check System > Tasks for the job result.`,
+          });
+          return;
+        }
+        timer = setTimeout(poll, BACKUP_POLL_MS);
+      } catch (e) {
+        if (cancelled) return;
+        setBackupRun({
+          status: "failed",
+          runId,
+          message: e instanceof Error ? e.message : "Failed to check backup status",
+        });
+      }
+    };
+    timer = setTimeout(poll, BACKUP_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [runId, qc]);
 
   // Restore: arm the restarting state immediately on confirm. A server-side rejection (an
   // ApiClientError — the server was alive and refused) means the restore did NOT run, so we
@@ -135,7 +210,9 @@ export function BackupTab() {
 
   const rows = backups.data ?? [];
   const errorMsg = (e: unknown): string | null => (e instanceof Error ? e.message : e ? String(e) : null);
-  const mutationError = error ?? errorMsg(trigger.error) ?? (upload.isError ? errorMsg(upload.error) : null);
+  const mutationError = error ?? (backupRun.status === "failed" ? backupRun.message : null) ?? (upload.isError ? errorMsg(upload.error) : null);
+  const backupSucceeded = backupRun.status === "succeeded" ? backupRun.message : null;
+  const backingUp = trigger.isPending || backupRun.status === "running";
 
   if (restarting) return <RestartingOverlay />;
 
@@ -161,13 +238,14 @@ export function BackupTab() {
             </button>
             <button
               onClick={() => trigger.mutate()}
-              disabled={trigger.isPending}
+              disabled={backingUp}
               className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50"
             >
-              <Play className="h-3.5 w-3.5" /> {trigger.isPending ? "Backing up…" : "Backup Now"}
+              <Play className="h-3.5 w-3.5" /> {backingUp ? "Backing up…" : "Backup Now"}
             </button>
           </div>
         </div>
+        {backupSucceeded && <p className="mb-2 text-xs text-ok">{backupSucceeded}</p>}
         {mutationError && <p className="mb-2 text-xs text-err">{mutationError}</p>}
         {backups.isError ? <ErrorState error={backups.error} onRetry={() => backups.refetch()} /> : rows.length === 0 ? (
           <EmptyState title="No backups yet" hint="Run Backup Now (or let the scheduled system.backup job run) to create one. You can also upload a backup from another host. Backing up requires a configured backup path in Media Management." />
