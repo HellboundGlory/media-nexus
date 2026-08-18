@@ -18,9 +18,9 @@ anywhere else.
 ```bash
 cp .env.example .env        # then set MEDIA_NEXUS_SECRET (openssl rand -hex 32)
 docker compose up -d
-# Web UI      → http://localhost:8080
-# API docs    → http://localhost:8080/api/docs
-# API base    → http://localhost:8080/api/v1
+# Web UI      → http://localhost:7373
+# API docs    → http://localhost:7373/api/docs
+# API base    → http://localhost:7373/api/v1
 ```
 
 One container serves both the API and the web UI. Open it and the first screen walks you through **creating your

@@ -129,7 +129,7 @@ compatibility, Docker-first, strong typing, strong testing, long-term maintainab
   config`-validated but not executed here — CI builds the image on tag push.)
 - **Decision:** one multi-stage `docker/Dockerfile` (build context = repo root) builds `apps/web` and copies its `dist`
   into the API image at `/app/web`; the NestJS API serves the built SPA directly (static assets + a catch-all SPA-fallback
-  route) on port 7373, mapped to the host via `WEB_PORT` (default 8080). There is no nginx and no second container — this
+  route) on port 7373, mapped to the host via `WEB_PORT` (default 7373). There is no nginx and no second container — this
   supersedes an earlier two-container design (a separate `api` + nginx-fronted `web` container) that existed before the
   web UI became same-origin with the API; env-driven config/secret injection; `/health/live` + `/health/ready`
   healthchecks with compose `start_period`.

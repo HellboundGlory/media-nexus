@@ -11,7 +11,7 @@
    ```
 4. `docker compose up -d` — on boot the API runs pending Drizzle migrations automatically
    (`AUTO_MIGRATE=true`, which is the default) and static seeds are idempotent.
-5. Verify: `curl http://localhost:8080/health/ready` -> `{"status":"ok","db":"up"}`; open the web UI.
+5. Verify: `curl http://localhost:7373/health/ready` -> `{"status":"ok","db":"up"}`; open the web UI.
 
 > Migrations run automatically on start. To run them manually (e.g. before a blue-green cutover):
 > `npm run db:migrate`.
@@ -106,7 +106,7 @@ run through the app) and doubles as the fallback for a host that won't come back
    you want to restore, keeping the original filename the app expects.
 3. Start the app back up (`docker compose up -d`). Pending migrations (if the backup predates the version you're
    restoring into) run automatically on boot, same as any other startup.
-4. Verify: `curl http://localhost:8080/health/ready` -> `{"status":"ok","db":"up"}`; open the web UI and confirm
+4. Verify: `curl http://localhost:7373/health/ready` -> `{"status":"ok","db":"up"}`; open the web UI and confirm
    your library/settings look like the point in time the backup was taken.
 
 ## Rollback

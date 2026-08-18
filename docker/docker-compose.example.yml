@@ -6,7 +6,7 @@
 # 1) Copy docker/.env.example to docker/.env (same directory as this file) and fill it in.
 # 2) `docker compose -f docker/docker-compose.example.yml up -d`
 # 3) Get the first-run API key: `docker compose -f docker/docker-compose.example.yml logs media-nexus | grep "API key"`
-# 4) Open http://host:8080, paste the key under System → API key, then set root folder(s) to
+# 4) Open http://host:7373, paste the key under System → API key, then set root folder(s) to
 #    /data/media, downloads root to /data/downloads, and metadata.tmdbApiKey (all in System →
 #    Settings — runtime settings, not env vars).
 #
@@ -39,7 +39,7 @@ services:
       # `postgres` both stay reachable without being forced through the tunnel.
       FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNET:-192.168.1.0/24}
     ports:
-      - "${WEB_PORT:-8080}:7373" # web UI — published here since `media-nexus` shares this netns
+      - "${WEB_PORT:-7373}:7373" # web UI — published here since `media-nexus` shares this netns
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/gluetun-entrypoint", "healthcheck"]

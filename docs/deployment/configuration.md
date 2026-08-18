@@ -17,7 +17,7 @@ All configuration flows through environment variables (secrets via `_FILE` suffi
 | `JOB_CONCURRENCY` | `2` | running job workers |
 | `LOG_LEVEL` | `info` | structured log level |
 | `TZ` | `UTC` | timezone |
-| `WEB_PORT` | `8080` | (compose only) host port mapped to the container's port 7373 |
+| `WEB_PORT` | `7373` | (compose only) host port mapped to the container's port 7373 |
 
 There is no `CORS_ORIGINS` or `TRUST_PROXY` — the API serves the web UI itself (same-origin, one process, one port), and
 this app is not meant to sit behind a reverse proxy (see [docs/security.md](../security.md)).

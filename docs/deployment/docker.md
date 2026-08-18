@@ -17,7 +17,7 @@ docker compose ps      # health check turns green (start_period)
 
 | Service | Port | Notes |
 |---|---|---|
-| `app` | `${WEB_PORT:-8080}` → container `7373` | single container: NestJS API serves the built web UI directly (static assets + SPA fallback) and swagger at `/api/docs` |
+| `app` | `${WEB_PORT:-7373}` → container `7373` | single container: NestJS API serves the built web UI directly (static assets + SPA fallback) and swagger at `/api/docs` |
 
 This is **one container, one port** — there is no separate `web`/nginx container and no reverse proxy. The first
 time you open it, you'll be walked through creating a single admin login (see [docs/security.md](../security.md)) —
@@ -38,7 +38,7 @@ docker compose -f docker/docker-compose.example.yml logs media-nexus | grep "API
 
 | Service | Port | Notes |
 |---|---|---|
-| `gluetun` | `${WEB_PORT:-8080}` → container `7373` | owns the network; publishes the web UI port since `media-nexus` has none of its own |
+| `gluetun` | `${WEB_PORT:-7373}` → container `7373` | owns the network; publishes the web UI port since `media-nexus` has none of its own |
 | `media-nexus` | *(shares gluetun's network — no port of its own)* | `network_mode: "service:gluetun"`, so every outbound request (indexers, download clients, TMDB) goes through the VPN tunnel |
 | `postgres` | n/a, internal only | real Postgres instead of the SQLite default; `DATABASE_URL` is assembled from `POSTGRES_USER`/`PASSWORD`/`DB` |
 
