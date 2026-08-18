@@ -7,6 +7,7 @@ import Dashboard from "./pages/Dashboard";
 import Discover from "./pages/Discover";
 import Movies from "./pages/Movies";
 import Series from "./pages/Series";
+import Collections from "./pages/Collections";
 import Activity from "./pages/Activity";
 import Downloads from "./pages/Downloads";
 import Wanted from "./pages/Wanted";
@@ -99,6 +100,7 @@ export default function App() {
             <Route path="movies/:id" element={<MovieDetail />} />
             <Route path="series" element={<Series />} />
             <Route path="series/:id" element={<SeriesDetail />} />
+            <Route path="collections" element={<Collections />} />
             <Route path="downloads" element={<Downloads />} />
             <Route path="calendar" element={<Calendar />} />
             <Route path="activity" element={<Activity />} />

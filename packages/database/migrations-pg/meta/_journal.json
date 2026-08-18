@@ -50,6 +50,13 @@
       "when": 1786882390179,
       "tag": "0006_lyrical_black_tom",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787012443839,
+      "tag": "0007_brave_mentor",
+      "breakpoints": true
     }
   ]
 }

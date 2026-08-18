@@ -302,6 +302,34 @@ export class TmdbProvider implements MetadataProviderContract {
     return out;
   }
 
+  /** A TMDB movie collection (UNI-021): the header plus every part movie. Poster URLs use the
+   *  same w500 pattern as `search()`. `parts` is TMDB's raw list; ownership is annotated by the
+   *  caller (collections/metadata service), not here. */
+  async getCollection(collectionTmdbId: number): Promise<{
+    tmdbId: number;
+    name: string;
+    overview?: string;
+    images: { coverType: string; url: string }[];
+    parts: { tmdbId: number; title: string; releaseDate?: string; images: { coverType: string; url: string }[] }[];
+  }> {
+    const d = await this.get<{
+      id: number; name?: string; overview?: string; poster_path?: string;
+      parts?: { id: number; title?: string; release_date?: string; poster_path?: string }[];
+    }>(`/collection/${collectionTmdbId}`);
+    return {
+      tmdbId: d.id,
+      name: d.name ?? "",
+      overview: d.overview ?? undefined,
+      images: d.poster_path ? [{ coverType: "poster", url: `https://image.tmdb.org/t/p/w500${d.poster_path}` }] : [],
+      parts: (d.parts ?? []).map((p) => ({
+        tmdbId: p.id,
+        title: p.title ?? "",
+        releaseDate: p.release_date ?? undefined,
+        images: p.poster_path ? [{ coverType: "poster", url: `https://image.tmdb.org/t/p/w500${p.poster_path}` }] : [],
+      })),
+    };
+  }
+
   /** All seasons + episodes for a series. */
   async seriesSeasons(tmdbId: number): Promise<TmdbSeason[]> {
     const detail = await this.get<TmdbSeriesDetail>(`/tv/${tmdbId}`);

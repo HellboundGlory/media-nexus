@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
-  Moon, Sun, LayoutDashboard, Compass, Film, Tv, Activity, LogOut, Download, CalendarDays,
+  Moon, Sun, LayoutDashboard, Compass, Film, Tv, Library, Activity, LogOut, Download, CalendarDays,
   AlertTriangle, Settings as SettingsIcon, Server,
 } from "lucide-react";
 import { useAppStore, applyTheme } from "../store/useAppStore";
@@ -52,6 +52,7 @@ export default function Layout() {
     { to: "/discover", label: "Discover", icon: Compass },
     { to: "/movies", label: "Movies", icon: Film, badge: movies.data?.total },
     { to: "/series", label: "Series", icon: Tv, badge: series.data?.total },
+    { to: "/collections", label: "Collections", icon: Library },
     { to: "/downloads", label: "Downloads", icon: Download, badge: queue.data?.items.length },
     { to: "/calendar", label: "Calendar", icon: CalendarDays },
     { to: "/activity", label: "Activity", icon: Activity },

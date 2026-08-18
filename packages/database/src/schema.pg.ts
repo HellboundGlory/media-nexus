@@ -344,6 +344,33 @@ export const importExclusion = pgTable("import_exclusion", {
   uniqueIndex("import_exclusion_media_ext_idx").on(t.mediaType, t.externalId),
 ]);
 
+// ---------- Collections (UNI-021) — Postgres mirror of the SQLite `collection` table. ----------
+export interface CollectionPart {
+  tmdbId: number;
+  title: string;
+  releaseDate: string | null;
+  images: { coverType: string; url: string }[];
+  inLibrary: boolean;
+  libraryId: string | null;
+}
+
+export const collection = pgTable("collection", {
+  id: text("id").primaryKey(),
+  tmdbId: integer("tmdb_id").notNull(),
+  name: text("name").notNull(),
+  overview: text("overview"),
+  images: json<{ coverType: string; url: string }[]>("images"),
+  monitored: bool("monitored", false),
+  qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
+  rootFolderPath: text("root_folder_path").notNull().default(""),
+  minimumAvailability: text("minimum_availability").notNull().default("released"),
+  searchOnAdd: bool("search_on_add", false),
+  parts: json<CollectionPart[]>("parts"),
+  lastSyncAt: nullableIso("last_sync_at"),
+  createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+}, (t) => [uniqueIndex("collection_tmdb_idx").on(t.tmdbId)]);
+
 // ---------- 5. Acquisition ----------
 export const remotePathMapping = pgTable("remote_path_mapping", {
   id: text("id").primaryKey(),
@@ -556,6 +583,7 @@ export const schema = {
   autoTag,
   importList,
   importExclusion,
+  collection,
 };
 
 export type Schema = typeof schema;

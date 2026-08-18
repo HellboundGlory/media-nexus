@@ -33,6 +33,7 @@ import { TagsModule } from "./tags/tags.module";
 import { ImportListsModule } from "./import-lists/import-lists.module";
 import { CustomFormatsModule } from "./custom-formats/custom-formats.module";
 import { ReleaseProfilesModule } from "./release-profiles/release-profiles.module";
+import { CollectionsModule } from "./collections/collections.module";
 import { AutoTagsModule } from "./auto-tags/auto-tags.module";
 import { WebUiModule } from "./web-ui/web-ui.module";
 import { RequestIdMiddleware } from "./common/request-id.middleware";
@@ -72,6 +73,7 @@ import { SecurityHeadersMiddleware } from "./common/security-headers.middleware"
     ImportListsModule,
     CustomFormatsModule,
     ReleaseProfilesModule,
+    CollectionsModule,
     AutoTagsModule,
     // Must stay last: its catch-all route serves the SPA shell only when nothing
     // above it (native/compat routes) matched.

@@ -31,6 +31,9 @@ export interface DiscoverAddOverrides {
   tags?: string[];
   seriesType?: SeriesType;
   monitored?: boolean;
+  /** UNI-021: explicit caller minimum-availability wins over the TMDB-release-date-derived
+   *  default. Missing (undefined) keeps the existing smart default exactly as before. */
+  minimumAvailability?: "announced" | "in_cinemas" | "released" | "deleted";
 }
 
 /**
@@ -91,6 +94,53 @@ export class MetadataService {
     });
   }
 
+  /** Fetch a TMDB collection's header + parts, annotating each part with whether it's already in
+   *  the library (UNI-021). The single shared computation used by both the movie-add upsert hook
+   *  below and CollectionsService.sync() — the provider knows nothing about the library, so the
+   *  batched ownership check happens here, like `discover()`/`lookup()`. */
+  async getCollectionInfo(tmdbId: number): Promise<{
+    tmdbId: number;
+    name: string;
+    overview: string | null;
+    images: { coverType: string; url: string }[];
+    parts: { tmdbId: number; title: string; releaseDate: string | null; images: { coverType: string; url: string }[]; inLibrary: boolean; libraryId: string | null }[];
+  }> {
+    const p = await this.provider();
+    const data = await p.getCollection(tmdbId);
+    const tmdbIds = data.parts.map((part) => part.tmdbId);
+    const owned = new Map<number, string>();
+    if (tmdbIds.length) {
+      const rows = await this.db.select({ id: schema.movie.id, tmdbId: schema.movie.tmdbId }).from(schema.movie).where(inArray(schema.movie.tmdbId, tmdbIds));
+      for (const r of rows) if (r.tmdbId != null) owned.set(r.tmdbId, r.id);
+    }
+    return {
+      tmdbId: data.tmdbId,
+      name: data.name,
+      overview: data.overview ?? null,
+      images: data.images,
+      parts: data.parts.map((part) => ({
+        tmdbId: part.tmdbId, title: part.title, releaseDate: part.releaseDate ?? null, images: part.images,
+        inLibrary: owned.has(part.tmdbId), libraryId: owned.get(part.tmdbId) ?? null,
+      })),
+    };
+  }
+
+  /** Upsert a `collection` row the first time a movie with that collectionTmdbId is created or
+   *  refreshed. New rows start unmonitored (decision 1); parts are populated from a real TMDB
+   *  `/collection/{id}` fetch. Best-effort — a failure here warns, never fails the movie refresh. */
+  private async ensureCollectionFromMovie(tmdbId: number, name: string): Promise<void> {
+    const existing = await this.db.select({ id: schema.collection.id }).from(schema.collection).where(eq(schema.collection.tmdbId, tmdbId)).limit(1);
+    if (existing[0]) return; // already tracked — the collection sync job keeps its parts fresh
+    const info = await this.getCollectionInfo(tmdbId);
+    const now = new Date().toISOString();
+    await this.db.insert(schema.collection).values({
+      id: newEntityId("col"), tmdbId: info.tmdbId, name: info.name || name || "",
+      overview: info.overview, images: info.images, monitored: false, qualityProfileId: null,
+      rootFolderPath: "", minimumAvailability: "released", searchOnAdd: false,
+      parts: info.parts, lastSyncAt: now, createdAt: now, updatedAt: now,
+    }).onConflictDoNothing();
+  }
+
   async refreshMovie(movieId: string): Promise<{ updated: boolean; title?: string }> {
     const p = await this.provider();
     const movie = await this.db.select().from(schema.movie).where(eq(schema.movie.id, movieId)).limit(1);
@@ -129,6 +179,13 @@ export class MetadataService {
       updatedAt: now,
       lastRefreshedAt: now,
     }).where(eq(schema.movie.id, movieId));
+    // UNI-021: if this movie belongs to a TMDB collection and the collection isn't tracked yet,
+    // upsert it (unmonitored, parts populated) — best-effort, a failure warns not fails the refresh.
+    if (d.collectionTmdbId != null) {
+      await this.ensureCollectionFromMovie(d.collectionTmdbId, d.collectionName ?? "").catch(
+        (err) => this.logger.warn(`collection upsert failed for movie ${movieId}: ${(err as Error).message}`),
+      );
+    }
     // Cast & crew (DETAILPAGE-BE2): replace this title's credit rows with the fresh set. Guarded
     // on the optional contract method (only TMDB implements it). A credits failure is a warn, not
     // a failure of the metadata refresh itself — same best-effort posture as the TVDB backfills.
@@ -411,8 +468,11 @@ export class MetadataService {
       // Movie automation (roadmap C1) searches anything past its minimum-availability gate.
       // TMDB already tells us whether the film has actually come out — use it, rather than
       // defaulting every Discover-added movie to "announced" (always searchable), which
-      // would grab cams for unreleased films the moment automation runs.
-      const minimumAvailability = details.releaseDate && new Date(details.releaseDate) > new Date() ? "released" : "announced";
+      // would grab cams for unreleased films the moment automation runs. An explicit caller
+      // override (e.g. a collection's minimumAvailability, UNI-021) wins; the smart TMDB
+      // default stays the fallback when nothing is passed.
+      const minimumAvailability = overrides.minimumAvailability
+        ?? (details.releaseDate && new Date(details.releaseDate) > new Date() ? "released" : "announced");
       const created = await this.movies.create({
         title: details.title, tmdbId, overview: details.overview ?? "", releaseDate: details.releaseDate,
         monitored: overrides.monitored ?? true, rootFolderPath: overrides.rootFolderPath ?? "", tags: overrides.tags ?? [],

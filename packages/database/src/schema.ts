@@ -399,6 +399,37 @@ export const importExclusion = sqliteTable("import_exclusion", {
   uniqueIndex("import_exclusion_media_ext_idx").on(t.mediaType, t.externalId),
 ]);
 
+// ---------- Collections (UNI-021) ----------
+// One part of a TMDB movie collection, denormalized into `collection.parts` (a JSON column,
+// same convention as movie.images/genres — not a separate relational table). `inLibrary` /
+// `libraryId` are recomputed on every sync; missing-count is parts with inLibrary false,
+// computed at read/sync time, not stored.
+export interface CollectionPart {
+  tmdbId: number;
+  title: string;
+  releaseDate: string | null;
+  images: { coverType: string; url: string }[];
+  inLibrary: boolean;
+  libraryId: string | null;
+}
+
+export const collection = sqliteTable("collection", {
+  id: text("id").primaryKey(),
+  tmdbId: integer("tmdb_id").notNull(),
+  name: text("name").notNull(),
+  overview: text("overview"),
+  images: json<{ coverType: string; url: string }[]>("images"),
+  monitored: bool("monitored", false),
+  qualityProfileId: text("quality_profile_id").references(() => qualityProfile.id, { onDelete: "set null" }),
+  rootFolderPath: text("root_folder_path").notNull().default(""),
+  minimumAvailability: text("minimum_availability").notNull().default("released"),
+  searchOnAdd: bool("search_on_add", false),
+  parts: json<CollectionPart[]>("parts"),
+  lastSyncAt: nullableIso("last_sync_at"),
+  createdAt: iso("created_at"),
+  updatedAt: iso("updated_at"),
+}, (t) => [uniqueIndex("collection_tmdb_idx").on(t.tmdbId)]);
+
 // ---------- 5. Acquisition ----------
 // Remote path mapping (roadmap P1, gap report B8): translates a download client's
 // self-reported content path (e.g. /downloads/x inside its own container) into the path
@@ -637,6 +668,7 @@ export const schema = {
   autoTag,
   importList,
   importExclusion,
+  collection,
 };
 
 export type Schema = typeof schema;
