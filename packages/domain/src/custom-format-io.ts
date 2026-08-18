@@ -122,6 +122,10 @@ export function customFormatToUpstream(specs: CustomFormatSpec[]): UpstreamCusto
         // MediaNexus-only condition; no upstream equivalent — surfaced on export as-is and
         // dropped (with a reason) if that export is ever re-imported elsewhere.
         return { ...base, implementation: "__MediaNexusIndexerSpecification__", fields: { value: spec.indexerId } };
+      case "indexerFlag":
+        // MediaNexus-only condition (SON-025b); no upstream indexer-flag spec — same pattern as
+        // `indexer`: surfaced on export, dropped on any re-import elsewhere.
+        return { ...base, implementation: "__MediaNexusIndexerFlagSpecification__", fields: { value: spec.flag } };
     }
   });
 }

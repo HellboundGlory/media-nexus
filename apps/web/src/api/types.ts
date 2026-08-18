@@ -178,6 +178,9 @@ export interface Release {
   size: number;
   seeders: number | null;
   quality: { source: string; resolution: string };
+  // Indexer availability/ratio flags (SON-025b) — present only when the indexer exposed them.
+  downloadVolumeFactor?: number;
+  uploadVolumeFactor?: number;
   /** Attached by DecisionService to POST /search results (DETAILPAGE-FE1): rejected releases
    *  carry their reasons here (with a Rejected flag in the UI + a working Grab only when
    *  approved). undefined when the search response doesn't include a decision. */
@@ -488,11 +491,13 @@ export type CustomFormatSpec =
   | { type: "source"; source: SourceValue; negate: boolean; required?: boolean; caseSensitive: boolean }
   | { type: "modifier"; modifier: ModifierValue; negate: boolean; required?: boolean; caseSensitive: boolean }
   | { type: "releaseGroup"; releaseGroup: string; useRegex?: boolean; negate: boolean; required?: boolean; caseSensitive: boolean }
-  | { type: "releaseType"; releaseType: "single" | "multi" | "season"; negate: boolean; required?: boolean; caseSensitive: boolean };
+  | { type: "releaseType"; releaseType: "single" | "multi" | "season"; negate: boolean; required?: boolean; caseSensitive: boolean }
+  | { type: "indexerFlag"; flag: IndexerFlagValue; negate: boolean; required?: boolean; caseSensitive: boolean };
 
 export type ResolutionValue = "unknown" | "480p" | "576p" | "720p" | "1080p" | "2160p";
 export type SourceValue = "unknown" | "sd" | "dvd" | "hdtv" | "web" | "webdl" | "webrip" | "bluray";
 export type ModifierValue = "none" | "brdisk" | "remux";
+export type IndexerFlagValue = "freeleech" | "freeleech75" | "halfleech" | "freeleech25" | "doubleUpload";
 
 export interface CustomFormat {
   id: string;

@@ -128,6 +128,15 @@ export const customFormatSpecSchema = z.discriminatedUnion("type", [
     required: z.boolean().default(true),
     caseSensitive: z.boolean().default(false),
   }),
+  z.object({
+    type: z.literal("indexerFlag"),
+    /** Availability/ratio flag derived from the release's volume factors (SON-025b). The
+     *  threshold mapping lives in `releaseFlagMatches` so it can never drift from the UI labels. */
+    flag: z.enum(["freeleech", "freeleech75", "halfleech", "freeleech25", "doubleUpload"]),
+    negate: z.boolean().default(false),
+    required: z.boolean().default(true),
+    caseSensitive: z.boolean().default(false),
+  }),
 ]);
 export type CustomFormatSpec =
   | { type: "term"; term: string; useRegex?: boolean; negate?: boolean; required?: boolean; caseSensitive?: boolean }
@@ -138,8 +147,10 @@ export type CustomFormatSpec =
   | { type: "source"; source: QualitySource; negate?: boolean; required?: boolean; caseSensitive?: boolean }
   | { type: "modifier"; modifier: QualityModifier; negate?: boolean; required?: boolean; caseSensitive?: boolean }
   | { type: "releaseGroup"; releaseGroup: string; useRegex?: boolean; negate?: boolean; required?: boolean; caseSensitive?: boolean }
-  | { type: "releaseType"; releaseType: ReleaseTypeValue; negate?: boolean; required?: boolean; caseSensitive?: boolean };
+  | { type: "releaseType"; releaseType: ReleaseTypeValue; negate?: boolean; required?: boolean; caseSensitive?: boolean }
+  | { type: "indexerFlag"; flag: IndexerFlagValue; negate?: boolean; required?: boolean; caseSensitive?: boolean };
 export type ReleaseTypeValue = "single" | "multi" | "season";
+export type IndexerFlagValue = "freeleech" | "freeleech75" | "halfleech" | "freeleech25" | "doubleUpload";
 
 export const customFormatSchema = z.object({
   name: z.string().min(1),
@@ -179,6 +190,11 @@ export interface CustomFormatMatchInput {
   /** Series release type derived from episode multiplicity; undefined for a movie or
    *  a title that names no episode (releaseType specs never satisfy an undefined input). */
   releaseType?: ReleaseTypeValue;
+  /** Raw indexer volume factors (SON-025b). Present for live releases; absent when scoring an
+   *  existing library file (its metadata is gone — indexerFlag specs behave like language/indexer
+   *  specs there: non-negated never matches, negated always matches). */
+  downloadVolumeFactor?: number;
+  uploadVolumeFactor?: number;
 }
 
 export function releaseMatchInput(release: Release): CustomFormatMatchInput {
@@ -193,6 +209,8 @@ export function releaseMatchInput(release: Release): CustomFormatMatchInput {
     indexerId: release.indexerId,
     releaseGroup: parseReleaseGroup(release.title) ?? undefined,
     releaseType: deriveReleaseType(release.title),
+    downloadVolumeFactor: release.downloadVolumeFactor,
+    uploadVolumeFactor: release.uploadVolumeFactor,
   };
 }
 
@@ -307,6 +325,35 @@ function releaseTypeMatches(spec: Extract<CustomFormatSpec, { type: "releaseType
   return spec.negate ? !matched : matched;
 }
 
+/**
+ * Does a release's raw volume factors exhibit a given indexer flag? THE single home of the
+ * threshold mapping (SON-025b) — `indexerFlagMatches` and the UI badge labels both call this,
+ * so the values 0/.25/.5/.75 and the upload >1 rule can never drift between matcher and display.
+ * An undefined factor never matches (existing files / releases without this data).
+ */
+export function releaseFlagMatches(rel: { downloadVolumeFactor?: number; uploadVolumeFactor?: number }, flag: IndexerFlagValue): boolean {
+  switch (flag) {
+    case "freeleech": return rel.downloadVolumeFactor !== undefined && rel.downloadVolumeFactor === 0;
+    case "freeleech75": return rel.downloadVolumeFactor !== undefined && rel.downloadVolumeFactor === 0.25;
+    case "halfleech": return rel.downloadVolumeFactor !== undefined && rel.downloadVolumeFactor === 0.5;
+    case "freeleech25": return rel.downloadVolumeFactor !== undefined && rel.downloadVolumeFactor === 0.75;
+    case "doubleUpload": return rel.uploadVolumeFactor !== undefined && rel.uploadVolumeFactor > 1;
+  }
+}
+
+/** Matches an indexerFlag spec against a release view, via the shared `releaseFlagMatches`
+ *  threshold home (the web's badge mirrors those same thresholds locally). */
+function indexerFlagMatches(spec: Extract<CustomFormatSpec, { type: "indexerFlag" }>, input: CustomFormatMatchInput): boolean {
+  // Undefined factors (existing library file, or a release where the indexer exposed no
+  // volume data) never match — non-negated fails, negated passes. Same conservative floor as
+  // language/indexer specs.
+  const matched = releaseFlagMatches(
+    { downloadVolumeFactor: input.downloadVolumeFactor, uploadVolumeFactor: input.uploadVolumeFactor },
+    spec.flag,
+  );
+  return spec.negate ? !matched : matched;
+}
+
 /** Whether a single spec passes for a given release view (negate already applied). */
 export function matchSpec(spec: CustomFormatSpec, input: CustomFormatMatchInput): boolean {
   switch (spec.type) {
@@ -319,6 +366,7 @@ export function matchSpec(spec: CustomFormatSpec, input: CustomFormatMatchInput)
     case "modifier": return modifierMatches(spec, input);
     case "releaseGroup": return releaseGroupMatches(spec, input);
     case "releaseType": return releaseTypeMatches(spec, input);
+    case "indexerFlag": return indexerFlagMatches(spec, input);
   }
 }
 

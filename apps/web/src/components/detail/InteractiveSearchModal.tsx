@@ -10,7 +10,24 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X, Download, Ban } from "lucide-react";
 import { api } from "../../api/client";
 import type { Release } from "../../api/types";
-import { formatBytes, Spinner } from "../../lib/ui";
+import { Badge, formatBytes, Spinner } from "../../lib/ui";
+
+/** SON-025b: compact label for the strongest indexer flag a release carries, derived from its
+ *  raw volume factors. Deliberately mirrors packages/domain/src/custom-formats.ts releaseFlagLabel
+ *  (the web app never imports the domain package — types are mirrored in api/types.ts), so keep
+ *  the 0/.25/.5/.75 and upload >1 thresholds in lockstep with it. undefined when neither factor
+ *  signals a flag (the common case). */
+function flagLabel(r: Release): string | undefined {
+  const d = r.downloadVolumeFactor;
+  if (d !== undefined) {
+    if (d === 0) return "FL";
+    if (d === 0.25) return "FL 75%";
+    if (d === 0.5) return "FL 50%";
+    if (d === 0.75) return "FL 25%";
+  }
+  if (r.uploadVolumeFactor !== undefined && r.uploadVolumeFactor > 1) return "2x UL";
+  return undefined;
+}
 
 export interface SearchScope {
   label: string;
@@ -91,6 +108,7 @@ export function InteractiveSearchModal({
               {releases?.map((r) => {
                 const decision = r.decision;
                 const rejected = !decision?.approved;
+                const flag = flagLabel(r);
                 return (
                   <li
                     key={r.id}
@@ -104,6 +122,7 @@ export function InteractiveSearchModal({
                         <span>{r.indexerName}</span>
                         <span>· {formatBytes(r.size)}</span>
                         {r.seeders != null && <span>· {r.seeders} SE</span>}
+                        {flag && <Badge tone="info">{flag}</Badge>}
                         {r.quality && <span>· {r.quality.resolution}</span>}
                       </div>
                       {rejected && (

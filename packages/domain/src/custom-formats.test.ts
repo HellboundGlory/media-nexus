@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   matchSpec, matchFormat, calculateFormatScore, matchingFormats,
   releaseMatchInput, existingFileMatchInput,
-  type CustomFormat, type CustomFormatSpec, type CustomFormatMatchInput,
+  type CustomFormat, type CustomFormatSpec, type CustomFormatMatchInput, type IndexerFlagValue,
 } from "./custom-formats";
 import { parseLanguages, parseReleaseGroup } from "./parser";
 import type { Release } from "./release";
@@ -276,6 +276,35 @@ describe("SON-025/RAD-010 — new condition types", () => {
     // a movie release never satisfies any releaseType spec, regardless of negate
     expect(matchSpec(s("single"), movie)).toBe(false);
     expect(matchSpec({ ...s("single"), negate: true }, movie)).toBe(false);
+  });
+});
+
+describe("indexerFlag spec", () => {
+  const flag = (f: IndexerFlagValue, negate = false) => ({ type: "indexerFlag" as const, flag: f, negate, required: true, caseSensitive: false });
+  const from = (over: Partial<Release>) => releaseMatchInput(release(over));
+  it("matches each flag from its real volume factor", () => {
+    expect(matchSpec(flag("freeleech"), from({ downloadVolumeFactor: 0 }))).toBe(true);
+    expect(matchSpec(flag("freeleech75"), from({ downloadVolumeFactor: 0.25 }))).toBe(true);
+    expect(matchSpec(flag("halfleech"), from({ downloadVolumeFactor: 0.5 }))).toBe(true);
+    expect(matchSpec(flag("freeleech25"), from({ downloadVolumeFactor: 0.75 }))).toBe(true);
+    expect(matchSpec(flag("doubleUpload"), from({ uploadVolumeFactor: 2 }))).toBe(true);
+  });
+  it("does not match wrong or absent factors", () => {
+    expect(matchSpec(flag("freeleech"), from({ downloadVolumeFactor: 0.5 }))).toBe(false);
+    expect(matchSpec(flag("freeleech"), from({}))).toBe(false); // factor absent
+    expect(matchSpec(flag("freeleech75"), from({ downloadVolumeFactor: 0.5 }))).toBe(false);
+    expect(matchSpec(flag("doubleUpload"), from({ uploadVolumeFactor: 1 }))).toBe(false);
+    expect(matchSpec(flag("doubleUpload"), from({}))).toBe(false);
+  });
+  it("applies negate", () => {
+    expect(matchSpec(flag("freeleech", true), from({ downloadVolumeFactor: 0.5 }))).toBe(true);
+    expect(matchSpec(flag("freeleech", true), from({ downloadVolumeFactor: 0 }))).toBe(false);
+  });
+  it("conservative floor for an existing library file (no volume data): non-negated fails, negated passes", () => {
+    const ef = existingFileMatchInput({ relativePath: "Movie.2020.1080p.mkv", size: 1000, quality: Q });
+    expect(ef.downloadVolumeFactor).toBeUndefined();
+    expect(matchSpec(flag("freeleech"), ef)).toBe(false);
+    expect(matchSpec(flag("freeleech", true), ef)).toBe(true);
   });
 });
 

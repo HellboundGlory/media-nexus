@@ -66,6 +66,30 @@ describe("newznab parser", () => {
     expect(releases[0].size).toBe(0);
     expect(releases[0].categories).toEqual([]);
   });
+
+  it("captures downloadvolumefactor/uploadvolumefactor and derives isFreeleech (SON-025b)", () => {
+    const releases = parseNewznabJson({
+      channel: { item: [{
+        title: "Dune 2021 1080p WEB", guid: "g1", link: "l1", size: "9000000000",
+        "newznab:attr": [
+          { name: "size", value: "9000000000" },
+          { name: "downloadvolumefactor", value: "0" },
+          { name: "uploadvolumefactor", value: "2" },
+        ],
+      }] },
+    }, { indexerId: "i1", indexerName: "idx", protocol: "torrent" });
+    const r = releases[0];
+    expect(r.isFreeleech).toBe(true); // the pre-existing === "0" derivation preserved
+    expect(r.downloadVolumeFactor).toBe(0);
+    expect(r.uploadVolumeFactor).toBe(2); // now captured (was not before)
+  });
+
+  it("leaves factors undefined + isFreeleech false when a feed provides no volume factors (regression)", () => {
+    const releases = parseNewznabJson({ channel: { item: [{ title: "Movie 2020 720p", guid: "g", link: "l", size: "1000" }] } }, { indexerId: "i", indexerName: "n", protocol: "torrent" });
+    expect(releases[0].isFreeleech).toBe(false);
+    expect(releases[0].downloadVolumeFactor).toBeUndefined();
+    expect(releases[0].uploadVolumeFactor).toBeUndefined();
+  });
 });
 
 describe("NewznabProvider (HTTP)", () => {

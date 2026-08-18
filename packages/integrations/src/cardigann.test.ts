@@ -220,4 +220,52 @@ describe("CardigannProvider", () => {
     expect(releases[0].categories).toContain(40);
     expect(releases[0].seeders).toBe(9);
   });
+
+  it("derives isFreeleech + raw volume factors from downloadvolumefactor/uploadvolumefactor (SON-025b)", async () => {
+    const url = await listen((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ results: [{ title: "Show.S01E01.1080p.WEB", link: "https://x/get/1", size: "5000000000", seeders: "5", downloadvolumefactor: "0", uploadvolumefactor: "2" }] }));
+    });
+    const defText = `name: VolFactorTrack\nsettings:\n  - name: baseUrl\n    type: text\n    default: ${url}\nsearch:\n  paths:\n    - path: /api\n      response:\n        type: json\n  rows:\n    selector: results\n  fields:\n    title:\n      selector: title\n    download:\n      selector: link\n    size:\n      selector: size\n    seeders:\n      selector: seeders\n    downloadvolumefactor:\n      selector: downloadvolumefactor\n    uploadvolumefactor:\n      selector: uploadvolumefactor`;
+    const provider = new CardigannProvider({ key: "cg-vf", protocol: "torrent", definitionText: defText, settings: { baseUrl: url } });
+    const releases = await provider.search({ mediaType: "series", query: "show" });
+    expect(releases).toHaveLength(1);
+    // The actual bug fixed: this was hardcoded `isFreeleech: false` before SON-025b.
+    expect(releases[0].isFreeleech).toBe(true);
+    expect(releases[0].downloadVolumeFactor).toBe(0);
+    expect(releases[0].uploadVolumeFactor).toBe(2);
+  });
+
+  it("regression: a definition with no volume-factor fields is completely unchanged (isFreeleech false, no raw factors)", async () => {
+    const url = await listen((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ results: [{ title: "Show.S01E02.720p.HDTV", link: "https://x/get/2", size: "1000000000", seeders: "3" }] }));
+    });
+    const defText = `name: PlainTrack\nsettings:\n  - name: baseUrl\n    type: text\n    default: ${url}\nsearch:\n  paths:\n    - path: /api\n      response:\n        type: json\n  rows:\n    selector: results\n  fields:\n    title:\n      selector: title\n    download:\n      selector: link\n    size:\n      selector: size\n    seeders:\n      selector: seeders`;
+    const provider = new CardigannProvider({ key: "cg-plain", protocol: "torrent", definitionText: defText, settings: { baseUrl: url } });
+    const releases = await provider.search({ mediaType: "series", query: "show" });
+    expect(releases).toHaveLength(1);
+    expect(releases[0].isFreeleech).toBe(false);
+    expect(releases[0].downloadVolumeFactor).toBeUndefined();
+    expect(releases[0].uploadVolumeFactor).toBeUndefined();
+  });
+
+  it("regression: a case-only freeleech selector with no matching case yields '' -> NOT freeleech (SON-025b)", async () => {
+    // A DOM row with NO span.fl element: the downloadvolumefactor case-only selector matches no
+    // case and has no "*" fallback, so the field evaluates to "" (not "0"). That empty string
+    // must read as "no data" (isFreeleech false), NOT be coerced to 0 (isFreeleech true).
+    const url = await listen((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(`<table><tbody>
+        <tr class="item"><td class="name"><a href="/d/1">Movie.2020.1080p.WEB</a></td><td class="size">1.5 GB</td><td class="seeders">10</td></tr>
+      </tbody></table>`);
+    });
+    const defText = `name: CaseOnlyVF\nsettings:\n  - name: baseUrl\n    type: text\n    default: ${url}\nsearch:\n  paths:\n    - path: /api\n  rows:\n    selector: tr.item\n  fields:\n    title:\n      selector: td.name a\n    download:\n      selector: td.name a\n      attribute: href\n    size:\n      selector: td.size\n    seeders:\n      selector: td.seeders\n    downloadvolumefactor:\n      case:\n        "span.fl": "0"`;
+    const provider = new CardigannProvider({ key: "cg-casevf", protocol: "torrent", definitionText: defText, settings: { baseUrl: url } });
+    const releases = await provider.search({ mediaType: "movie", query: "movie" });
+    expect(releases).toHaveLength(1);
+    expect(releases[0].isFreeleech).toBe(false);
+    expect(releases[0].downloadVolumeFactor).toBeUndefined();
+    expect(releases[0].uploadVolumeFactor).toBeUndefined();
+  });
 });

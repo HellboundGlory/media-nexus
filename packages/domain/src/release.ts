@@ -28,6 +28,15 @@ export const releaseSchema = z.object({
   isFreeleech: z.boolean().default(false),
   isProper: z.boolean().default(false),
   isRepack: z.boolean().default(false),
+  // Indexer availability/ratio flags (SON-025b): the RAW volume factors as populated by each
+  // provider from the Newznab/Torznab/Cardigann downloadvolumefactor/uploadvolumefactor
+  // attributes — 0 = 100% free, 0.25 = 75% free, 0.5 = halfleech, 0.75 = 25% free, and an
+  // upload factor >1 = double/bonus upload. `isFreeleech` stays the derived boolean
+  // (downloadVolumeFactor === 0) for backward compat; these additive fields let indexerFlag
+  // custom-format specs and the UI see the real numbers. Optional — most releases won't
+  // carry them.
+  downloadVolumeFactor: z.number().nonnegative().optional(),
+  uploadVolumeFactor: z.number().nonnegative().optional(),
   /** Languages detected from the release title (ISO 639-1/639-2 codes). Optional so
    *  existing constructions without it stay valid; the custom-format matcher falls back
    *  to title detection when it's absent (roadmap P2). */

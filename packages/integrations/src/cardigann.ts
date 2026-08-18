@@ -602,6 +602,17 @@ function buildRelease(
   const infohash = String(row["infohash"] ?? "");
   const seeders = num(row["seeders"]) ?? 0;
   const leechers = num(row["leechers"]) ?? 0;
+  // SON-025b: a Cardigann definition MAY define downloadvolumefactor/uploadvolumefactor fields
+  // (a standard Jackett/Cardigann convention). When present (string or number, per how the
+  // definition's selector evaluated), parse them into the raw volume factors and derive
+  // isFreeleech from the download factor. Reuse the existing `num()` parser (already used for
+  // seeders/leechers here): unlike a bare Number(), it requires a digit to match, so an empty
+  // string — the fallback a case-only freeleech selector produces for a row with no matching
+  // case and no "*" catch-all — correctly reads as "no data" (undefined => isFreeleech false),
+  // NOT as 0. When the definition has no such field at all, row[...] is undefined and both
+  // raw fields stay undefined with isFreeleech false, exactly today's behavior (strictly additive).
+  const downloadVolumeFactor = num(row["downloadvolumefactor"]);
+  const uploadVolumeFactor = num(row["uploadvolumefactor"]);
   const id = String(row["guid"] ?? "") || infohash || download || magnet || details || `row-${seed}`;
   let downloadUrl = download || magnet || "";
   if (!downloadUrl && infohash && /^[a-fA-F0-9]{32,40}$/.test(infohash)) {
@@ -623,7 +634,11 @@ function buildRelease(
     magnetUrl: magnet || downloadUrl.startsWith("magnet:") ? downloadUrl : undefined,
     infoUrl: details || linkOr(download) || undefined,
     quality: parseReleaseTitle(title).quality,
-    isFreeleech: false,
+    // was hardcoded false before SON-025b — now derived from the real download factor when the
+    // definition provides one, still false when it doesn't.
+    downloadVolumeFactor,
+    uploadVolumeFactor,
+    isFreeleech: downloadVolumeFactor === 0,
     isProper: /\bproper\b/i.test(title),
     isRepack: /\brepack\b/i.test(title),
   };

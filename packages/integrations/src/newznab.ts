@@ -82,6 +82,10 @@ export function parseNewznabJson(
       magnetUrl: nzString(newznabAttr(item, "magneturl")) ?? (item.link?.startsWith("magnet:") ? item.link : undefined),
       infoUrl: item.guid ?? item.link,
       quality: parsed.quality,
+      // SON-025b: capture both raw volume factors (may be undefined — most feeds lack them);
+      // isFreeleech stays derived from the download factor === "0" exactly as before.
+      downloadVolumeFactor: toNumber(newznabAttr(item, "downloadvolumefactor")),
+      uploadVolumeFactor: toNumber(newznabAttr(item, "uploadvolumefactor")),
       isFreeleech: newznabAttr(item, "downloadvolumefactor") === "0",
       isProper: /\bproper\b/i.test(title),
       isRepack: /\brepack\b/i.test(title),

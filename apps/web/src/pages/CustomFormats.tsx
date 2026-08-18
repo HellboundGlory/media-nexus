@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 // CustomFormats — the settings CRUD surface for custom formats (QUALITYPROFILES-1 / UNI-015,
-// extended by SON-025 + UNI-025): the condition-row builder now covers all 9 condition types
-// (term/size/language/indexer/resolution/source/modifier/releaseGroup/releaseType), has a
-// `required` checkbox per row (the upstream OR-within-type grouping semantics), and supports
-// Import/Export of the Sonarr/Radarr custom-format JSON so community format packs
-// (Dictionarry/Dumpstarr etc.) can be pasted in and formats downloaded.
+// extended by SON-025 + UNI-025 + SON-025b): the condition-row builder now covers all 10
+// condition types (term/size/language/indexer/resolution/source/modifier/releaseGroup/
+// releaseType/indexerFlag), has a `required` checkbox per row (the upstream OR-within-type
+// grouping semantics), and supports Import/Export of the Sonarr/Radarr custom-format JSON so
+// community format packs (Dictionarry/Dumpstarr etc.) can be pasted in and formats downloaded.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Plus, Trash2, Upload } from "lucide-react";
 import { api } from "../api/client";
-import type { CustomFormat, CustomFormatSpec, IndexerRow, QualityRegistryItem, SourceValue, ResolutionValue, ModifierValue } from "../api/types";
+import type { CustomFormat, CustomFormatSpec, IndexerRow, QualityRegistryItem, SourceValue, ResolutionValue, ModifierValue, IndexerFlagValue } from "../api/types";
 import { Badge, ErrorState } from "../lib/ui";
 import { Modal } from "../components/Modal";
 
@@ -31,6 +31,7 @@ interface SpecRow {
   modifier: ModifierValue;
   releaseGroup: string;
   releaseType: "single" | "multi" | "season";
+  indexerFlag: IndexerFlagValue;
   negate: boolean;
   required: boolean;
 }
@@ -38,13 +39,13 @@ interface SpecRow {
 const SPEC_LABEL: Record<SpecType, string> = {
   term: "Term / Regex", size: "Size", language: "Language", indexer: "Indexer",
   resolution: "Resolution", source: "Source", modifier: "Modifier",
-  releaseGroup: "Release Group", releaseType: "Release Type",
+  releaseGroup: "Release Group", releaseType: "Release Type", indexerFlag: "Indexer Flag",
 };
 
 const emptyRow = (): SpecRow => ({
   type: "term", term: "", useRegex: false, caseSensitive: false, min: "", max: "",
   language: "", indexerId: "", resolution: "unknown", source: "unknown", modifier: "none",
-  releaseGroup: "", releaseType: "single", negate: false, required: true,
+  releaseGroup: "", releaseType: "single", indexerFlag: "freeleech", negate: false, required: true,
 });
 
 function toRow(spec: CustomFormatSpec): SpecRow {
@@ -62,6 +63,7 @@ function toRow(spec: CustomFormatSpec): SpecRow {
     modifier: spec.type === "modifier" ? spec.modifier : "none",
     releaseGroup: spec.type === "releaseGroup" ? spec.releaseGroup : "",
     releaseType: spec.type === "releaseType" ? spec.releaseType : "single",
+    indexerFlag: spec.type === "indexerFlag" ? spec.flag : "freeleech",
     negate: spec.negate,
     required: spec.required !== false,
   };
@@ -83,6 +85,7 @@ function toSpec(row: SpecRow): CustomFormatSpec {
     case "modifier": return { type: "modifier", modifier: row.modifier, ...base };
     case "releaseGroup": return { type: "releaseGroup", releaseGroup: row.releaseGroup, useRegex: row.useRegex, ...base };
     case "releaseType": return { type: "releaseType", releaseType: row.releaseType, ...base };
+    case "indexerFlag": return { type: "indexerFlag", flag: row.indexerFlag, ...base };
   }
 }
 
@@ -104,6 +107,7 @@ function specSummary(spec: CustomFormatSpec): { text: string; tone: "ok" | "warn
     case "modifier": return { text: `${neg}mod: ${spec.modifier}`, tone: "info" };
     case "releaseGroup": return { text: `${neg}group: ${spec.releaseGroup}${spec.useRegex ? " /re" : ""}`, tone: "warn" };
     case "releaseType": return { text: `${neg}type: ${spec.releaseType}`, tone: "ok" };
+    case "indexerFlag": return { text: `${neg}flag: ${spec.flag}`, tone: "warn" };
   }
 }
 
@@ -344,6 +348,15 @@ export default function CustomFormats() {
                         <option value="single">Single episode</option>
                         <option value="multi">Multi episode</option>
                         <option value="season">Season pack</option>
+                      </select>
+                    )}
+                    {r.type === "indexerFlag" && (
+                      <select value={r.indexerFlag} onChange={(e) => setRow(i, { indexerFlag: e.target.value as IndexerFlagValue })} className={selectCls}>
+                        <option value="freeleech">Freeleech</option>
+                        <option value="freeleech75">75% Freeleech</option>
+                        <option value="halfleech">Halfleech</option>
+                        <option value="freeleech25">25% Freeleech</option>
+                        <option value="doubleUpload">Double Upload</option>
                       </select>
                     )}
                   </div>
