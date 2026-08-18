@@ -110,7 +110,7 @@ export default function Logs() {
           </select>
         </label>
         <form
-          className="flex gap-2"
+          className="flex items-end gap-2"
           onSubmit={(e) => { e.preventDefault(); setSearch(searchDraft.trim()); }}
         >
           <label className="block">
