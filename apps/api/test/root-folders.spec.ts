@@ -7,9 +7,10 @@
  * RemotePathMappingsService, and AcquisitionService's consumption of both.
  */
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
 import { createDb, schema } from "@medianexus/database";
 import { EventBus } from "@medianexus/events";
@@ -38,33 +39,81 @@ async function freshDb() {
 }
 
 describe("RootFoldersService", () => {
-  it("rejects a path that doesn't exist on disk", async () => {
+  it("rejects a path that doesn't exist, with a structured path_missing reason (create-if-missing off)", async () => {
     const db = await freshDb();
     const svc = new RootFoldersService(db, new ConfigService(db));
-    await expect(svc.create({ path: join(dir, "does-not-exist"), name: "", isDefault: false })).rejects.toThrow();
+    const missing = join(dir, "does-not-exist");
+    await expect(svc.create({ path: missing, name: "" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      details: { reason: "path_missing" },
+    });
+    expect(existsSync(missing)).toBe(false); // must NOT silently create it
   });
 
-  it("makes the first root folder the default automatically, even when isDefault wasn't requested", async () => {
+  it("creates the directory and the row when createIfMissing is set", async () => {
     const db = await freshDb();
     const svc = new RootFoldersService(db, new ConfigService(db));
-    const row = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: false });
-    expect(row.isDefault).toBe(true);
+    const missing = join(dir, "will-be-created");
+    const row = await svc.create({ path: missing, name: "", createIfMissing: true });
+    expect(existsSync(missing)).toBe(true);
+    expect(row.path).toBe(missing);
   });
 
-  it("only one root folder is ever default", async () => {
+  it("rejects a path that exists but is not a directory, even with createIfMissing", async () => {
     const db = await freshDb();
     const svc = new RootFoldersService(db, new ConfigService(db));
-    const a = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: false });
-    const b = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: true });
-    const list = await svc.list();
-    expect(list.find((r) => r.id === a.id)?.isDefault).toBe(false);
-    expect(list.find((r) => r.id === b.id)?.isDefault).toBe(true);
+    const file = join(dir, "afile");
+    writeFileSync(file, "x");
+    await expect(svc.create({ path: file, name: "", createIfMissing: true })).rejects.toThrow();
+  });
+
+  it("makes the first root folder the default for BOTH media types automatically, even when not requested", async () => {
+    const db = await freshDb();
+    const svc = new RootFoldersService(db, new ConfigService(db));
+    const row = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "" });
+    expect(row.isDefaultMovie).toBe(true);
+    expect(row.isDefaultSeries).toBe(true);
+  });
+
+  it("keeps movie and series defaults independent (per-type invariant)", async () => {
+    const db = await freshDb();
+    const svc = new RootFoldersService(db, new ConfigService(db));
+    const a = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "" }); // first -> both defaults
+    const b = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "" });
+    // Make B the movie default: this must clear A's MOVIE flag but NOT A's series flag.
+    await svc.update(b.id, { isDefaultMovie: true });
+    let list = await svc.list();
+    expect(list.find((r) => r.id === a.id)?.isDefaultMovie).toBe(false);
+    expect(list.find((r) => r.id === b.id)?.isDefaultMovie).toBe(true);
+    expect(list.find((r) => r.id === a.id)?.isDefaultSeries).toBe(true); // series default untouched
+    // Now make B the series default too: clears A's series flag, movie flags unchanged.
+    await svc.update(b.id, { isDefaultSeries: true });
+    list = await svc.list();
+    expect(list.find((r) => r.id === b.id)?.isDefaultSeries).toBe(true);
+    expect(list.find((r) => r.id === a.id)?.isDefaultSeries).toBe(false);
+    expect(list.find((r) => r.id === b.id)?.isDefaultMovie).toBe(true); // movie default untouched
+  });
+
+  it("update() can demote one type without touching the other type's default on the same row", async () => {
+    const db = await freshDb();
+    const svc = new RootFoldersService(db, new ConfigService(db));
+    const a = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", createIfMissing: true });
+    const b = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", createIfMissing: true });
+    // a is default for both (first row). Set b as the movie default only.
+    await svc.update(b.id, { isDefaultMovie: true });
+    const aAfter = await svc.get(a.id);
+    expect(aAfter.isDefaultSeries).toBe(true);
+    expect(aAfter.isDefaultMovie).toBe(false);
+    const bDef = await svc.getDefault("movie");
+    expect(bDef?.id).toBe(b.id);
+    const seriesDef = await svc.getDefault("series");
+    expect(seriesDef?.id).toBe(a.id); // a is still the series default
   });
 
   it("reports live accessibility and free space for an existing path", async () => {
     const db = await freshDb();
     const svc = new RootFoldersService(db, new ConfigService(db));
-    const row = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: false });
+    const row = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "" });
     const view = await svc.get(row.id);
     expect(view.accessible).toBe(true);
     expect(view.freeBytes).toBeGreaterThan(0);
@@ -74,7 +123,7 @@ describe("RootFoldersService", () => {
     const db = await freshDb();
     const svc = new RootFoldersService(db, new ConfigService(db));
     const p = mkdtempSync(join(dir, "root-"));
-    const row = await svc.create({ path: p, name: "", isDefault: true });
+    const row = await svc.create({ path: p, name: "", isDefaultMovie: true, isDefaultSeries: true });
     const now = new Date().toISOString();
     await db.insert(schema.movie).values({
       id: "m1", tmdbId: 1, title: "X", overview: "", status: "released", releaseDate: "2020-01-01",
@@ -84,14 +133,53 @@ describe("RootFoldersService", () => {
     await expect(svc.remove(row.id)).rejects.toThrow();
   });
 
-  it("promotes the next-oldest root folder to default when the default is removed", async () => {
+  it("promotes the next-oldest root folder to movie default when the movie default is removed", async () => {
     const db = await freshDb();
     const svc = new RootFoldersService(db, new ConfigService(db));
-    const a = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: false }); // first -> default
-    const b = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "", isDefault: false });
+    const a = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "" }); // first -> movie+series default
+    const b = await svc.create({ path: mkdtempSync(join(dir, "root-")), name: "" });
     await svc.remove(a.id);
-    const remaining = await svc.getDefault();
-    expect(remaining?.id).toBe(b.id);
+    const remainingMovie = await svc.getDefault("movie");
+    expect(remainingMovie?.id).toBe(b.id);
+    const remainingSeries = await svc.getDefault("series");
+    expect(remainingSeries?.id).toBe(b.id);
+  });
+});
+
+describe("root_folder forward migration (0009, per-type default flags)", () => {
+  it("carries an existing single global is_default forward into BOTH per-type flags (non-destructive)", () => {
+    const dbPath = join(dir, "rf-oldshape.db");
+    const db = new Database(dbPath);
+    // Pre-0009 root_folder shape: one global `is_default` boolean (single-default invariant).
+    db.exec(
+      "CREATE TABLE `root_folder` (id text PRIMARY KEY NOT NULL, path text NOT NULL, name text NOT NULL DEFAULT '', is_default integer DEFAULT false NOT NULL, created_at text NOT NULL);" +
+      "CREATE UNIQUE INDEX `root_folder_path_idx` ON `root_folder` (path);",
+    );
+    db.exec("INSERT INTO root_folder (id, path, name, is_default, created_at) VALUES ('rf1','/a','A',1,'2024-01-01T00:00:00.000Z'),('rf2','/b','B',0,'2024-01-02T00:00:00.000Z');");
+
+    // Real generated migration file that adds the per-type flags to root_folder.
+    const migDir = resolve(__dirname, "../../../packages/database/migrations");
+    const files = readdirSync(migDir).filter((f) => f.endsWith(".sql")).sort();
+    const mig = files.filter((f) => {
+      const s = readFileSync(join(migDir, f), "utf8");
+      return s.includes("root_folder") && s.includes("is_default_movie");
+    }).pop();
+    if (!mig) throw new Error("no root_folder per-type migration found");
+    for (const stmt of readFileSync(join(migDir, mig), "utf8").split("--> statement-breakpoint")) {
+      const s = stmt.trim();
+      if (s) db.exec(s);
+    }
+
+    // The row that was the global default becomes the default for BOTH types; the other row
+    // stays non-default for both; the old column is gone.
+    const rows = db.prepare("SELECT id, is_default_movie, is_default_series FROM root_folder ORDER BY id").all();
+    expect(rows).toEqual([
+      { id: "rf1", is_default_movie: 1, is_default_series: 1 },
+      { id: "rf2", is_default_movie: 0, is_default_series: 0 },
+    ]);
+    const cols = (db.prepare("PRAGMA table_info(root_folder)").all() as { name: string }[]).map((c) => c.name);
+    expect(cols).not.toContain("is_default");
+    db.close();
   });
 });
 
@@ -136,7 +224,7 @@ describe("AcquisitionService — remote path mapping (roadmap P1, gap report B8)
     const config = new ConfigService(db);
     await config.upsert({ "paths.downloads": downloadsRoot });
     const rootFolders = new RootFoldersService(db, new ConfigService(db));
-    await rootFolders.create({ path: mediaRoot, name: "", isDefault: true });
+    await rootFolders.create({ path: mediaRoot, name: "", isDefaultMovie: true, isDefaultSeries: true });
 
     const now = new Date().toISOString();
     await db.insert(schema.downloadClient).values({
@@ -197,7 +285,7 @@ describe("AcquisitionService — import-time free-space guard (roadmap P1, gap r
     // number is plausible.
     await config.upsert({ "paths.downloads": downloadsRoot, "media.minimumFreeSpaceMb": 10 ** 9 });
     const rootFolders = new RootFoldersService(db, new ConfigService(db));
-    await rootFolders.create({ path: mediaRoot, name: "", isDefault: true });
+    await rootFolders.create({ path: mediaRoot, name: "", isDefaultMovie: true, isDefaultSeries: true });
 
     const title = "Huge.Movie.2021.1080p.WEB-DL";
     const contentDir = join(downloadsRoot, "complete", title);

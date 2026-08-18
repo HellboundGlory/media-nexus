@@ -121,7 +121,7 @@ export function BulkEditModal({
           <span className={labelCls}>Root Folder</span>
           <select value={rootSel} onChange={(e) => setRootSel(e.target.value)} className={inputCls}>
             <option value="">No Change</option>
-            {roots.map((r) => <option key={r.id} value={r.id}>{r.name || r.path}{r.isDefault ? " (default)" : ""}</option>)}
+            {roots.map((r) => <option key={r.id} value={r.id}>{r.name || r.path}{(mediaType === "movie" ? r.isDefaultMovie : r.isDefaultSeries) ? " (default)" : ""}</option>)}
           </select>
           <p className="mt-1 text-xs text-ink-dim">Only updates where new files import to. Does NOT move existing files.</p>
         </label>

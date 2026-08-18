@@ -608,7 +608,7 @@ export class AcquisitionService {
     const source = content.kind === "file" ? content : await findLargestVideo(this.storage, content.path);
     if (!source) throw new Error(`No video file found for "${entry.title}" under ${content.path}`);
 
-    const root = await this.resolveRoot(movie[0].rootFolderPath, resolve(process.cwd(), "data", "media", "movies"));
+    const root = await this.resolveRoot(movie[0].rootFolderPath, resolve(process.cwd(), "data", "media", "movies"), "movie");
     await this.assertSufficientFreeSpace(root, source.size, cfg);
     const quality = spQuality(entry);
     const folderName = resolvedMovieFolderName(movie[0]);
@@ -664,7 +664,7 @@ export class AcquisitionService {
 
     const releaseTitle = (entry.data as { releaseTitle?: string })?.releaseTitle ?? entry.title;
     const match = parseEpisodeRelease(releaseTitle);
-    const root = await this.resolveRoot(series[0].rootFolderPath, resolve(process.cwd(), "data", "media", "tv"));
+    const root = await this.resolveRoot(series[0].rootFolderPath, resolve(process.cwd(), "data", "media", "tv"), "series");
     const safeSeries = resolvedSeriesFolderName(series[0]);
     const releaseQuality = spQuality(entry);
     const now = new Date().toISOString();
@@ -1142,9 +1142,9 @@ export class AcquisitionService {
     return match ? join(match.localPath, relative(match.remotePath, path)) : path;
   }
 
-  private async resolveRoot(mediaRoot: string, fallback: string): Promise<string> {
+  private async resolveRoot(mediaRoot: string, fallback: string, mediaType: "movie" | "series"): Promise<string> {
     if (mediaRoot) return mediaRoot;
-    const configured = await this.rootFolders.getDefault();
+    const configured = await this.rootFolders.getDefault(mediaType);
     return configured?.path || fallback;
   }
 

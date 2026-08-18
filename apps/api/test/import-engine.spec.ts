@@ -65,7 +65,7 @@ async function harness(): Promise<Harness> {
   const config = new ConfigService(handle.db);
   await config.upsert({ "paths.downloads": downloadsRoot });
   const rootFolders = new RootFoldersService(handle.db, new ConfigService(handle.db));
-  await rootFolders.create({ path: mediaRoot, name: "", isDefault: true });
+  await rootFolders.create({ path: mediaRoot, name: "", isDefaultMovie: true, isDefaultSeries: true });
 
   const events = new EventsService(new EventBus());
   const client = new StubClient();

@@ -102,13 +102,16 @@ export const customFormat = sqliteTable("custom_format", {
 // Root folders (roadmap P1, gap report B8): promotes the single-array paths.rootFolders
 // setting to a real, per-title-assignable entity. Accessibility and free space are runtime
 // probes (LocalStorageProvider.diskFree), not persisted — only identity and the default
-// flag live here. Exactly one row may be isDefault; RootFoldersService enforces that
-// invariant (a plain column can't express "at most one true" on its own).
+// flags live here. The default is per media type (ROOTFOLDER-1): a folder can be the
+// default for movies, for series, both, or neither — a root folder is a generic path
+// usable for either type. At most one row may be true per type; RootFoldersService
+// enforces that (a plain column can't express "at most one true" on its own).
 export const rootFolder = sqliteTable("root_folder", {
   id: text("id").primaryKey(),
   path: text("path").notNull(),
   name: text("name").notNull().default(""),
-  isDefault: bool("is_default", false),
+  isDefaultMovie: bool("is_default_movie", false),
+  isDefaultSeries: bool("is_default_series", false),
   createdAt: iso("created_at"),
 }, (t) => [uniqueIndex("root_folder_path_idx").on(t.path)]);
 

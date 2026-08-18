@@ -7,8 +7,8 @@
 // editable; the update schema does not accept it).
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Star, Trash2 } from "lucide-react";
-import { api } from "../../api/client";
+import { Film, FolderPlus, Pencil, Plus, Trash2, Tv, X } from "lucide-react";
+import { api, ApiClientError } from "../../api/client";
 import type { RootFolder } from "../../api/types";
 import { Badge, EmptyState } from "../../lib/ui";
 import { Modal } from "../../components/Modal";
@@ -27,6 +27,57 @@ function formatBytes(n: number | null): string {
   let i = 0;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
   return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+/** Warn-tone confirm for creating a not-yet-existing root folder path (ROOTFOLDER-1 Part A).
+ *  Structurally mirrors DeleteConfirmModal (overlay + header title/X + footer buttons) but in
+ *  the non-destructive warn tone: the user is confirming an action they already asked for
+ *  (create the folder), not authorizing data loss, so it uses the --warn tokens, not --err. */
+function CreateRootFolderConfirmModal({
+  path,
+  busy,
+  onConfirm,
+  onClose,
+}: {
+  path: string;
+  busy?: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-16" onClick={onClose}>
+      <div
+        className="w-full max-w-md overflow-hidden rounded-xl border border-rule bg-surface shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="flex items-center justify-between border-b border-rule px-4 py-3">
+          <h3 className="font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink">Create root folder?</h3>
+          <button onClick={onClose} className="rounded-md p-1 text-ink-dim hover:bg-bg" aria-label="Close"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="space-y-3 p-4">
+          <div className="flex items-start gap-2.5 rounded-lg border border-warn/40 bg-warn-bg px-3 py-2.5">
+            <FolderPlus className="mt-0.5 h-4 w-4 shrink-0 text-warn-ink" />
+            <span className="text-sm text-warn-ink">
+              <span className="block break-all font-mono text-xs text-ink" title={path}>{path}</span>
+              doesn&apos;t exist — create it and use it as a root folder?
+            </span>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-rule px-4 py-3">
+          <button onClick={onClose} className="rounded-lg border border-rule bg-bg px-3 py-1.5 text-sm text-ink hover:bg-rule">Cancel</button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-warn px-3 py-1.5 text-sm font-semibold text-white hover:bg-warn/90 disabled:opacity-50"
+          >
+            <FolderPlus className="h-3.5 w-3.5" /> {busy ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 interface Draft {
@@ -87,9 +138,28 @@ export function MediaManagementTab() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["config"] }),
   });
 
+  // Root folder create-if-missing confirmation (ROOTFOLDER-1 Part A): when the chosen path
+  // doesn't exist yet, the backend fails with a structured VALIDATION_ERROR/{reason:"path_missing"}
+  // and we surface a warn-tone confirm modal that lets the user opt into creating it, instead of
+  // forcing them to pre-create the directory out of band.
+  const [confirmCreate, setConfirmCreate] = useState<{ path: string; name: string } | null>(null);
+
   const addRoot = useMutation({
-    mutationFn: () => api.post<RootFolder>("/root-folders", { path: newRootPath, name: newRootName, isDefault: (rootFolders.data?.length ?? 0) === 0 }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["root-folders"] }); setNewRootPath(""); setNewRootName(""); setAddingRoot(false); },
+    mutationFn: (vars: { path: string; name: string; createIfMissing?: boolean }) =>
+      api.post<RootFolder>("/root-folders", {
+        path: vars.path,
+        name: vars.name,
+        ...(vars.createIfMissing ? { createIfMissing: true } : {}),
+        // First root folder is made default for both types by the backend (bootstrap) —
+        // no need to send default flags from here.
+      }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["root-folders"] }); setNewRootPath(""); setNewRootName(""); setAddingRoot(false); setConfirmCreate(null); },
+    onError: (err) => {
+      const details = (err as ApiClientError)?.details as { reason?: string } | undefined;
+      if ((err as ApiClientError)?.code === "VALIDATION_ERROR" && details?.reason === "path_missing") {
+        setConfirmCreate({ path: newRootPath, name: newRootName });
+      }
+    },
   });
   const saveRoot = useMutation({
     mutationFn: (id: string) => api.put(`/root-folders/${id}`, { name: editName }),
@@ -100,7 +170,8 @@ export function MediaManagementTab() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["root-folders"] }),
   });
   const setDefaultRoot = useMutation({
-    mutationFn: (id: string) => api.put(`/root-folders/${id}`, { isDefault: true }),
+    mutationFn: (vars: { id: string; type: "movie" | "series" }) =>
+      api.put(`/root-folders/${vars.id}`, vars.type === "movie" ? { isDefaultMovie: true } : { isDefaultSeries: true }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["root-folders"] }),
   });
 
@@ -167,7 +238,7 @@ export function MediaManagementTab() {
             <Plus className="h-3.5 w-3.5" /> Add root folder
           </button>
         </div>
-        <p className="mb-3 text-xs text-ink-dim">Where movies and series are stored. The starred folder is the default for a new title with no explicit choice.</p>
+        <p className="mb-3 text-xs text-ink-dim">Where movies and series are stored. The film/tv icons mark which media type each folder is the default for — a new title with no explicit choice falls back to the matching type's default.</p>
         {rootFolders.data?.length === 0 ? (
           <EmptyState title="No root folders" hint="Add one below — movies/series added without an explicit path fall back to the default." />
         ) : (
@@ -180,14 +251,24 @@ export function MediaManagementTab() {
                 {rootFolders.data?.map((rf) => (
                   <tr key={rf.id} className="hover:bg-bg/60">
                     <td className="px-3 py-2">
-                      <button
-                        onClick={() => setDefaultRoot.mutate(rf.id)}
-                        disabled={rf.isDefault}
-                        className={`rounded p-1 ${rf.isDefault ? "cursor-default text-accent" : "text-ink-dim hover:bg-rule hover:text-accent"}`}
-                        title={rf.isDefault ? "Default root folder" : "Make default"}
-                      >
-                        <Star className={`h-4 w-4 ${rf.isDefault ? "fill-accent" : ""}`} />
-                      </button>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => setDefaultRoot.mutate({ id: rf.id, type: "movie" })}
+                          disabled={rf.isDefaultMovie}
+                          className={`rounded p-1 ${rf.isDefaultMovie ? "cursor-default text-accent" : "text-ink-dim hover:bg-rule hover:text-accent"}`}
+                          title={rf.isDefaultMovie ? "Default for Movies" : "Make default for Movies"}
+                        >
+                          <Film className={`h-4 w-4 ${rf.isDefaultMovie ? "fill-accent" : ""}`} />
+                        </button>
+                        <button
+                          onClick={() => setDefaultRoot.mutate({ id: rf.id, type: "series" })}
+                          disabled={rf.isDefaultSeries}
+                          className={`rounded p-1 ${rf.isDefaultSeries ? "cursor-default text-accent" : "text-ink-dim hover:bg-rule hover:text-accent"}`}
+                          title={rf.isDefaultSeries ? "Default for Series" : "Make default for Series"}
+                        >
+                          <Tv className={`h-4 w-4 ${rf.isDefaultSeries ? "fill-accent" : ""}`} />
+                        </button>
+                      </div>
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-ink">{rf.path}</td>
                     <td className="px-3 py-2 font-medium text-ink">{rf.name || rf.path}</td>
@@ -213,13 +294,14 @@ export function MediaManagementTab() {
         <Modal title="Add root folder" onClose={() => setAddingRoot(false)} footer={
           <>
             <button onClick={() => setAddingRoot(false)} className="rounded-lg border border-rule bg-bg px-3 py-1.5 text-sm text-ink hover:bg-rule">Cancel</button>
-            <button onClick={() => addRoot.mutate()} disabled={!newRootPath || addRoot.isPending} className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">{addRoot.isPending ? "Adding…" : "Add"}</button>
+            <button onClick={() => addRoot.mutate({ path: newRootPath, name: newRootName })} disabled={!newRootPath || addRoot.isPending} className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">{addRoot.isPending ? "Adding…" : "Add"}</button>
           </>
         }>
           <div className="space-y-3 p-4">
             <label className="block">
-              <span className={labelCls}>Path (must exist on disk)</span>
+              <span className={labelCls}>Path</span>
               <PathField value={newRootPath} onChange={setNewRootPath} placeholder="/data/media" />
+              <p className="mt-1 text-xs text-ink-dim">Must be an accessible directory — if it doesn't exist yet, you'll be asked to confirm creating it.</p>
             </label>
             <label className="block">
               <span className={labelCls}>Name (optional)</span>
@@ -258,6 +340,16 @@ export function MediaManagementTab() {
             {saveRootError && <p className={errTxt}>{saveRootError}</p>}
           </div>
         </Modal>
+      )}
+
+      {/* Create-if-missing confirm (ROOTFOLDER-1 Part A) — warn-tone, mirrors DeleteConfirmModal */}
+      {confirmCreate && (
+        <CreateRootFolderConfirmModal
+          path={confirmCreate.path}
+          busy={addRoot.isPending}
+          onConfirm={() => addRoot.mutate({ path: confirmCreate.path, name: confirmCreate.name, createIfMissing: true })}
+          onClose={() => { setConfirmCreate(null); addRoot.reset(); }}
+        />
       )}
     </div>
   );

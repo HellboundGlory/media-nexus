@@ -97,7 +97,10 @@ export const rootFolder = pgTable("root_folder", {
   id: text("id").primaryKey(),
   path: text("path").notNull(),
   name: text("name").notNull().default(""),
-  isDefault: bool("is_default", false),
+  // Per-media-type default (ROOTFOLDER-1): SQLite twin of schema.ts split. A root folder is
+  // a generic path; which type (movie/series) it is the default for is a per-type flag.
+  isDefaultMovie: bool("is_default_movie", false),
+  isDefaultSeries: bool("is_default_series", false),
   createdAt: iso("created_at"),
 }, (t) => [uniqueIndex("root_folder_path_idx").on(t.path)]);
 

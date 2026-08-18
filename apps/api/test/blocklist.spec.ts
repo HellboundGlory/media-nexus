@@ -108,7 +108,7 @@ describe("P0.4 — an exhausted import failure blocklists the release", () => {
     const config = new ConfigService(db);
     await config.upsert({ "paths.downloads": downloadsRoot });
     const rootFolders = new RootFoldersService(db, new ConfigService(db));
-    await rootFolders.create({ path: mkdtempSync(join(dir, "media-")), name: "", isDefault: true });
+    await rootFolders.create({ path: mkdtempSync(join(dir, "media-")), name: "", isDefaultMovie: true, isDefaultSeries: true });
 
     await db.insert(schema.movie).values({
       id: "m1", tmdbId: 1, title: "Some Movie", overview: "", status: "released", releaseDate: "2020-01-01",

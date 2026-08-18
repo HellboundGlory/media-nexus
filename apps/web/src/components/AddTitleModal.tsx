@@ -82,9 +82,10 @@ export function AddTitleModal({
 
   const roots = rootFolders.data ?? [];
   const profilesList = profiles.data ?? [];
-  // Default selection: the configured default row, falling back to the first row so the pickers
-  // are never empty on a fresh install (the seed guarantees a real default anyway).
-  const defaultRoot = roots.find((r) => r.isDefault)?.id ?? roots[0]?.id ?? "";
+  // Default selection (ROOTFOLDER-1): the configured default row for THIS media type,
+  // falling back to the first row so the pickers are never empty on a fresh install (the
+  // seed guarantees a real default anyway).
+  const defaultRoot = roots.find((r) => (mediaType === "movie" ? r.isDefaultMovie : r.isDefaultSeries))?.id ?? roots[0]?.id ?? "";
   const defaultProfile = profilesList.find((p) => p.isDefault)?.id ?? profilesList[0]?.id ?? "";
 
   const submit = () => {
@@ -158,7 +159,7 @@ export function AddTitleModal({
           <label className="block">
             <span className="mb-1 block text-xs text-ink-dim">Root Folder</span>
             <select value={rootSel || defaultRoot} onChange={(e) => setRootSel(e.target.value)} className={selectCls}>
-              {roots.map((r) => <option key={r.id} value={r.id}>{r.name || r.path}{r.isDefault ? " (default)" : ""}</option>)}
+              {roots.map((r) => <option key={r.id} value={r.id}>{r.name || r.path}{(mediaType === "movie" ? r.isDefaultMovie : r.isDefaultSeries) ? " (default)" : ""}</option>)}
             </select>
           </label>
         )}

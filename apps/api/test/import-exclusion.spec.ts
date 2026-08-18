@@ -47,13 +47,19 @@ describe("import_exclusion forward migration (0008, additive title/year)", () =>
   let db: Database.Database;
 
   beforeAll(() => {
-    // Locate the newest generated SQLite migration file (this change produced 0008_*).
+    // Locate the SQLite migration that adds title/year to import_exclusion (0008_*). We can't
+    // assume it's still the newest migration file — later additive changes (e.g. 0009
+    // root_folder) have since been appended — so pick the one that actually implements THIS
+    // additive change (mentions import_exclusion and adds the `title` column).
     const migDir = resolve(__dirname, "../../../packages/database/migrations");
     const files = readdirSync(migDir).filter((f) => f.endsWith(".sql"));
     files.sort();
-    const newest = files[files.length - 1];
-    if (!newest) throw new Error("no migration files found");
-    migrationSql = readFileSync(join(migDir, newest), "utf8");
+    const additive = files.filter((f) => {
+      const s = readFileSync(join(migDir, f), "utf8");
+      return s.includes("import_exclusion") && s.includes("`title`");
+    }).pop();
+    if (!additive) throw new Error("no import_exclusion additive migration found");
+    migrationSql = readFileSync(join(migDir, additive), "utf8");
     expect(migrationSql).toMatch(/import_exclusion/);
   });
 

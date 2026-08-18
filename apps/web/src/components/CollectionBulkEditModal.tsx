@@ -97,7 +97,7 @@ export function CollectionBulkEditModal({
           <span className={labelCls}>Root Folder</span>
           <select value={rootSel} onChange={(e) => setRootSel(e.target.value)} className={selectCls}>
             <option value="">No Change</option>
-            {roots.map((r) => <option key={r.id} value={r.id}>{r.name || r.path}{r.isDefault ? " (default)" : ""}</option>)}
+            {roots.map((r) => <option key={r.id} value={r.id}>{r.name || r.path}{r.isDefaultMovie ? " (default)" : ""}</option>)}
           </select>
         </label>
         <label className="block">

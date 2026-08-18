@@ -366,7 +366,7 @@ describe("M1: real indexer + download client end-to-end (mock HTTP + real filesy
       "paths.downloads": downloadsRoot,
     }));
     expect(r.status).toBe(200);
-    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefault: true }));
+    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefaultMovie: true, isDefaultSeries: true }));
     expect(rf.status).toBe(201);
   });
 
@@ -500,7 +500,7 @@ describe("M2: series auto-grab via RSS sync + episode import (mock HTTP + real f
       "paths.downloads": downloadsRoot,
     }));
     expect(r.status).toBe(200);
-    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefault: true }));
+    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefaultMovie: true, isDefaultSeries: true }));
     expect(rf.status).toBe(201);
   });
 
@@ -646,7 +646,7 @@ describe("M-movie: movie auto-grab via RSS sync + import (mock HTTP + real files
       "paths.downloads": downloadsRoot,
     }));
     expect(r.status).toBe(200);
-    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefault: true }));
+    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefaultMovie: true, isDefaultSeries: true }));
     expect(rf.status).toBe(201);
   });
 
@@ -773,7 +773,7 @@ describe("D2: media.rssSync is a passive poll (no query), media.missingSearch is
       "paths.downloads": downloadsRoot,
     }));
     expect(r.status).toBe(200);
-    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefault: true }));
+    const rf = await auth(request(http).post("/api/v1/root-folders").send({ path: mediaRoot, isDefaultMovie: true, isDefaultSeries: true }));
     expect(rf.status).toBe(201);
   });
 

@@ -208,17 +208,19 @@ describe("C5 J9-aware download-client update", () => {
 });
 
 describe("C5 root-folder update", () => {
-  it("renames and enforces the single-default invariant", async () => {
+  it("renames and enforces the per-type default invariant", async () => {
     const db = freshDb();
     const a = mkdtempSync(join(tmpdir(), "mn-rf-a-")); const b = mkdtempSync(join(tmpdir(), "mn-rf-b-"));
-    db.insert(schema.rootFolder).values({ id: "rf1", path: a, name: "A", isDefault: true, createdAt: now() }).run();
-    db.insert(schema.rootFolder).values({ id: "rf2", path: b, name: "B", isDefault: false, createdAt: now() }).run();
+    db.insert(schema.rootFolder).values({ id: "rf1", path: a, name: "A", isDefaultMovie: true, isDefaultSeries: true, createdAt: now() }).run();
+    db.insert(schema.rootFolder).values({ id: "rf2", path: b, name: "B", isDefaultMovie: false, isDefaultSeries: false, createdAt: now() }).run();
 
     const svc = new RootFoldersService(db, new ConfigService(db));
-    const upd = await svc.update("rf2", { isDefault: true, name: "B2" });
-    expect(upd.isDefault).toBe(true);
+    const upd = await svc.update("rf2", { isDefaultMovie: true, name: "B2" });
+    expect(upd.isDefaultMovie).toBe(true);
     expect(upd.name).toBe("B2");
     const other = db.select().from(schema.rootFolder).where(eq(schema.rootFolder.id, "rf1")).all()[0] as any;
-    expect(other.isDefault).toBe(false);
+    expect(other.isDefaultMovie).toBe(false);
+    // rf1 keeps its SERIES default — the movie-default switch must not clear it.
+    expect(other.isDefaultSeries).toBe(true);
   });
 });

@@ -82,11 +82,16 @@ export const createIndexerSchema = z.object({
 export type CreateIndexer = z.infer<typeof createIndexerSchema>;
 
 /** Root folder input — `path` must be an accessible absolute directory, enforced at the
- *  service level (this schema only checks shape). */
+ *  service level (this schema only checks shape). The default flag is per media type
+ *  (ROOTFOLDER-1): a folder can be default-for-movies, default-for-series, both, or neither.
+ *  `createIfMissing` lets the user opt into recursively creating a not-yet-existing path
+ *  (surfaced as a confirmation modal in the UI) instead of being forced to pre-create it. */
 export const createRootFolderSchema = z.object({
   path: z.string().min(1),
   name: z.string().default(""),
-  isDefault: z.boolean().default(false),
+  isDefaultMovie: z.boolean().default(false),
+  isDefaultSeries: z.boolean().default(false),
+  createIfMissing: z.boolean().optional(),
 });
 export type CreateRootFolder = z.infer<typeof createRootFolderSchema>;
 
@@ -151,7 +156,8 @@ export type UpdateDownloadClientBody = z.infer<typeof updateDownloadClientSchema
 
 export const updateRootFolderSchema = z.object({
   name: z.string().optional(),
-  isDefault: z.boolean().optional(),
+  isDefaultMovie: z.boolean().optional(),
+  isDefaultSeries: z.boolean().optional(),
 });
 export type UpdateRootFolderBody = z.infer<typeof updateRootFolderSchema>;
 

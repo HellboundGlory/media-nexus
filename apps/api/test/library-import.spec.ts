@@ -89,7 +89,7 @@ describe("RootFoldersService.unmapped", () => {
     stageFile(join(mediaRoot, "Breaking.Bad", "Season 1", "ep.mkv"));
     // An already-mapped title's folder.
     stageFile(join(mediaRoot, "Already.Mapped", "f.mkv"));
-    const rf = await h.rootFolders.create({ path: mediaRoot, name: "", isDefault: true });
+    const rf = await h.rootFolders.create({ path: mediaRoot, name: "", isDefaultMovie: true, isDefaultSeries: true });
     await h.config.upsert({ "paths.downloads": downloads, "media.recycleBinPath": trash });
 
     // Map a title to "Already.Mapped" at this root (folder-name override -> non-conventional).

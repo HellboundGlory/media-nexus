@@ -227,7 +227,8 @@ export interface RootFolder {
   id: string;
   path: string;
   name: string;
-  isDefault: boolean;
+  isDefaultMovie: boolean;
+  isDefaultSeries: boolean;
   createdAt: string;
   accessible: boolean;
   freeBytes: number | null;

@@ -52,7 +52,7 @@ export class DecisionService {
       this.hasActiveQueueConflict(mediaType, mediaId),
       this.config.get(),
       getQualityProfile(this.db, item.qualityProfileId),
-      this.freeSpaceFor(item.rootFolderPath),
+      this.freeSpaceFor(item.rootFolderPath, mediaType),
       this.db.select().from(schema.customFormat),
       this.db.select().from(schema.releaseProfile).where(eq(schema.releaseProfile.enabled, true)),
     ]);
@@ -71,11 +71,12 @@ export class DecisionService {
     return evaluate(release, context);
   }
 
-  /** Free bytes on the title's assigned root, falling back to the default root folder —
-   *  same resolution order as `AcquisitionService.resolveRoot()`. Null (not zero) when it
-   *  can't be determined, so the free-space spec doesn't block a grab on missing data. */
-  private async freeSpaceFor(mediaRootPath: string): Promise<number | null> {
-    const root = mediaRootPath || (await this.rootFolders.getDefault())?.path;
+  /** Free bytes on the title's assigned root, falling back to the default root folder for
+   *  the title's media type — same resolution order as `AcquisitionService.resolveRoot()`.
+   *  Null (not zero) when it can't be determined, so the free-space spec doesn't block a
+   *  grab on missing data. */
+  private async freeSpaceFor(mediaRootPath: string, mediaType: MediaType): Promise<number | null> {
+    const root = mediaRootPath || (await this.rootFolders.getDefault(mediaType))?.path;
     if (!root) return null;
     const { free } = await this.storage.diskFree(root);
     return free >= 0 ? free : null;
