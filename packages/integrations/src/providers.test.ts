@@ -354,4 +354,32 @@ describe("NzbgetProvider (HTTP)", () => {
     await client.healthcheck();
     expect(auths[0]).toBe("Basic " + Buffer.from("admin:admin").toString("base64"));
   });
+
+  it("populates contentPath from DestDir/FinalDir for active and completed items (NZBGET-2)", async () => {
+    const { url, server } = await listen((req, res, u) => {
+      if (u.pathname !== "/jsonrpc") { res.writeHead(404); res.end(); return; }
+      let body = ""; req.on("data", (c) => { body += c; });
+      req.on("end", () => {
+        const call = JSON.parse(body);
+        if (call.method === "listgroups") json(res, { jsonrpc: "2.0", result: [
+          // Active item has only DestDir (no post-processing) -> contentPath = DestDir.
+          { NZBID: 12345, NZBName: "Active.mkv", Status: "DOWNLOADING", DestDir: "/downloads/completed/Series/House" },
+        ], id: 1 });
+        else if (call.method === "history") json(res, { jsonrpc: "2.0", result: [
+          // FinalDir set (post-processing moved it) -> prefer FinalDir over DestDir.
+          { NZBID: 12346, NZBName: "Done.mkv", Status: "SUCCESS", DestDir: "/downloads/completed/Films/Done", FinalDir: "/downloads/final/Done" },
+          // FinalDir empty -> fall back to DestDir.
+          { NZBID: 12347, NZBName: "Plain.mkv", Status: "SUCCESS", DestDir: "/downloads/completed/Films/Plain" },
+        ], id: 1 });
+        else json(res, { jsonrpc: "2.0", result: null, id: 1 });
+      });
+    });
+    servers.push(server);
+    const client = new NzbgetProvider({ host: url, category: "movies", priority: 0 });
+    const q = await client.getQueue();
+    const byId = (downloadId: string) => q.find((i) => i.downloadId === downloadId)?.contentPath;
+    expect(byId("12345")).toBe("/downloads/completed/Series/House"); // active DestDir fallback
+    expect(byId("12346")).toBe("/downloads/final/Done");             // history prefers FinalDir
+    expect(byId("12347")).toBe("/downloads/completed/Films/Plain");  // history DestDir fallback
+  });
 });

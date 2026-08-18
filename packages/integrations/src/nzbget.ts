@@ -17,6 +17,12 @@ interface NzbGroup {
   RemainingSizeLo?: number;
   RemainingSizeHi?: number;
   Category?: string;
+  // Completion path (NZBGET-2): listgroups reports the output destination directory — the
+  // importer needs this to locate the downloaded files instead of guessing conventional
+  // usenet layouts that don't match NZBGet's real "completed/<Category>/<title>" default.
+  // FinalDir is set only by a post-processing script; otherwise the item is at DestDir.
+  DestDir?: string;
+  FinalDir?: string;
 }
 
 interface NzbHistoryItem {
@@ -24,6 +30,11 @@ interface NzbHistoryItem {
   NZBName?: string;
   Status?: string;
   Category?: string;
+  // Completion path (NZBGET-2): HISTORY.md documents both DestDir ("Destination directory for
+  // output file") and FinalDir (set by post-processing when it moved the output). Prefer
+  // FinalDir when present, else DestDir — the same resolution as the active-queue loop.
+  DestDir?: string;
+  FinalDir?: string;
 }
 
 interface RpcError {
@@ -93,6 +104,7 @@ export class NzbgetProvider extends DownloadClientBase<NzbgetSettings> {
         size: total,
         remainingTimeSeconds: undefined,
         errorMessage: undefined,
+        contentPath: g.FinalDir || g.DestDir || undefined,
       });
     }
 
@@ -102,9 +114,9 @@ export class NzbgetProvider extends DownloadClientBase<NzbgetSettings> {
       const downloadId = String(h.NZBID ?? "");
       if (downloadId === "") continue;
       if (status.includes("success") || status.includes("completed")) {
-        out.push({ downloadId, title: h.NZBName ?? "", status: "completed", progress: 100, size: 0 });
+        out.push({ downloadId, title: h.NZBName ?? "", status: "completed", progress: 100, size: 0, contentPath: h.FinalDir || h.DestDir || undefined });
       } else if (status.includes("failure") || status.includes("failed")) {
-        out.push({ downloadId, title: h.NZBName ?? "", status: "failed", progress: 0, size: 0 });
+        out.push({ downloadId, title: h.NZBName ?? "", status: "failed", progress: 0, size: 0, contentPath: h.FinalDir || h.DestDir || undefined });
       }
     }
     return out;
