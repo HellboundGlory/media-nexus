@@ -44,7 +44,12 @@ docker compose -f docker/docker-compose.example.yml logs media-nexus | grep "API
 | `postgres` | n/a, internal only | real Postgres instead of the SQLite default; `DATABASE_URL` is assembled from `POSTGRES_USER`/`PASSWORD`/`DB` |
 
 After it's up, add it in-app as a download client (System → Settings → Download Clients → NZBGet), host
-`http://127.0.0.1:6789`, using the `NZBGET_USER`/`NZBGET_PASS` you set in `.env`.
+`http://127.0.0.1:6789`, using the `NZBGET_USER`/`NZBGET_PASS` you set in `.env`. **Also add a Remote Path
+Mapping** for it (same page, "Remote path mappings" section): remote path `/downloads`, local path
+`/data/downloads`. `nzbget` and `media-nexus` mount the same host `./data/downloads` directory at different
+paths inside their own containers (`/downloads` vs `/data/downloads`), so without this mapping every completed
+download's reported path is one media-nexus's container can't see, and import silently fails with "No video
+file found" even though the file is really there.
 
 Two things worth knowing about this setup: gluetun's DNS-over-TLS (encrypts every DNS lookup, on by default) has no
 way to resolve a Docker-internal name like `postgres` — rather than turning it off, `postgres` gets a static IP on
