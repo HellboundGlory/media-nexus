@@ -338,6 +338,25 @@ export class MoviesService {
     return { updated, failed };
   }
 
+  /** Bulk rename (UNI-027): pass every file id for each selected title to the existing
+   *  rename(); files whose computed path already matches are no-ops (renamed:false), so we let
+   *  rename() sort out what to touch rather than pre-filtering. Per-title failures are
+   *  aggregated so one bad id never aborts the batch. */
+  async bulkRename(ids: string[]): Promise<{ titlesProcessed: number; filesRenamed: number; failed: { id: string; error: string }[] }> {
+    let titlesProcessed = 0;
+    let filesRenamed = 0;
+    const failed: { id: string; error: string }[] = [];
+    for (const id of ids) {
+      try {
+        const files = await this.files(id);
+        const res = await this.rename(id, files.map((f) => f.id));
+        titlesProcessed++;
+        filesRenamed += res.renamed;
+      } catch (err) { failed.push({ id, error: (err as Error).message }); }
+    }
+    return { titlesProcessed, filesRenamed, failed };
+  }
+
   /** Want/Missing: monitored movies without a file, past their minimum-availability gate
    *  (roadmap C1). The gate depends on Date.now(), so it can't be pushed into SQL —
    *  overfetch past `limit` and filter in JS, mirroring the shape of

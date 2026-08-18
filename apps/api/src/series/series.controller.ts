@@ -62,6 +62,10 @@ const bulkDeleteSeriesSchema = z.object({
   addImportExclusion: z.boolean().optional(),
 });
 
+const bulkRenameSeriesSchema = z.object({
+  ids: z.array(z.string()).min(1, "select at least one series"),
+});
+
 @ApiTags("series")
 @Controller("api/v1/series")
 export class SeriesController {
@@ -111,6 +115,12 @@ export class SeriesController {
   @ApiOperation({ summary: "Remove selected series (UNI-020): per-id success/failure; opt-in deleteFiles/addImportExclusion forwarded per item" })
   bulkDelete(@Body(new ZodValidationPipe(bulkDeleteSeriesSchema)) body: { ids: string[]; deleteFiles?: boolean; addImportExclusion?: boolean }) {
     return this.series.bulkDelete(body.ids, { deleteFiles: body.deleteFiles, addImportExclusion: body.addImportExclusion });
+  }
+
+  @Post("bulk-rename")
+  @ApiOperation({ summary: "Rename files of selected series (UNI-027): already-correct files are ignored; per-title failures aggregated" })
+  bulkRename(@Body(new ZodValidationPipe(bulkRenameSeriesSchema)) body: { ids: string[] }) {
+    return this.series.bulkRename(body.ids);
   }
 
   @Put(":id")

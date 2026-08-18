@@ -52,6 +52,10 @@ const bulkDeleteMovieSchema = z.object({
   addImportExclusion: z.boolean().optional(),
 });
 
+const bulkRenameSchema = z.object({
+  ids: z.array(z.string()).min(1, "select at least one movie"),
+});
+
 @ApiTags("movies")
 @Controller("api/v1/movies")
 export class MoviesController {
@@ -137,6 +141,12 @@ export class MoviesController {
   @ApiOperation({ summary: "Remove selected movies (UNI-020): per-id success/failure; opt-in deleteFiles/addImportExclusion forwarded per item" })
   bulkDelete(@Body(new ZodValidationPipe(bulkDeleteMovieSchema)) body: { ids: string[]; deleteFiles?: boolean; addImportExclusion?: boolean }) {
     return this.movies.bulkDelete(body.ids, { deleteFiles: body.deleteFiles, addImportExclusion: body.addImportExclusion });
+  }
+
+  @Post("bulk-rename")
+  @ApiOperation({ summary: "Rename files of selected movies (UNI-027): already-correct files are ignored; per-title failures aggregated" })
+  bulkRename(@Body(new ZodValidationPipe(bulkRenameSchema)) body: { ids: string[] }) {
+    return this.movies.bulkRename(body.ids);
   }
 
   @Put(":id")

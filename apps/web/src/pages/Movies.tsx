@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { CheckSquare, Search, Plus, Database, Pencil, Tag, Trash2, LayoutGrid, Rows3, SlidersHorizontal } from "lucide-react";
+import { CheckSquare, Search, Plus, Database, Pencil, Tag, Trash2, Wand2, LayoutGrid, Rows3, SlidersHorizontal } from "lucide-react";
 import { api } from "../api/client";
 import type { Movie, Paged, QualityProfile } from "../api/types";
 import { Badge, EmptyState, ErrorState } from "../lib/ui";
@@ -43,6 +43,7 @@ export default function Movies() {
   const [bulkTagsOpen, setBulkTagsOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+  const [bulkMsgTone, setBulkMsgTone] = useState<"ok" | "err">("err");
 
   // UNI-028 (pagination half): incremental loading via infinite query, matching Discover.tsx.
   // Changing search/sort/sortDir/filter changes the queryKey, so React Query resets to page 1.
@@ -81,7 +82,8 @@ export default function Movies() {
     qc.invalidateQueries({ queryKey: ["movies"] });
     setSelected(new Set());
     setBulkEditOpen(false); setBulkTagsOpen(false); setBulkDeleteOpen(false);
-    setBulkMsg(res.failed.length > 0 ? `${res.failed.length} item(s) failed: ${res.failed[0].error}` : null);
+    if (res.failed.length > 0) { setBulkMsgTone("err"); setBulkMsg(`${res.failed.length} item(s) failed: ${res.failed[0].error}`); }
+    else setBulkMsg(null);
   };
 
   const bulkEdit = useMutation({
@@ -98,6 +100,18 @@ export default function Movies() {
     mutationFn: (opts: BulkDeleteOptions) => api.post<BulkResult>("/movies/bulk-delete", { ids: [...selected], ...opts }),
     onSuccess: finishBulk,
     onError: (e) => setBulkMsg(e instanceof Error ? e.message : "Bulk delete failed"),
+  });
+  const bulkRename = useMutation({
+    mutationFn: (ids: string[]) => api.post<{ titlesProcessed: number; filesRenamed: number; failed: { id: string; error: string }[] }>("/movies/bulk-rename", { ids }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["movies"] });
+      setSelected(new Set());
+      // Renaming doesn't visibly change the list (unlike Edit/Delete), so always show a success
+      // summary — plus the failure count when some titles couldn't be processed.
+      setBulkMsgTone(res.failed.length ? "err" : "ok");
+      setBulkMsg(`Renamed ${res.filesRenamed} files across ${res.titlesProcessed} title(s)${res.failed.length ? `; ${res.failed.length} title(s) failed` : ""}`);
+    },
+    onError: (e) => { setBulkMsgTone("err"); setBulkMsg(e instanceof Error ? e.message : "Bulk rename failed"); },
   });
 
   const remove = useMutation({
@@ -161,6 +175,7 @@ export default function Movies() {
           <div className="ml-auto flex items-center gap-2">
             <button onClick={() => setBulkEditOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-rule bg-bg px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule"><Pencil className="h-3.5 w-3.5" /> Edit</button>
             <button onClick={() => setBulkTagsOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-rule bg-bg px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule"><Tag className="h-3.5 w-3.5" /> Set Tags</button>
+            <button onClick={() => bulkRename.mutate([...selected])} disabled={bulkRename.isPending} className="flex items-center gap-1.5 rounded-lg border border-rule bg-bg px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule disabled:opacity-50"><Wand2 className="h-3.5 w-3.5" /> Rename Files</button>
             <button onClick={() => setBulkDeleteOpen(true)} className="flex items-center gap-1.5 rounded-lg bg-err/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-err hover:bg-err/20"><Trash2 className="h-3.5 w-3.5" /> Delete</button>
           </div>
         </div>
@@ -249,7 +264,7 @@ export default function Movies() {
         </>
       )}
 
-      {bulkMsg && <p className="text-xs text-err">{bulkMsg}</p>}
+      {bulkMsg && <p className={`text-xs ${bulkMsgTone === "err" ? "text-err" : "text-ok"}`}>{bulkMsg}</p>}
 
       {addSearchOpen && <AddSearchModal mediaType="movie" onClose={() => setAddSearchOpen(false)} />}
 
