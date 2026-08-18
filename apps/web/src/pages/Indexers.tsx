@@ -182,73 +182,81 @@ export default function Indexers() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        <button onClick={() => setShowCustom((v) => !v)} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90">
-          {showCustom ? "Hide custom form" : "New custom (Cardigann)"}
-        </button>
-      </div>
+      {/* Indexers — one bordered section (toolbar header + custom form + grid), matching the
+          Download Clients tab: both actions on a single header row. The section — including the
+          'New custom (Cardigann)' toggle and its form — renders unconditionally so defining a
+          custom Cardigann scraper stays reachable even when the indexer list query errors; only
+          the grid is gated below. */}
+      <section className="rounded-xl border border-rule bg-surface p-4">
+        <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink">Indexers</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setShowCustom((v) => !v)} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90">
+                  {showCustom ? "Hide custom form" : "New custom (Cardigann)"}
+                </button>
+                <button onClick={() => testAll.mutate()} disabled={testAll.isPending} className="flex items-center gap-1.5 rounded-lg border border-rule bg-bg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule disabled:opacity-50">
+                  <HeartPulse className="h-3.5 w-3.5" /> {testAll.isPending ? "Testing…" : "Test all"}
+                </button>
+              </div>
+            </div>
 
-      {showCustom && (
-        <form
-          className="space-y-3 rounded-xl border border-rule bg-surface p-4"
-          onSubmit={(e) => { e.preventDefault(); createDefinition.mutate({ key: customKey, name: customName, protocol: customProtocol, cardigannYml: customYaml }); }}
-        >
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label><span className={labelCls}>Key (slug)</span>
-              <input required value={customKey} onChange={(e) => setCustomKey(e.target.value)} placeholder="my-tracker" className={inputCls} /></label>
-            <label><span className={labelCls}>Name</span>
-              <input required value={customName} onChange={(e) => setCustomName(e.target.value)} placeholder="My Tracker" className={inputCls} /></label>
-            <label><span className={labelCls}>Protocol</span>
-              <select value={customProtocol} onChange={(e) => setCustomProtocol(e.target.value as never)} className={selectCls}>
-                <option value="torrent">Torrent</option><option value="usenet">Usenet</option>
-              </select></label>
-          </div>
-          <label><span className={labelCls}>Cardigann definition (YAML)</span>
-            <textarea required rows={7} value={customYaml} onChange={(e) => setCustomYaml(e.target.value)} className={`${inputCls} font-mono text-xs`} placeholder="name: MyTracker&#10;settings:&#10;  - name: baseUrl&#10;    type: text&#10;search:&#10;  rows:&#10;    selector: tr.row" />
-          </label>
-          <div className="flex items-center gap-2">
-            <button disabled={createDefinition.isPending} className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">
-              {createDefinition.isPending ? "Creating…" : "Create definition"}
-            </button>
-            {createDefinition.isError && <p className={errTxt}>{createDefinition.error instanceof Error ? createDefinition.error.message : "Invalid definition"}</p>}
-          </div>
-        </form>
-      )}
+            {showCustom && (
+              <form
+                className="mb-3 space-y-3 rounded-xl border border-rule bg-bg/40 p-4"
+                onSubmit={(e) => { e.preventDefault(); createDefinition.mutate({ key: customKey, name: customName, protocol: customProtocol, cardigannYml: customYaml }); }}
+              >
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <label><span className={labelCls}>Key (slug)</span>
+                    <input required value={customKey} onChange={(e) => setCustomKey(e.target.value)} placeholder="my-tracker" className={inputCls} /></label>
+                  <label><span className={labelCls}>Name</span>
+                    <input required value={customName} onChange={(e) => setCustomName(e.target.value)} placeholder="My Tracker" className={inputCls} /></label>
+                  <label><span className={labelCls}>Protocol</span>
+                    <select value={customProtocol} onChange={(e) => setCustomProtocol(e.target.value as never)} className={selectCls}>
+                      <option value="torrent">Torrent</option><option value="usenet">Usenet</option>
+                    </select></label>
+                </div>
+                <label><span className={labelCls}>Cardigann definition (YAML)</span>
+                  <textarea required rows={7} value={customYaml} onChange={(e) => setCustomYaml(e.target.value)} className={`${inputCls} font-mono text-xs`} placeholder="name: MyTracker&#10;settings:&#10;  - name: baseUrl&#10;    type: text&#10;search:&#10;  rows:&#10;    selector: tr.row" />
+                </label>
+                <div className="flex items-center gap-2">
+                  <button disabled={createDefinition.isPending} className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-ink hover:bg-accent/90 disabled:opacity-50">
+                    {createDefinition.isPending ? "Creating…" : "Create definition"}
+                  </button>
+                  {createDefinition.isError && <p className={errTxt}>{createDefinition.error instanceof Error ? createDefinition.error.message : "Invalid definition"}</p>}
+                </div>
+              </form>
+            )}
 
-      {indexers.isError ? <ErrorState error={indexers.error} onRetry={() => indexers.refetch()} /> : (
-        <>
-          <div className="flex items-center justify-end gap-3">
-            <button onClick={() => testAll.mutate()} disabled={testAll.isPending} className="flex items-center gap-1.5 rounded-lg border border-rule bg-surface px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule disabled:opacity-50">
-              <HeartPulse className="h-3.5 w-3.5" /> {testAll.isPending ? "Testing…" : "Test all"}
-            </button>
-          </div>
+            {indexers.isError ? <ErrorState error={indexers.error} onRetry={() => indexers.refetch()} /> : (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {indexers.data?.map((i) => (
+                  <ProviderCard
+                    key={i.id}
+                    name={i.name}
+                    subLine={`${i.implementation} · ${i.protocol} · priority ${i.priority ?? 25}`}
+                    enabled={i.enabled}
+                    protocol={i.protocol}
+                    status={i.status}
+                    lastError={i.lastError}
+                    tags={i.tags}
+                    tagLookup={tagLookup}
+                    onClick={() => openEdit(i)}
+                  />
+                ))}
+                <button
+                  type="button"
+                  onClick={openAdd}
+                  className="flex min-h-24 items-center justify-center gap-2 rounded-xl border border-dashed border-rule bg-surface text-sm font-semibold uppercase tracking-wide text-ink-dim transition-colors hover:border-accent/50 hover:text-ink"
+                >
+                  <Plus className="h-4 w-4" /> Add
+                </button>
+              </div>
+            )}
+          </section>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {indexers.data?.map((i) => (
-              <ProviderCard
-                key={i.id}
-                name={i.name}
-                subLine={`${i.implementation} · ${i.protocol} · priority ${i.priority ?? 25}`}
-                enabled={i.enabled}
-                protocol={i.protocol}
-                status={i.status}
-                lastError={i.lastError}
-                tags={i.tags}
-                tagLookup={tagLookup}
-                onClick={() => openEdit(i)}
-              />
-            ))}
-            <button
-              type="button"
-              onClick={openAdd}
-              className="flex min-h-24 items-center justify-center gap-2 rounded-xl border border-dashed border-rule bg-surface text-sm font-semibold uppercase tracking-wide text-ink-dim transition-colors hover:border-accent/50 hover:text-ink"
-            >
-              <Plus className="h-4 w-4" /> Add
-            </button>
-          </div>
-
-          <section className="rounded-xl border border-rule bg-surface p-4">
-            <h3 className="mb-2 font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink-dim">Statistics (grabs)</h3>
+      {!indexers.isError && (
+        <section className="rounded-xl border border-rule bg-surface p-4">
+          <h3 className="mb-2 font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink-dim">Statistics (grabs)</h3>
             {stats.data?.length === 0 ? <p className="text-sm text-ink-dim">No data yet.</p> : (
               <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
                 {stats.data?.map((s) => (
@@ -260,7 +268,6 @@ export default function Indexers() {
               </div>
             )}
           </section>
-        </>
       )}
 
       {open && (
