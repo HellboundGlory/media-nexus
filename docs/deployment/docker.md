@@ -42,10 +42,12 @@ docker compose -f docker/docker-compose.example.yml logs media-nexus | grep "API
 | `media-nexus` | *(shares gluetun's network — no port of its own)* | `network_mode: "service:gluetun"`, so every outbound request (indexers, download clients, TMDB) goes through the VPN tunnel |
 | `postgres` | n/a, internal only | real Postgres instead of the SQLite default; `DATABASE_URL` is assembled from `POSTGRES_USER`/`PASSWORD`/`DB` |
 
-The compose file's own header comments cover the two things that actually trip people up running this pattern
-(gluetun's DNS-over-TLS resolver breaking `media-nexus`'s ability to reach `postgres` by name, and the outbound-subnet
-firewall rule needed to keep the LAN and Postgres traffic from being forced through the tunnel) — read them before
-adjusting the VPN provider block.
+Two things worth knowing about this setup: gluetun's DNS-over-TLS (encrypts every DNS lookup, on by default) has no
+way to resolve a Docker-internal name like `postgres` — rather than turning it off, `postgres` gets a static IP on
+the `media-nexus` network and `media-nexus` gets an `extra_hosts` entry pointing at it, so that one connection never
+needs DNS at all and DoT stays fully on for everything else. And `FIREWALL_OUTBOUND_SUBNETS` allow-lists your LAN
+(so the published web UI stays reachable) and the compose file's own docker network (so `media-nexus` can still
+reach `postgres` over it) without forcing either through the VPN tunnel.
 
 ## Volumes / persistence
 

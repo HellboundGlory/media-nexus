@@ -1,18 +1,12 @@
-# MediaNexus — recommended deployment: Postgres + Gluetun VPN
+# MediaNexus — recommended deployment: Postgres + Gluetun VPN.
 #
-# All outbound traffic from `media-nexus` (indexers, trackers, download clients, TMDB) is routed
-# through a VPN tunnel via Gluetun, and the database is Postgres instead of the SQLite default.
+# 1) Copy docker/.env.example to docker/.env (same directory) and fill it in.
+# 2) docker compose -f docker/docker-compose.example.yml up -d
+# 3) First-run API key: docker compose -f docker/docker-compose.example.yml logs media-nexus | grep "API key"
+# 4) Open http://host:7373, paste the key under System → API key, then set root folder(s),
+#    downloads root, and metadata.tmdbApiKey under System → Settings.
 #
-# 1) Copy docker/.env.example to docker/.env (same directory as this file) and fill it in.
-# 2) `docker compose -f docker/docker-compose.example.yml up -d`
-# 3) Get the first-run API key: `docker compose -f docker/docker-compose.example.yml logs media-nexus | grep "API key"`
-# 4) Open http://host:7373, paste the key under System → API key, then set root folder(s) to
-#    /data/media, downloads root to /data/downloads, and metadata.tmdbApiKey (all in System →
-#    Settings — runtime settings, not env vars).
-#
-# Image pulled from GHCR (published by CI on `v*` tags) — replace `hellboundglory/media-nexus` if
-# you own the repo under a different path. LAN/private-network use only — no login/auth beyond
-# one system API key; do not put this behind a public reverse proxy.
+# LAN/private-network use only. Replace `hellboundglory/media-nexus` if you own the image elsewhere.
 
 services:
   gluetun:
@@ -25,21 +19,16 @@ services:
     networks:
       - media-nexus
     environment:
-      # WireGuard shown — see https://github.com/qdm12/gluetun/wiki for OpenVPN or a different
-      # provider's exact variable names.
+      # WireGuard shown — see https://github.com/qdm12/gluetun/wiki for other providers.
       VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER:?set your VPN provider in .env}
       VPN_TYPE: ${VPN_TYPE:-wireguard}
       WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:?set your WireGuard private key in .env}
       WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:?set your WireGuard address in .env}
       SERVER_COUNTRIES: ${VPN_SERVER_COUNTRIES:-}
-      # Gluetun's DNS-over-TLS resolver can't see Docker's internal service names, which breaks
-      # `media-nexus`'s ability to resolve `postgres` — turn it off.
-      DOT: "off"
-      # Let LAN + Docker-internal traffic through unencrypted, so the published web UI and
-      # `postgres` both stay reachable without being forced through the tunnel.
-      FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNET:-192.168.1.0/24}
+      # DoT stays on (gluetun's default) — postgres uses a static IP + extra_hosts below, never DNS.
+      FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNET:-192.168.1.0/24},172.28.0.0/24 # LAN + this docker net
     ports:
-      - "${WEB_PORT:-7373}:7373" # web UI — published here since `media-nexus` shares this netns
+      - "${WEB_PORT:-7373}:7373" # published here — media-nexus has no ports of its own
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
@@ -52,7 +41,8 @@ services:
     image: postgres:16-alpine
     container_name: media-nexus-postgres
     networks:
-      - media-nexus
+      media-nexus:
+        ipv4_address: 172.28.0.10
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-medianexus}
@@ -70,7 +60,9 @@ services:
     image: ghcr.io/hellboundglory/media-nexus/app:latest
     container_name: media-nexus-app
     restart: unless-stopped
-    network_mode: "service:gluetun" # no networks:/ports: here — shares gluetun's netns instead
+    network_mode: "service:gluetun" # shares gluetun's netns — no networks:/ports: here
+    extra_hosts:
+      - "postgres:172.28.0.10" # matches postgres's static IP above
     depends_on:
       gluetun:
         condition: service_healthy
@@ -86,8 +78,7 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       - ./data/config:/data/config
-      # media + downloads MUST share a filesystem for hardlink imports
-      - ./data/media:/data/media
+      - ./data/media:/data/media # media + downloads must share a filesystem for hardlinks
       - ./data/downloads:/data/downloads
     healthcheck:
       test: ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:7373/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -100,3 +91,6 @@ services:
 networks:
   media-nexus:
     name: media-nexus
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24 # change if this collides with an existing network on your host
