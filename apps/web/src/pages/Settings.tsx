@@ -46,7 +46,7 @@ const REAL: ReadonlySet<TabId> = new Set(["media", "profiles", "quality", "forma
 const inputCls = "rounded-lg border border-rule bg-transparent px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
 
 export default function Settings() {
-  const [tab, setTab] = useState<TabId>("profiles");
+  const [tab, setTab] = useState<TabId>(TABS[0].id);
 
   const isReal = REAL.has(tab);
   const active = TABS.find((t) => t.id === tab)!;
