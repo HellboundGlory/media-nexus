@@ -39,8 +39,14 @@ export default function Dashboard() {
   const series = useQuery({ queryKey: ["series"], queryFn: () => api.get<Paged<Series>>("/series?page=1&pageSize=1") });
   const queue = useQuery({ queryKey: ["queue"], queryFn: () => api.get<{ items: QueueRow[] }>("/queue") });
   const roots = useQuery({ queryKey: ["root-folders"], queryFn: () => api.get<RootFolder[]>("/root-folders") });
-  const trendingMovie = useQuery({ queryKey: ["discover", "movie", "trending"], queryFn: () => api.get<DiscoverPage>("/discover?mediaType=movie&category=trending&page=1") });
-  const trendingSeries = useQuery({ queryKey: ["discover", "series", "trending"], queryFn: () => api.get<DiscoverPage>("/discover?mediaType=series&category=trending&page=1") });
+  // Distinct "dashboard-trending" key prefix, deliberately not "discover" — Discover.tsx's
+  // useInfiniteQuery reads the exact key ["discover", mediaType, category] (default state:
+  // ["discover","movie","trending"]) as raw InfiniteData ({pages, pageParams}). Sharing a key
+  // with this page's plain single-page DiscoverPage query corrupted that cache slot: whichever
+  // ran first left a shape the other couldn't read, crashing Discover's page with "Cannot read
+  // properties of undefined (reading 'length')" inside react-query's own hasNextPage().
+  const trendingMovie = useQuery({ queryKey: ["dashboard-trending", "movie"], queryFn: () => api.get<DiscoverPage>("/discover?mediaType=movie&category=trending&page=1") });
+  const trendingSeries = useQuery({ queryKey: ["dashboard-trending", "series"], queryFn: () => api.get<DiscoverPage>("/discover?mediaType=series&category=trending&page=1") });
 
   const used = storageUsed(roots.data);
 
