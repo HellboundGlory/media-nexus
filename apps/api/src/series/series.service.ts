@@ -528,7 +528,9 @@ export class SeriesService {
     return (await this.db.select().from(schema.season).where(eq(schema.season.id, seasonId)).limit(1))[0];
   }
 
-  /** Want/Missing: monitored episodes without a file yet (all series). */
+  /** Want/Missing: monitored episodes without a file yet (all series). No JS-side reject
+   *  filter, but overfetches past `limit` (same max(limit*4, 200) headroom as movies so the
+   *  controller's fair-share merge has candidates to fill leftover slots — WANTEDMISSING-1). */
   async wantedMissing(limit = 50) {
     const rows = await this.db
       .select({
@@ -541,7 +543,7 @@ export class SeriesService {
       .innerJoin(schema.series, eq(schema.episode.seriesId, schema.series.id))
       .where(and(eq(schema.episode.monitored, true), eq(schema.episode.hasFile, false)))
       .orderBy(asc(schema.episode.airDateUtc))
-      .limit(limit);
+      .limit(Math.max(limit * 4, 200));
     return rows.map((r) => ({ ...r.episode, seasonNumber: r.seasonNumber, seriesTitle: r.series.title, seriesType: r.series.seriesType, seriesAlternateTitles: r.series.alternateTitles ?? [] }));
   }
 

@@ -11,6 +11,38 @@ import { buildIcal } from "../calendar/ical";
 const wantedQuery = z.object({ limit: z.coerce.number().int().positive().max(200).default(50) });
 const calendarQuery = z.object({ start: z.string().optional(), end: z.string().optional() });
 
+/** Fair-share slot allocation for the wanted/cutoff merge (WANTEDMISSING-1). A naive merge of
+ *  the two already-sliced per-type lists (concat + date-sort + slice `limit`) lets one media
+ *  type's backlog — if it's larger AND chronologically older — consume every slot and silently
+ *  hide the other type entirely, even though that type has wanted items. So instead of a pure
+ *  top-N-by-date selection, each side gets a guaranteed base half of `limit` (or everything it
+ *  has when it has fewer than half); any leftover from an exhausted side spills to the other.
+ *  Symmetric, so there's no "which side is starved" special case — it falls out of the min()s. */
+function allocateSlots(limit: number, countMovies: number, countEpisodes: number): { takeMovies: number; takeEpisodes: number } {
+  const base = Math.floor(limit / 2);
+  let takeMovies = Math.min(countMovies, base);
+  let takeEpisodes = Math.min(countEpisodes, base);
+  let leftover = limit - takeMovies - takeEpisodes;
+  if (leftover > 0) {
+    const extraMovies = Math.min(countMovies - takeMovies, leftover);
+    takeMovies += extraMovies;
+    leftover -= extraMovies;
+    const extraEpisodes = Math.min(countEpisodes - takeEpisodes, leftover);
+    takeEpisodes += extraEpisodes;
+  }
+  return { takeMovies, takeEpisodes };
+}
+
+type MediaType = "movie" | "series";
+function mergeDate(
+  a: { mediaType: MediaType; airDateUtc?: string | null; releaseDate?: string | null },
+  b: { mediaType: MediaType; airDateUtc?: string | null; releaseDate?: string | null },
+): number {
+  const da = a.mediaType === "series" ? a.airDateUtc : a.releaseDate;
+  const db = b.mediaType === "series" ? b.airDateUtc : b.releaseDate;
+  return (da ?? "").localeCompare(db ?? "");
+}
+
 @ApiTags("series")
 @Controller("api/v1")
 export class WantedController {
@@ -33,16 +65,17 @@ export class WantedController {
       this.series.wantedMissing(q.limit),
       this.movies.wantedMissing(q.limit),
     ]);
+    // Fair-share allocation (WANTEDMISSING-1): guarantee both media types are represented so a
+    // large, older episode backlog can't hide every missing movie (or vice-versa).
+    const { takeMovies, takeEpisodes } = allocateSlots(q.limit, movies.length, episodes.length);
     const merged = [
-      ...episodes.map((e) => ({ ...e, mediaType: "series" as const })),
-      ...movies,
+      ...episodes.slice(0, takeEpisodes).map((e) => ({ ...e, mediaType: "series" as const })),
+      ...movies.slice(0, takeMovies),
     ];
-    merged.sort((a, b) => {
-      const da = a.mediaType === "series" ? a.airDateUtc : a.releaseDate;
-      const db = b.mediaType === "series" ? b.airDateUtc : b.releaseDate;
-      return (da ?? "").localeCompare(db ?? "");
-    });
-    return merged.slice(0, q.limit);
+    // Re-sort the picked rows by date so the final list still reads chronologically within itself
+    // (it's just no longer a pure top-N-by-date selection across types).
+    merged.sort(mergeDate);
+    return merged;
   }
 
   /** Cutoff Unmet (NAV-1 Phase 0): monitored titles/episodes that have a file below their
@@ -57,16 +90,15 @@ export class WantedController {
       this.series.cutoffUnmet(q.limit),
       this.movies.cutoffUnmet(q.limit),
     ]);
+    // Same fair-share allocation as wanted/missing (WANTEDMISSING-1) — both overfetch internally,
+    // so the merge just can't let one type's backlog hide the other.
+    const { takeMovies, takeEpisodes } = allocateSlots(q.limit, movies.length, episodes.length);
     const merged = [
-      ...episodes.map((e) => ({ ...e, mediaType: "series" as const })),
-      ...movies,
+      ...episodes.slice(0, takeEpisodes),
+      ...movies.slice(0, takeMovies),
     ];
-    merged.sort((a, b) => {
-      const da = a.mediaType === "series" ? a.airDateUtc : a.releaseDate;
-      const db = b.mediaType === "series" ? b.airDateUtc : b.releaseDate;
-      return (da ?? "").localeCompare(db ?? "");
-    });
-    return merged.slice(0, q.limit);
+    merged.sort(mergeDate);
+    return merged;
   }
 
   @Get("calendar")
