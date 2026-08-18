@@ -26,24 +26,24 @@ public internet.
 
 ## Recommended: Postgres + Gluetun VPN
 
-`docker/docker-compose.example.yml` is the recommended production shape — three services (`app`, `postgres`,
+`docker/docker-compose.example.yml` is the recommended production shape — three services (`media-nexus`, `postgres`,
 `gluetun`) instead of one:
 
 ```bash
 cp docker/.env.example docker/.env   # NOT the repo root .env — this file lives next to the compose file
 # fill in MEDIA_NEXUS_SECRET, POSTGRES_PASSWORD, and your VPN provider's credentials
 docker compose -f docker/docker-compose.example.yml up -d
-docker compose -f docker/docker-compose.example.yml logs app | grep "API key"
+docker compose -f docker/docker-compose.example.yml logs media-nexus | grep "API key"
 ```
 
 | Service | Port | Notes |
 |---|---|---|
-| `gluetun` | `${WEB_PORT:-8080}` → container `7373` | owns the network; publishes the web UI port since `app` has none of its own |
-| `app` | *(shares gluetun's network — no port of its own)* | `network_mode: "service:gluetun"`, so every outbound request (indexers, download clients, TMDB) goes through the VPN tunnel |
+| `gluetun` | `${WEB_PORT:-8080}` → container `7373` | owns the network; publishes the web UI port since `media-nexus` has none of its own |
+| `media-nexus` | *(shares gluetun's network — no port of its own)* | `network_mode: "service:gluetun"`, so every outbound request (indexers, download clients, TMDB) goes through the VPN tunnel |
 | `postgres` | n/a, internal only | real Postgres instead of the SQLite default; `DATABASE_URL` is assembled from `POSTGRES_USER`/`PASSWORD`/`DB` |
 
 The compose file's own header comments cover the two things that actually trip people up running this pattern
-(gluetun's DNS-over-TLS resolver breaking `app`'s ability to reach `postgres` by name, and the outbound-subnet
+(gluetun's DNS-over-TLS resolver breaking `media-nexus`'s ability to reach `postgres` by name, and the outbound-subnet
 firewall rule needed to keep the LAN and Postgres traffic from being forced through the tunnel) — read them before
 adjusting the VPN provider block.
 
@@ -70,16 +70,18 @@ host-specific is baked into the image.
 
 ## Health checks & graceful shutdown
 
-- The `app` container checks `/health/live` and `/health/ready` (DB); it stops gracefully via SIGTERM (Nest app hooks
-  `onModuleDestroy` to drain job workers and close connections).
+- The app container (`app` in the root compose, `media-nexus` in the Postgres+Gluetun example) checks `/health/live`
+  and `/health/ready` (DB); it stops gracefully via SIGTERM (Nest app hooks `onModuleDestroy` to drain job workers
+  and close connections).
 - Compose `stop_grace_period` gives jobs time to settle; jobs are claim-lease based so a killed worker is recoverable on
   restart.
 
 ## Debugging: no shell in the runtime image
 
 The runtime stage is a [distroless](https://github.com/GoogleContainerTools/distroless) image (no shell, no package
-manager) to keep the published image's vulnerability surface small — `docker exec -it app sh` (or `bash`) will not
-work. Use `docker logs app`, the `/health/live` and `/health/ready` endpoints, and `/metrics` (Prometheus) instead.
+manager) to keep the published image's vulnerability surface small — `docker exec -it <service> sh` (or `bash`) will
+not work. Use `docker logs <service>` (`app`, or `media-nexus` for the Postgres+Gluetun example), the `/health/live`
+and `/health/ready` endpoints, and `/metrics` (Prometheus) instead.
 
 ## Do not put this behind a public reverse proxy
 
