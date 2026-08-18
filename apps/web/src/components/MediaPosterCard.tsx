@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 // MediaPosterCard — the shared poster card for the Movies/Series library pages (UNI-028 layout
 // half). Based on Discover.tsx's DiscoverCard. Reuses the `posterUrl` helper from Poster.tsx.
-// A title/year/monitored footer, a thin completeness color bar (movies only — the list response
-// carries per-movie `hasFile` but no per-series file-completeness, so series cards never render
-// it), and a checkbox overlay in selection mode.
+// A title/year/monitored footer, a thin completeness color bar (SERIESSTATUS-1: now both media
+// types — complete/missing/upcoming via the caller-provided `completeness`, the mockup's shared
+// 4-state concept), and a checkbox overlay in selection mode.
 import { Film } from "lucide-react";
 import { clsx } from "clsx";
 import { Badge } from "../lib/ui";
 import { posterUrl } from "./detail/Poster";
+import { completenessBarClass, type Completeness } from "./Completeness";
 
 /** UNI-029 pass 1: Tailwind grid column class for a given poster-size option (shared by both
  *  library pages so the Maps of size->columns never drifts between Movies and Series). */
@@ -25,7 +26,7 @@ export function MediaPosterCard({
   year,
   images,
   monitored,
-  hasFile,
+  completeness,
   selecting,
   selected,
   onToggleSelect,
@@ -38,8 +39,10 @@ export function MediaPosterCard({
   year: string | number | null;
   images?: { coverType: string; url: string }[];
   monitored: boolean;
-  /** Movie-only: drives the bottom completeness bar. Omit for series (never renders it). */
-  hasFile?: boolean;
+  /** Drives the bottom completeness bar (SERIESSTATUS-1). Null/omitted → no bar (unmonitored or
+   *  no data). Callers derive it per media type — movies from hasFile+release gate, series from
+   *  the backend aggregate. */
+  completeness?: Completeness | null;
   selecting: boolean;
   selected: boolean;
   onToggleSelect: (id: string) => void;
@@ -50,9 +53,9 @@ export function MediaPosterCard({
   qualityProfileName?: string | null;
 }) {
   const url = posterUrl(images);
-  // Bottom bar: accent/ok when monitored AND has a file; warn when monitored AND missing a
-  // file; nothing when unmonitored (or when hasFile isn't provided — series).
-  const barTone = hasFile === undefined ? null : monitored ? (hasFile ? "ok" : "warn") : null;
+  // Bottom bar: only for monitored titles — complete (blue) / missing (amber) / upcoming (violet);
+  // nothing when unmonitored or there's no completeness data.
+  const barClass = monitored ? completenessBarClass(completeness) : null;
 
   return (
     <div
@@ -95,8 +98,8 @@ export function MediaPosterCard({
         </div>
         {qualityProfileName && <span className="truncate text-[10px] text-ink-dim">{qualityProfileName}</span>}
       </div>
-      {barTone && (
-        <div className={clsx("h-1 w-full", barTone === "ok" ? "bg-ok" : "bg-warn")} />
+      {barClass && (
+        <div className={clsx("h-1 w-full", barClass)} />
       )}
     </div>
   );

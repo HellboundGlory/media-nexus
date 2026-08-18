@@ -39,13 +39,14 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
   );
 }
 
-export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "ok" | "warn" | "danger" | "info" }) {
+export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "ok" | "warn" | "danger" | "info" | "upcoming" }) {
   const tones: Record<string, string> = {
     neutral: "bg-neutral-bg text-neutral-ink",
     ok: "bg-ok-bg text-ok-ink",
     warn: "bg-warn-bg text-warn-ink",
     danger: "bg-err-bg text-err-ink",
     info: "bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] text-accent",
+    upcoming: "bg-upcoming-bg text-upcoming-ink",
   };
   return (
     <span className={clsx("inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wide", tones[tone])}>{children}</span>

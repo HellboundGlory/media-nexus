@@ -66,7 +66,7 @@ export default function Calendar() {
                         </>
                       )}
                     </span>
-                    <Badge tone={e.hasFile ? "ok" : e.monitored ? "info" : "neutral"}>{e.hasFile ? "available" : e.monitored ? "wanted" : "unmonitored"}</Badge>
+                    <Badge tone={e.hasFile ? "ok" : e.monitored ? "info" : "neutral"}>{e.hasFile ? "Complete" : e.monitored ? "Missing" : "Unmonitored"}</Badge>
                   </li>
                 ))}
               </ul>

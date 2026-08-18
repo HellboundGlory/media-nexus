@@ -12,6 +12,7 @@ import { api } from "../api/client";
 import type { Movie, MediaFileRow, Release } from "../api/types";
 import { ErrorState, formatBytes, formatDate, FormatsBadges } from "../lib/ui";
 import { DetailHeader, type ReadoutCell } from "../components/detail/DetailHeader";
+import { CompletenessBadge, movieCompleteness } from "../components/Completeness";
 import { CastCrewStrip } from "../components/detail/CastCrewStrip";
 import { HistoryPanel } from "../components/detail/HistoryPanel";
 import { InteractiveSearchModal, type SearchScope } from "../components/detail/InteractiveSearchModal";
@@ -81,7 +82,7 @@ export default function MovieDetail() {
 
   const readout: ReadoutCell[] = [
     { label: "Root Folder", value: <span className="block max-w-[11rem] truncate font-sans text-sm font-normal normal-case" title={m.rootFolderPath}>{m.rootFolderPath || "—"}</span> },
-    { label: "Status", value: m.status || "—" },
+    { label: "Status", value: <span className="inline-flex items-center gap-2"><span>{m.status || "—"}</span><CompletenessBadge value={movieCompleteness(m)} /></span> },
     { label: "Studio", value: m.studio || "—" },
     { label: "Files", value: files.data?.length ?? "—" },
   ];

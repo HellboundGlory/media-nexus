@@ -12,6 +12,7 @@ import { BulkEditModal, type BulkEditPatch } from "../components/BulkEditModal";
 import { BulkTagsModal } from "../components/BulkTagsModal";
 import { BulkDeleteModal, type BulkDeleteOptions } from "../components/BulkDeleteModal";
 import { MediaPosterCard, posterGridClass } from "../components/MediaPosterCard";
+import { CompletenessBadge, CompletenessLegend, movieCompleteness } from "../components/Completeness";
 import { OptionsModal } from "../components/OptionsModal";
 
 interface BulkResult {
@@ -188,25 +189,28 @@ export default function Movies() {
       ) : (
         <>
           {viewMode === "posters" ? (
-            <div className={`grid gap-4 ${posterGridClass(posterSize)}`}>
-              {items.map((m) => (
-                <MediaPosterCard
-                  key={m.id}
-                  id={m.id}
-                  title={m.title}
-                  year={m.releaseDate ? m.releaseDate.slice(0, 4) : null}
-                  images={m.images}
-                  monitored={m.monitored}
-                  hasFile={m.hasFile}
-                  selecting={selecting}
-                  selected={selected.has(m.id)}
-                  onToggleSelect={toggle}
-                  onClick={(id) => navigate(`/movies/${id}`)}
-                  showTitle={showTitle}
-                  qualityProfileName={showQualityProfile ? profileName(m.qualityProfileId) : null}
-                />
-              ))}
-            </div>
+            <>
+              <div className={`grid gap-4 ${posterGridClass(posterSize)}`}>
+                {items.map((m) => (
+                  <MediaPosterCard
+                    key={m.id}
+                    id={m.id}
+                    title={m.title}
+                    year={m.releaseDate ? m.releaseDate.slice(0, 4) : null}
+                    images={m.images}
+                    monitored={m.monitored}
+                    completeness={movieCompleteness(m)}
+                    selecting={selecting}
+                    selected={selected.has(m.id)}
+                    onToggleSelect={toggle}
+                    onClick={(id) => navigate(`/movies/${id}`)}
+                    showTitle={showTitle}
+                    qualityProfileName={showQualityProfile ? profileName(m.qualityProfileId) : null}
+                  />
+                ))}
+              </div>
+              <CompletenessLegend />
+            </>
           ) : (
           <div className="overflow-hidden rounded-lg border border-rule">
             <table className="w-full text-left text-sm">
@@ -236,7 +240,9 @@ export default function Movies() {
                     {selecting && <td className="px-3 py-2"><input type="checkbox" checked={selected.has(m.id)} onChange={() => toggle(m.id)} className="h-4 w-4" /></td>}
                     <td className="px-3 py-2 font-medium text-ink"><Link to={`/movies/${m.id}`} className="hover:text-accent">{m.title}</Link></td>
                     <td className="px-3 py-2 text-ink-dim">{m.releaseDate ? m.releaseDate.slice(0, 4) : "—"}</td>
-                    <td className="px-3 py-2"><Badge tone="neutral">{m.status}</Badge></td>
+                    <td className="px-3 py-2">
+                      {movieCompleteness(m) ? <CompletenessBadge value={movieCompleteness(m)} /> : <span className="text-ink-dim">—</span>}
+                    </td>
                     <td className="px-3 py-2"><Badge tone={m.monitored ? "ok" : "warn"}>{m.monitored ? "monitored" : "unmonitored"}</Badge></td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex justify-end gap-2">

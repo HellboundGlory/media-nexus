@@ -16,6 +16,7 @@ import { api } from "../api/client";
 import type { Series as SeriesRow, Episode, MediaFileRow, Release } from "../api/types";
 import { Badge, ErrorState, formatDate, formatBytes, FormatsBadges } from "../lib/ui";
 import { DetailHeader, type ReadoutCell } from "../components/detail/DetailHeader";
+import { CompletenessBadge, seriesCompleteness } from "../components/Completeness";
 import { CastCrewStrip } from "../components/detail/CastCrewStrip";
 import { HistoryPanel } from "../components/detail/HistoryPanel";
 import { InteractiveSearchModal, type SearchScope } from "../components/detail/InteractiveSearchModal";
@@ -185,9 +186,10 @@ export default function SeriesDetail() {
     return list.length > 0 && list.every((e) => e.episode.monitored);
   };
 
+  const seriesComp = seriesCompleteness(s);
   const readout: ReadoutCell[] = [
     { label: "Root Folder", value: <span className="block max-w-[11rem] truncate font-sans text-sm font-normal normal-case" title={s.rootFolderPath}>{s.rootFolderPath || "—"}</span> },
-    { label: "Status", value: s.status || "—" },
+    { label: "Status", value: <span className="inline-flex items-center gap-2"><span>{s.status || "—"}</span><CompletenessBadge value={seriesComp} missingCount={seriesComp === "missing" ? s.missingEpisodeCount : undefined} /></span> },
     { label: "Episodes", value: episodes.data?.length ?? "—" },
     { label: "Network", value: s.network || "—" },
   ];

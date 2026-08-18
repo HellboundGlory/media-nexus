@@ -161,15 +161,16 @@ export class SeriesService {
   }
 
   async list(q: { search?: string; monitored?: string; filter?: string; sort?: string; sortDir?: "asc" | "desc"; page?: number; pageSize?: number }) {
-    // UNI-029: Series supports All/Monitored/Unmonitored (via `monitored`), but deliberately has
-    // NO "missing" branch — the list response has no per-show file-completeness signal, so a
-    // missing filter would be a fake condition (the controller also rejects `filter=missing`).
+    // UNI-029: Series supports All/Monitored/Unmonitored (via `monitored`). SERIESSTATUS-1 now
+    // attaches a per-show completeness aggregate (complete/missing/upcoming) to each row so the
+    // poster cards and table Status column reflect real episode-level completeness — the missing
+    // filter is still rejected (the aggregate is display-only, not a query gate).
     const where = combine([
       titleSearchCondition(schema.series.title, q.search),
       q.monitored === "true" ? eq(schema.series.monitored, true) : undefined,
       q.monitored === "false" ? eq(schema.series.monitored, false) : undefined,
     ]);
-    return listPaged<typeof schema.series.$inferSelect>(this.db, schema.series, where, q, {
+    const page = await listPaged<typeof schema.series.$inferSelect>(this.db, schema.series, where, q, {
       sortColumns: {
         title: schema.series.title,
         year: schema.series.firstAirYear,
@@ -177,11 +178,48 @@ export class SeriesService {
         monitored: schema.series.monitored,
       },
     });
+    const comp = await this.completenessForSeries(page.items.map((s) => s.id));
+    return { ...page, items: page.items.map((s) => this.attachCompleteness(s, comp.get(s.id))) };
   }
 
   async get(id: string) {
     const rows = await this.db.select().from(schema.series).where(eq(schema.series.id, id)).limit(1);
-    return requireFound(rows[0], "series", id);
+    const row = requireFound(rows[0], "series", id);
+    const comp = (await this.completenessForSeries([id])).get(id);
+    return this.attachCompleteness(row, comp);
+  }
+
+  /** Per-series completeness across a series' MONITORED episodes (SERIESSTATUS-1). Aired = a
+   *  monitored episode whose air date is in the past; missing = aired but without a file. One
+   *  grouped aggregate per request (no N+1), on both SQLite and Postgres — the `case when`
+   *  keeps the boolean-vs-integer hasFile portability (sum(boolean) fails on PG). */
+  private async completenessForSeries(seriesIds: string[]): Promise<Map<string, { aired: number; missing: number }>> {
+    const map = new Map<string, { aired: number; missing: number }>();
+    if (seriesIds.length === 0) return map;
+    const now = new Date().toISOString();
+    const rows = await this.db
+      .select({
+        seriesId: schema.episode.seriesId,
+        aired: sql<number>`sum(case when ${schema.episode.airDateUtc} is not null and ${schema.episode.airDateUtc} <= ${now} then 1 else 0 end)`,
+        withFile: sql<number>`sum(case when ${schema.episode.airDateUtc} is not null and ${schema.episode.airDateUtc} <= ${now} and ${schema.episode.hasFile} then 1 else 0 end)`,
+      })
+      .from(schema.episode)
+      .where(and(inArray(schema.episode.seriesId, seriesIds), eq(schema.episode.monitored, true)))
+      .groupBy(schema.episode.seriesId);
+    for (const r of rows) {
+      const aired = Number(r.aired);
+      map.set(r.seriesId, { aired, missing: aired - Number(r.withFile) });
+    }
+    return map;
+  }
+
+  /** Fold a series completeness aggregate into a row for the list/detail responses. Unmonitored
+   *  series get no state (no bar/badge, matching the shared design); a monitored series with
+   *  nothing aired yet is "upcoming". */
+  private attachCompleteness(row: typeof schema.series.$inferSelect, comp: { aired: number; missing: number } | undefined) {
+    if (!row.monitored || !comp) return { ...row, completeness: null as "complete" | "missing" | "upcoming" | null, missingEpisodeCount: 0 };
+    if (comp.aired === 0) return { ...row, completeness: "upcoming" as const, missingEpisodeCount: 0 };
+    return { ...row, completeness: (comp.missing > 0 ? "missing" : "complete") as "complete" | "missing", missingEpisodeCount: comp.missing };
   }
 
   /** Edit a series (roadmap P1, gap report C5). Partial body; omitted fields untouched,

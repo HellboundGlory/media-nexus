@@ -42,6 +42,9 @@ export interface Series {
   seriesType: string;
   firstAirYear: number | null;
   monitored: boolean;
+  // SERIESSTATUS-1: per-series completeness over monitored episodes (backend-aggregated).
+  completeness?: "complete" | "missing" | "upcoming" | null;
+  missingEpisodeCount?: number;
   // Detail-page metadata (DETAILPAGE-BE1) — nullable; populated by metadata refresh.
   certification: string | null;
   runtime: number | null; // minutes (episode runtime)

@@ -12,6 +12,7 @@ import { BulkEditModal, type BulkEditPatch } from "../components/BulkEditModal";
 import { BulkTagsModal } from "../components/BulkTagsModal";
 import { BulkDeleteModal, type BulkDeleteOptions } from "../components/BulkDeleteModal";
 import { MediaPosterCard, posterGridClass } from "../components/MediaPosterCard";
+import { CompletenessBadge, CompletenessLegend, seriesCompleteness } from "../components/Completeness";
 import { OptionsModal } from "../components/OptionsModal";
 
 interface BulkResult {
@@ -169,24 +170,28 @@ export default function Series() {
       ) : (
         <>
           {viewMode === "posters" ? (
-            <div className={`grid gap-4 ${posterGridClass(posterSize)}`}>
-              {items.map((s) => (
-                <MediaPosterCard
-                  key={s.id}
-                  id={s.id}
-                  title={s.title}
-                  year={s.firstAirYear}
-                  images={s.images}
-                  monitored={s.monitored}
-                  selecting={selecting}
-                  selected={selected.has(s.id)}
-                  onToggleSelect={toggle}
-                  onClick={(id) => navigate(`/series/${id}`)}
-                  showTitle={showTitle}
-                  qualityProfileName={showQualityProfile ? profileName(s.qualityProfileId) : null}
-                />
-              ))}
-            </div>
+            <>
+              <div className={`grid gap-4 ${posterGridClass(posterSize)}`}>
+                {items.map((s) => (
+                  <MediaPosterCard
+                    key={s.id}
+                    id={s.id}
+                    title={s.title}
+                    year={s.firstAirYear}
+                    images={s.images}
+                    monitored={s.monitored}
+                    completeness={seriesCompleteness(s)}
+                    selecting={selecting}
+                    selected={selected.has(s.id)}
+                    onToggleSelect={toggle}
+                    onClick={(id) => navigate(`/series/${id}`)}
+                    showTitle={showTitle}
+                    qualityProfileName={showQualityProfile ? profileName(s.qualityProfileId) : null}
+                  />
+                ))}
+              </div>
+              <CompletenessLegend />
+            </>
           ) : (
             <div className="overflow-hidden rounded-lg border border-rule">
               <table className="w-full text-left text-sm">
@@ -203,20 +208,26 @@ export default function Series() {
                         />
                       </th>
                     )}
-                    <th className="px-3 py-2">Title</th><th className="px-3 py-2">Year</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Monitored</th><th className="px-3 py-2 text-right">Action</th>
+                    <th className="px-3 py-2">Title</th><th className="px-3 py-2">Year</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Monitored</th><th className="px-3 py-2 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-rule">
-                  {items.map((s) => (
+                  {items.map((s) => {
+                    const comp = seriesCompleteness(s);
+                    return (
                     <tr key={s.id} className="hover:bg-bg/60">
                       {selecting && <td className="px-3 py-2"><input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} className="h-4 w-4" /></td>}
                       <td className="px-3 py-2 font-medium text-ink"><Link to={`/series/${s.id}`} className="hover:text-accent">{s.title}</Link></td>
                       <td className="px-3 py-2 text-ink-dim">{s.firstAirYear ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {comp ? <CompletenessBadge value={comp} missingCount={comp === "missing" ? s.missingEpisodeCount : undefined} /> : <span className="text-ink-dim">—</span>}
+                      </td>
                       <td className="px-3 py-2"><Badge tone="neutral">{s.seriesType}</Badge></td>
                       <td className="px-3 py-2"><Badge tone={s.monitored ? "ok" : "warn"}>{s.monitored ? "monitored" : "unmonitored"}</Badge></td>
                       <td className="px-3 py-2 text-right"><button onClick={() => remove.mutate(s.id)} className="text-xs text-err hover:underline">Remove</button></td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
