@@ -206,4 +206,10 @@ export class SeriesController {
   autoSearchSeason(@Param("id") id: string, @Param("seasonNumber") seasonNumber: string) {
     return this.series.autoSearchSeason(id, Number(seasonNumber));
   }
+
+  @Post(":id/auto-search")
+  @ApiOperation({ summary: "Search indexers for every monitored, missing episode across the whole series and auto-grab the best release for each (one click)" })
+  autoSearchSeries(@Param("id") id: string) {
+    return this.series.autoSearchSeries(id);
+  }
 }

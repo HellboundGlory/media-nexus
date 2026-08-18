@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SeriesDetail — the real series detail page (DETAILPAGE-FE1). Header (poster + meta + chips +
-// overview + readout + action bar with the preserved Import-from-TMDB and Auto-grab/RSS
-// actions), a season-collapsible episode table (real React collapse state, most recent season
+// overview + readout + action bar with the preserved Refresh & Scan (metadata) and the
+// series-wide Search Monitored actions), a season-collapsible episode table (real React collapse
 // expanded by default), a SeasonPill with hover stats (including size-on-disk summed from
 // /files mapped through the episode list), Cast & Crew strip, and a History panel. Episode
 // crosshair buttons open the Interactive Search (single-episode scope); the season header's
@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Crosshair, FolderOpen, MonitorDown, Database, FileText, Trash2, ChevronDown, ChevronRight, Search, Eye, EyeOff, Pencil } from "lucide-react";
+import { ArrowLeft, Crosshair, FolderOpen, RefreshCw, FileText, Trash2, ChevronDown, ChevronRight, Search, Eye, EyeOff, Pencil } from "lucide-react";
 import { clsx } from "clsx";
 import { api } from "../api/client";
 import type { Series as SeriesRow, Episode, MediaFileRow, Release } from "../api/types";
@@ -59,9 +59,13 @@ export default function SeriesDetail() {
     mutationFn: (monitored: boolean) => api.put(`/series/${id}`, { monitored }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["series", id] }),
   });
-  const runRss = useMutation({
-    mutationFn: () => api.post("/system/commands/media.rssSync"),
-    onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["series-episodes", id] }), 600),
+  // Series-wide monitored auto-search (SERIESDETAIL-1) — replaces the old per-series RSS
+  // button, which triggered the GLOBAL passive feed-poll command regardless of what the user
+  // was looking at. This targets the one series' monitored-and-missing episodes directly.
+  const autoSearchSeries = useMutation({
+    mutationFn: () =>
+      api.post<{ attempted: number; grabbed: number; error?: string }>(`/series/${id}/auto-search`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["series-episodes", id] }),
   });
   const importMeta = useMutation({
     mutationFn: () => api.post(`/series/${id}/metadata`),
@@ -220,17 +224,18 @@ export default function SeriesDetail() {
             <button
               onClick={() => importMeta.mutate()}
               disabled={importMeta.isPending}
-              title="Import seasons/episodes from TMDB"
+              title="Refresh series metadata from TMDB"
               className="inline-flex items-center gap-1.5 rounded bg-bg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule disabled:opacity-50"
             >
-              <Database className="h-3.5 w-3.5" /> Import from TMDB
+              <RefreshCw className="h-3.5 w-3.5" /> Refresh &amp; Scan
             </button>
             <button
-              onClick={() => runRss.mutate()}
-              disabled={runRss.isPending}
+              onClick={() => autoSearchSeries.mutate()}
+              disabled={autoSearchSeries.isPending}
+              title="Search and auto-grab the best release for every monitored, missing episode"
               className="inline-flex items-center gap-1.5 rounded bg-bg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink hover:bg-rule disabled:opacity-50"
             >
-              <MonitorDown className="h-3.5 w-3.5" /> {runRss.isPending ? "Syncing…" : "Auto-grab missing (RSS)"}
+              <Search className="h-3.5 w-3.5" /> {autoSearchSeries.isPending ? "Searching…" : "Search Monitored"}
             </button>
             <button
               onClick={() => setRenaming(true)}

@@ -28,6 +28,7 @@ import type { IndexersService } from "../src/indexers/indexers.service";
 import type { EventsService } from "../src/events/events.service";
 import type { AutoTagsService } from "../src/auto-tags/auto-tags.service";
 import type { ConfigService } from "../src/system/config.service";
+import type { RecycleBinService } from "../src/media/recycle-bin.service";
 
 const dir = mkdtempSync(join(tmpdir(), "mn-season-autosearch-"));
 const handles: { close: () => void }[] = [];
@@ -156,5 +157,117 @@ describe("DETAILPAGE-FE2 — season-level auto-search over the real controller/s
       .post("/api/v1/series/nope/seasons/1/auto-search")
       .set("X-Api-Key", "test-key");
     expect(res.status).toBe(404);
+  });
+});
+
+// SERIESDETAIL-1 — auto-search must respect `monitored` (matches real Sonarr's monitoredOnly
+// season command, verified from its source): a season search and a series-wide search both only
+// attempt monitored+missing episodes; unmonitored or hasFile episodes are never searched/grabbed.
+describe("SERIESDETAIL-1 — auto-search is monitored-only (season + series-wide)", () => {
+  function buildMixedApp(db: Db) {
+    const grabbed: string[] = [];
+    const indexers = {
+      search: async ({ query }: { query?: string }) => {
+        // Only S01E01 returns an acceptable release; everything else matches nothing (so a
+        // bug that wrongly attempts an unmonitored/hasFile episode would surface as an extra
+        // attempted entry plus a grab/no-grab outcome we can detect).
+        const m = /S\d+E(\d+)/i.exec(query ?? "");
+        return m && Number(m[1]) === 1
+          ? { releases: [hit("Test.Show.S01E01.1080p.WEB-DL")] }
+          : { releases: [] };
+      },
+      grab: async ({ release }: { release: Release }) => { grabbed.push(release.title); },
+    } as unknown as IndexersService;
+
+    const service = new SeriesService(
+      db,
+      { publish: () => undefined } as unknown as EventsService,
+      { appliedTags: async () => [] } as unknown as AutoTagsService,
+      { get: async () => ({}) } as unknown as ConfigService,
+      indexers,
+      {} as unknown as RecycleBinService,
+    );
+    return { service, grabbed: () => grabbed };
+  }
+
+  // s2: S01E01 monitored+missing (the ONE every search should pick), S01E02 unmonitored+missing,
+  // S01E03 monitored but hasFile, S02E01 unmonitored+missing (other season).
+  async function seedMixed(db: Db) {
+    const now = new Date().toISOString();
+    await db.insert(schema.series).values({
+      id: "s2", tvdbId: 999001, tmdbId: 999001, imdbId: "tt0000002", title: "Mixed Show",
+      overview: "", status: "released", seriesType: "standard", network: null, firstAirYear: 2021,
+      monitored: true, certification: null, runtime: null, trailerId: null, tmdbRating: null,
+      qualityProfileId: null, rootFolderPath: "", genres: [], images: [], tags: [],
+      addedAt: now, updatedAt: now,
+    }).run();
+    await db.insert(schema.season).values({ id: "seaA", seriesId: "s2", seasonNumber: 1, monitored: true }).run();
+    await db.insert(schema.season).values({ id: "seaB", seriesId: "s2", seasonNumber: 2, monitored: true }).run();
+    const ep = (id: string, seasonId: string, n: number, monitored: boolean, hasFile: boolean) =>
+      db.insert(schema.episode).values({ id, seriesId: "s2", seasonId, episodeNumber: n, title: `Ep ${n}`, overview: "", airDateUtc: null, monitored, hasFile }).run();
+    await ep("m1", "seaA", 1, true, false);   // monitored + missing
+    await ep("m2", "seaA", 2, false, false);  // unmonitored + missing
+    await ep("m3", "seaA", 3, true, true);    // monitored + hasFile
+    await ep("m4", "seaB", 1, false, false);  // unmonitored, other season
+  }
+
+  it("season auto-search only attempts monitored+missing episodes (skips unmonitored and hasFile)", async () => {
+    const db = freshDb();
+    await seedMixed(db);
+    const built = buildMixedApp(db);
+    const moduleRef = await Test.createTestingModule({
+      controllers: [SeriesController],
+      providers: [
+        { provide: SeriesService, useValue: built.service },
+        { provide: LibraryScanService, useValue: {} as unknown as LibraryScanService },
+      ],
+    }).compile();
+    const app = moduleRef.createNestApplication();
+    app.useGlobalFilters(new GlobalExceptionFilter());
+    await app.init();
+    try {
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/series/s2/seasons/1/auto-search")
+        .set("X-Api-Key", "test-key");
+      expect(res.status).toBe(201);
+      const body = res.body as SeasonAutoResult;
+      expect(body.attempted).toBe(1);               // only m1 (monitored+missing)
+      expect(body.grabbed).toBe(1);
+      expect(body.results.map((r) => r.episodeId)).toEqual(["m1"]);
+      expect(built.grabbed()).toEqual(["Test.Show.S01E01.1080p.WEB-DL"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("series-wide auto-search only attempts monitored+missing episodes across every season", async () => {
+    const db = freshDb();
+    await seedMixed(db);
+    const built = buildMixedApp(db);
+    const moduleRef = await Test.createTestingModule({
+      controllers: [SeriesController],
+      providers: [
+        { provide: SeriesService, useValue: built.service },
+        { provide: LibraryScanService, useValue: {} as unknown as LibraryScanService },
+      ],
+    }).compile();
+    const app = moduleRef.createNestApplication();
+    app.useGlobalFilters(new GlobalExceptionFilter());
+    await app.init();
+    try {
+      // Regardless of how many unmonitored/missing or hasFile episodes exist elsewhere in the
+      // show, the series-wide search narrows to the single monitored+missing one.
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/series/s2/auto-search")
+        .set("X-Api-Key", "test-key");
+      expect(res.status).toBe(201);
+      const body = res.body as SeasonAutoResult;
+      expect(body.attempted).toBe(1);
+      expect(body.grabbed).toBe(1);
+      expect(body.results.map((r) => r.episodeId)).toEqual(["m1"]);
+      expect(built.grabbed()).toEqual(["Test.Show.S01E01.1080p.WEB-DL"]);
+    } finally {
+      await app.close();
+    }
   });
 });

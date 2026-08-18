@@ -463,9 +463,12 @@ export class SeriesService {
 
   /** On-demand "Search + auto-grab" for a whole season (DETAILPAGE-FE2): runs the same
    *  search → match → pickBest → grab composition as autoSearchEpisode over every episode
-   *  in the season that does not already have a file (skip ones that do — the per-episode
-   *  button disables on hasFile, this keeps that guard at the loop level). Returns a
-   *  per-episode summary plus the counts. */
+   *  in the season that does not already have a file AND is monitored. Skipping unmonitored
+   *  episodes matches real Sonarr (its season command invokes ReleaseSearchService with
+   *  monitoredOnly=true, so its episode filter reduces to ep.Monitored) — a season search
+   *  never grabs for episodes the user has deliberately unmonitored, even though a single
+   *  explicitly-picked episode (autoSearchEpisode) intentionally has no such check. Returns
+   *  a per-episode summary plus the counts. */
   async autoSearchSeason(seriesId: string, seasonNumber: number): Promise<{
     attempted: number;
     grabbed: number;
@@ -476,10 +479,33 @@ export class SeriesService {
     const results: { episodeId: string; grabbed: boolean; release?: Release; error?: string }[] = [];
     let grabbed = 0;
     for (const row of rows) {
-      if (row.episode.hasFile) continue;
+      if (row.episode.hasFile || !row.episode.monitored) continue;
       const r = await this.searchAndGrabTarget(series, row);
       if (r.grabbed) grabbed++;
       results.push({ episodeId: row.episode.id, ...r });
+    }
+    return { attempted: results.length, grabbed, results };
+  }
+
+  /** On-demand series-wide "Search + auto-grab" for everything monitored and missing
+   *  (SERIESDETAIL-1): replaces the old per-series RSS button. Sources its candidates from
+   *  wantedMissing() — which already filters monitored === true AND hasFile === false — then
+   *  narrows to this series, so the monitored-only semantics come for free with no new query
+   *  logic. Same shape and searchAndGrabTarget() composition as autoSearchSeason(). */
+  async autoSearchSeries(seriesId: string): Promise<{
+    attempted: number;
+    grabbed: number;
+    results: { episodeId: string; grabbed: boolean; release?: Release; error?: string }[];
+  }> {
+    const series = await this.get(seriesId);
+    const missing = await this.wantedMissing(5000);
+    const rows = missing.filter((m) => m.seriesId === seriesId);
+    const results: { episodeId: string; grabbed: boolean; release?: Release; error?: string }[] = [];
+    let grabbed = 0;
+    for (const row of rows) {
+      const r = await this.searchAndGrabTarget(series, { episode: row, seasonNumber: row.seasonNumber });
+      if (r.grabbed) grabbed++;
+      results.push({ episodeId: row.id, ...r });
     }
     return { attempted: results.length, grabbed, results };
   }
