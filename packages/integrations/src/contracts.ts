@@ -95,6 +95,9 @@ export interface MediaSummary {
   rating?: number;
   // Detail-page additions (roadmap P3 / DETAILPAGE-BE1) — cheap, self-contained fields the
   // TMDB provider returns on one round trip; nullable because not every title/pipeline has them.
+  /** TMDB's own lifecycle status, verbatim: "Released"/"Post Production"/"In Production" for
+   *  movies; "Returning Series"/"Ended"/"Canceled"/... for series (SERIESSTATUS-2). */
+  status?: string;
   /** Age/classification rating, e.g. "PG-13" (movie) / "TV-MA" (series). */
   certification?: string;
   /** Runtime in minutes (movie release runtime / series episode runtime). */

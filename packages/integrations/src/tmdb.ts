@@ -24,6 +24,7 @@ export interface TmdbEpisode { episode_number: number; name: string; air_date: s
 export interface TmdbSeason { season_number: number; episodes?: TmdbEpisode[] }
 export interface TmdbSeriesDetail {
   id: number; name?: string; overview?: string; first_air_date?: string | null;
+  status?: string; // TMDB's own lifecycle: "Returning Series", "Ended", "Canceled", ...
   genres?: { name: string }[]; networks?: { name: string }[]; number_of_seasons?: number;
   poster_path?: string | null; vote_average?: number;
   episode_run_time?: number[];
@@ -34,6 +35,7 @@ export interface TmdbSeriesDetail {
 }
 export interface TmdbMovieDetail {
   id: number; title?: string; overview?: string; release_date?: string | null;
+  status?: string; // TMDB's own lifecycle: "Released", "Post Production", "In Production", ...
   genres?: { name: string }[]; poster_path?: string | null; runtime?: number;
   vote_average?: number; production_companies?: { name?: string }[];
   release_dates?: { results: TmdbReleaseDateRegion[] };
@@ -179,6 +181,7 @@ export class TmdbProvider implements MetadataProviderContract {
       releaseDate: d.release_date ?? undefined,
       year: d.release_date ? Number(String(d.release_date).slice(0, 4)) : undefined,
       overview: d.overview,
+      status: d.status ?? undefined,
       genres: (d.genres ?? []).map((g) => g.name ?? "").filter(Boolean),
       images: d.poster_path ? [{ coverType: "poster", url: `https://image.tmdb.org/t/p/w500${d.poster_path}` }] : [],
       rating: d.vote_average ?? undefined,
@@ -212,6 +215,7 @@ export class TmdbProvider implements MetadataProviderContract {
       releaseDate: d.first_air_date ?? undefined,
       year: d.first_air_date ? Number(String(d.first_air_date).slice(0, 4)) : undefined,
       overview: d.overview,
+      status: d.status ?? undefined,
       genres: (d.genres ?? []).map((g) => g.name ?? "").filter(Boolean),
       images: d.poster_path ? [{ coverType: "poster", url: `https://image.tmdb.org/t/p/w500${d.poster_path}` }] : [],
       rating: d.vote_average ?? undefined,

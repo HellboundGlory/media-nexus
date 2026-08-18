@@ -163,6 +163,9 @@ export class MetadataService {
       genres: d.genres ?? [],
       images: d.images ?? [],
       releaseDate,
+      // TMDB's real lifecycle status (SERIESSTATUS-2), verbatim; keep the DB value if TMDB gave
+      // nothing this time (never regress a real value to null).
+      status: d.status ?? movie[0].status,
       // Detail-page metadata (DETAILPAGE-BE1) — new nullable columns threaded from MediaSummary.
       certification: d.certification ?? null,
       runtime: d.runtime ?? null,
@@ -245,6 +248,9 @@ export class MetadataService {
       genres: d.genres ?? [],
       images: d.images ?? [],
       firstAirYear: d.year ?? series[0].firstAirYear,
+      // TMDB's real lifecycle status (SERIESSTATUS-2), verbatim; keep the DB value if TMDB gave
+      // nothing this time (never regress a real value to null).
+      status: d.status ?? series[0].status,
       // Persist the resolved TMDB id back onto the row — but only when the row has none yet.
       // Without the backfill at all, a series added via TVDB keeps tmdbId null forever, which in
       // turn hides the DetailHeader TMDb link (DETAILPAGE-FE1). It must NOT blindly overwrite an
