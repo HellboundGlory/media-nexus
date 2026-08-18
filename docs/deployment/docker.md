@@ -26,28 +26,33 @@ public internet.
 
 ## Recommended: Postgres + Gluetun VPN
 
-`docker/docker-compose.example.yml` is the recommended production shape — three services (`media-nexus`, `postgres`,
-`gluetun`) instead of one:
+`docker/docker-compose.example.yml` is the recommended production shape — four services (`media-nexus`, `postgres`,
+`nzbget`, `gluetun`) instead of one:
 
 ```bash
 cp docker/.env.example docker/.env   # NOT the repo root .env — this file lives next to the compose file
-# fill in MEDIA_NEXUS_SECRET, POSTGRES_PASSWORD, and your VPN provider's credentials
+# fill in MEDIA_NEXUS_SECRET, POSTGRES_PASSWORD, NZBGET_USER/PASS, and your VPN provider's credentials
 docker compose -f docker/docker-compose.example.yml up -d
 docker compose -f docker/docker-compose.example.yml logs media-nexus | grep "API key"
 ```
 
 | Service | Port | Notes |
 |---|---|---|
-| `gluetun` | `${WEB_PORT:-7373}` → container `7373` | owns the network; publishes the web UI port since `media-nexus` has none of its own |
+| `gluetun` | `${WEB_PORT:-7373}`, `${NZBGET_PORT:-6789}` → containers `7373`, `6789` | owns the network; publishes both UIs since `media-nexus` and `nzbget` have no ports of their own |
 | `media-nexus` | *(shares gluetun's network — no port of its own)* | `network_mode: "service:gluetun"`, so every outbound request (indexers, download clients, TMDB) goes through the VPN tunnel |
+| `nzbget` | *(shares gluetun's network — no port of its own)* | usenet download client, same `network_mode: "service:gluetun"` — its downloads go through the tunnel too; `media-nexus` reaches it at `http://127.0.0.1:6789` since they share a network namespace |
 | `postgres` | n/a, internal only | real Postgres instead of the SQLite default; `DATABASE_URL` is assembled from `POSTGRES_USER`/`PASSWORD`/`DB` |
+
+After it's up, add it in-app as a download client (System → Settings → Download Clients → NZBGet), host
+`http://127.0.0.1:6789`, using the `NZBGET_USER`/`NZBGET_PASS` you set in `.env`.
 
 Two things worth knowing about this setup: gluetun's DNS-over-TLS (encrypts every DNS lookup, on by default) has no
 way to resolve a Docker-internal name like `postgres` — rather than turning it off, `postgres` gets a static IP on
 the `media-nexus` network and `media-nexus` gets an `extra_hosts` entry pointing at it, so that one connection never
-needs DNS at all and DoT stays fully on for everything else. And `FIREWALL_OUTBOUND_SUBNETS` allow-lists your LAN
-(so the published web UI stays reachable) and the compose file's own docker network (so `media-nexus` can still
-reach `postgres` over it) without forcing either through the VPN tunnel.
+needs DNS at all and DoT stays fully on for everything else. `media-nexus` ↔ `nzbget` needs no such workaround since
+sharing gluetun's network namespace means they talk over `127.0.0.1`, which never needs DNS in the first place. And
+`FIREWALL_OUTBOUND_SUBNETS` allow-lists your LAN (so the published UIs stay reachable) and the compose file's own
+docker network (so `media-nexus` can still reach `postgres` over it) without forcing either through the VPN tunnel.
 
 ## Volumes / persistence
 
@@ -60,6 +65,8 @@ reach `postgres` over it) without forcing either through the VPN tunnel.
   (see [upgrade-and-migration.md](upgrade-and-migration.md)).
 - `./data/media:/data/media` — media library (mount the host library here)
 - `./data/downloads:/data/downloads` — downloads staging (must be same filesystem as media for hardlinks)
+- `./data/nzbget:/config` — NZBGet's own settings/queue state (Postgres+Gluetun example only); it shares the same
+  `./data/downloads` host path as `media-nexus` so completed downloads can be hardlinked into the library
 
 ## Paths are set in the app, not via environment variables
 

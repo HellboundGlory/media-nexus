@@ -29,6 +29,7 @@ services:
       FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNET:-192.168.1.0/24},172.28.0.0/24 # LAN + this docker net
     ports:
       - "${WEB_PORT:-7373}:7373" # published here — media-nexus has no ports of its own
+      - "${NZBGET_PORT:-6789}:6789" # nzbget's web UI, same reason
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
@@ -55,6 +56,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  nzbget:
+    image: ghcr.io/nzbgetcom/nzbget:latest
+    container_name: media-nexus-nzbget
+    network_mode: "service:gluetun" # shares gluetun's netns too — media-nexus reaches it at 127.0.0.1:6789, no DNS needed
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-UTC}
+      NZBGET_USER: ${NZBGET_USER:?set NZBGET_USER in .env}
+      NZBGET_PASS: ${NZBGET_PASS:?set NZBGET_PASS in .env}
+    volumes:
+      - ./data/nzbget:/config
+      - ./data/downloads:/downloads # same path media-nexus mounts, so imports can hardlink
+    restart: unless-stopped
 
   media-nexus:
     image: ghcr.io/hellboundglory/media-nexus/app:latest
