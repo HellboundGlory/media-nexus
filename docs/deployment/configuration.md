@@ -9,7 +9,7 @@ All configuration flows through environment variables (secrets via `_FILE` suffi
 |---|---|---|
 | `NODE_ENV` | `development` | runtime mode |
 | `PORT` | `7373` | API listen port |
-| `DATABASE_URL` | `file:./data/media-nexus.db` | Drizzle connection string. Dialect chosen by scheme: `sqlite:`/`file:`/`:memory:`/bare path → SQLite (`better-sqlite3`); `postgres://…`/`postgresql://…` → PostgreSQL (`pg`). Both dialects are implemented (roadmap M1.1/M1.2). |
+| `DATABASE_URL` | `file:./data/media-nexus.db` | Drizzle connection string. Dialect chosen by scheme: `sqlite:`/`file:`/`:memory:`/bare path → SQLite (`better-sqlite3`); `postgres://…`/`postgresql://…` → PostgreSQL (`pg`). Both dialects are fully implemented and supported. |
 | `MEDIA_NEXUS_SECRET` | *(required, generate `openssl rand -hex 32`)* | encryption key for stored credentials |
 | `MEDIA_NEXUS_SECRET_FILE` | — | path to read `MEDIA_NEXUS_SECRET` from (Docker secrets) |
 | `MEDIA_NEXUS_BOOTSTRAP_KEY` | *(generated if unset)* | pins the first-run system API key instead of generating one (e.g. for CI/tests) |
@@ -26,23 +26,23 @@ this app is not meant to sit behind a reverse proxy (see [docs/security.md](../s
 
 Namespaced keys, e.g.:
 
-- `paths.rootFolders` — library root folders. **This, not an environment variable, is how you point MediaNexus at
-  your media library** — set it to wherever your media volume is mounted inside the container (System → Settings).
-- `paths.downloads` — downloads staging root, same idea — set it to your downloads volume's container path. Must be
-  on the same filesystem as `paths.rootFolders` for hardlink imports.
+- `paths.downloads` — downloads staging root. **This, not an environment variable, is how you point MediaNexus at
+  your downloads volume** — set it to wherever your downloads volume is mounted inside the container (System →
+  Settings). Must be on the same filesystem as your root folders (below) for hardlink imports.
 - `media.naming.movies` / `media.naming.episodes` — naming templates
 - `media.preferredProtocol` — usenet vs torrent preference
 - `ui.theme` — dark/light
+
+Root folders (where your media library lives) are **not** a `setting` key — they're a real table with their own
+CRUD endpoints: `GET/POST /api/v1/root-folders`, `GET/PUT/DELETE /api/v1/root-folders/:id`. Add one from the web UI
+(System → Settings, or wherever a root-folder picker appears) pointing at wherever your media volume is mounted
+inside the container, on the same filesystem as `paths.downloads`.
 
 Settings are validated against a zod schema in `packages/shared/src/config.ts` before persistence.
 
 ## Secrets handling
 
-- API keys: hashed (SHA-256) at rest for auth lookups, plus an AES-256-GCM copy encrypted with `MEDIA_NEXUS_SECRET`
-  so the raw value can be revealed again later (System → API key) without rotating it.
-- Admin password (browser login): scrypt-hashed, random salt per password. Session cookies are signed (HMAC-SHA256),
-  not stored server-side — see [docs/security.md](../security.md) for the full session-auth design.
-- Provider credentials (indexers/download clients/notifications): **not encrypted at rest** — stored as plain JSON in
-  the `settings` column (see [docs/security.md](../security.md) hardening checklist). Redacted in native API
-  *responses*, but readable directly from the database file.
-- Log redaction: structured logger redacts fields matching `/key|token|pass|secret|api/` in `settings` payloads.
+Full detail (API keys, admin password, session auth, and provider/indexer/download-client credential encryption)
+lives in [docs/security.md](../security.md) — not duplicated here to avoid the two drifting apart. Short version:
+`MEDIA_NEXUS_SECRET` is the encryption key behind all of it, so treat it as the one secret that matters most to
+protect.

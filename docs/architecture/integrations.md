@@ -23,8 +23,8 @@ Registration is declarative (a module of providers per kind); adding a new vendo
 
 ## 2. Provider contracts (TypeScript interfaces in `packages/integrations`)
 
-Implemented as interfaces + zod config schemas in the scaffold (interfaces are real and unit-tested; concrete vendor
-drivers are roadmap items):
+Implemented as interfaces + zod config schemas (interfaces are real and unit-tested; concrete vendor drivers are added
+as needed):
 
 | Contract | Key method(s) | Ecosystem analogues |
 |---|---|---|
@@ -69,8 +69,8 @@ Configuration schemas (e.g. `sabnzbdSettingsSchema`, `qbittorrentSettingsSchema`
   `/library/sections/:key/all`, `X-Plex-Token` auth) over HTTP, both for library scan + availability by TMDB/TVDB
   provider ids. The `media_availability` table is the seam; `media.availabilityRefresh` syncs it. Emby is planned on
   the same contract. Plex here is library-availability only — account-linked Plex watchlist import is separate,
-  still-planned scope (see roadmap).
-- **Notifications:** a `NotificationProvider` receives typed domain events; configuration rows (`notification_provider`)
+  still-planned scope.
+- **Notifications:** a `NotificationProvider` receives typed domain events; configuration rows (`notification`)
   subscribe per-`eventType` + `tags`, so users can route "release grabbed" to Discord and "indexer failed" to email. The
   event types fired today are `acquisition.release.grabbed`, `acquisition.import.completed`, `discovery.indexer.failed`
   and `acquisition.client.failed` (see `events.md`).

@@ -52,7 +52,7 @@ compatibility, Docker-first, strong typing, strong testing, long-term maintainab
 - **Decision:** **Drizzle ORM** — two schema declarations (a SQLite dialect backed by `better-sqlite3` for local, and a
   pair-wise Postgres twin backed by `pg`) plus `drizzle-kit` migrations per dialect. The runtime dialect is chosen from the
   `DATABASE_URL` scheme at boot (`sqlite:`/`file:`/`:memory:`/bare path vs `postgres(ql)://`).
-- **Consequences (accurate status — both dialects are implemented and tested, roadmap M1.1/M1.2):**
+- **Consequences (both dialects are implemented and tested):**
   - **Boundary cast, not "mechanical portability".** apps/api's ~49 service files are written against the SQLite-typed
     `Db` (`BetterSQLite3Database`), because the two drivers expose irreconcilable type systems (`PgTable` vs `SQLiteTable`,
     async vs sync). A Postgres handle is assigned to that type via a single documented cast confined to
@@ -119,7 +119,8 @@ compatibility, Docker-first, strong typing, strong testing, long-term maintainab
 - **Decision:** zod schemas define domain shapes (used by jobs/integrations/services and API DTOs); NestJS DTOs use
   class-validator (for Swagger metadata integration) composed from domain zod schemas where practical.
 - **Consequences:** + runtime validation + Swagger in one pass, typed domain contracts. − some duplication between zod and
-  class-validator; mapped in a shared mapping utility and scheduled for consolidation into a generated client (roadmap).
+  class-validator, currently mapped in a shared mapping utility; a generated client would remove that duplication if it's
+  ever worth the toolchain weight.
 
 ## ADR-009 — Docker: single-container image (API serves the built web UI), health checks
 
@@ -134,15 +135,16 @@ compatibility, Docker-first, strong typing, strong testing, long-term maintainab
   healthchecks with compose `start_period`.
 - **Consequences:** + simplest possible deploy (one image, one port, no CORS/reverse-proxy config to get right); one
   fewer moving part to secure or misconfigure. − the API process also serves static assets (acceptable for a self-hosted
-  app that is explicitly not meant to sit behind a public reverse proxy — see `docs/security.md`). Postgres remains a
-  documented future driver, not a compose service today (SQLite volume is the default), documented in
-  `deployment/docker.md`.
+  app that is explicitly not meant to sit behind a public reverse proxy — see `docs/security.md`). Postgres is a fully
+  implemented driver (shipped 2026-08-15) and has its own recommended compose service
+  (`docker/docker-compose.example.yml`, Postgres + Gluetun VPN) alongside the root compose's SQLite default —
+  documented in `deployment/docker.md`.
 - **No in-app self-updater (2026-08-15):** because the only supported install/update path is a container image, the app
   has nothing to replace itself with — the operator's update action is `docker pull` + restart (or their compose /
   watchtower setup). Building an `_arr`-style self-replacing `MediaNexus.Update` binary would be actively wrong for this
-  deployment model. MediaNexus instead ships a read-only **update check** (roadmap P3, gap-report C8): the
-  `system.updateCheck` job asks GitHub whether a newer release exists, caches the answer in memory, and surfaces a
-  sidebar badge — it never touches the running binary/container. See `apps/api/src/system/update-check.service.ts`.
+  deployment model. MediaNexus instead ships a read-only **update check**: the `system.updateCheck` job asks GitHub
+  whether a newer release exists, caches the answer in memory, and surfaces a sidebar badge — it never touches the
+  running binary/container. See `apps/api/src/system/update-check.service.ts`.
 
 ## ADR-010 — Auth: single-tier API key (header `X-Api-Key`), `_arr`-style
 
@@ -155,8 +157,8 @@ compatibility, Docker-first, strong typing, strong testing, long-term maintainab
   (`MEDIA_NEXUS_BOOTSTRAP_KEY` can pin it, e.g. for CI).
 - **Consequences:** + immediate _arr-client compatibility, minimal attack surface, nothing to misconfigure around roles.
   − not intended for multi-tenant or internet-facing use — the app is meant to stay on a trusted LAN/private network (see
-  `docs/security.md`). A future TMDB discover view and Plex watchlist integration (the remaining Seerr-derived roadmap
-  scope) do not require reintroducing per-user accounts.
+  `docs/security.md`). The TMDB discover view (shipped) and Plex watchlist integration (still planned) — the two
+  Seerr-derived capabilities — do not require reintroducing per-user accounts.
 
 > **Superseded in part:** "no login screen" no longer holds. The browser now gets a real username/password login
 > (Sonarr/Radarr-style Forms auth) issuing a signed session cookie, instead of a human having to copy an API-key

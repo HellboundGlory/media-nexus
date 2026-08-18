@@ -53,9 +53,8 @@ adapter's router, not by polluting the native router. Auth for compat surfaces: 
 
 > A Seerr-compatible surface (`/api/seerr/v1`) existed briefly and was removed: it never queried TMDB, it only dressed up
 > the local library as fake "discover" results, and it depended on the user-accounts/request-workflow tables that were
-> removed. It is not on the roadmap to restore; the only Seerr-derived work still planned is a TMDB-backed discover view
-> and Plex watchlist integration (see [docs/implementation/roadmap.md](../implementation/roadmap.md)) — neither is a
-> Seerr-API-shaped compatibility surface.
+> removed. There's no plan to restore it. Of the two Seerr-derived capabilities that were, a real TMDB-backed Discover
+> view has since shipped natively (not a compat surface); Plex watchlist integration is still planned.
 
 ## 5. Incremental delivery plan
 

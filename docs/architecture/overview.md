@@ -1,17 +1,14 @@
 # MediaNexus — Architecture Overview
 
-> Status: **Initial architecture** (Phase A–E). This document establishes the architecture implemented by the scaffold and
-> the direction for forthcoming milestones. See [docs/implementation/roadmap.md](../implementation/roadmap.md) for what is
-> built now versus next.
+> Status: **v1.2.0.** This document describes the architecture as built, not a forward-looking plan.
 
 ## 1. Purpose
 
 MediaNexus is a single, self-hostable media-automation platform that provides the combined capabilities of **Prowlarr**
 (indexers), **Sonarr** (TV) and **Radarr** (movies) through **one coherent application**: one UI, one backend, one domain
 model, one auth system, one job/event architecture, one configuration system, one API surface, Docker-first deployment,
-and strong interoperability with the surrounding _arr ecosystem. A TMDB-backed discovery view and Plex watchlist
-integration — the only capabilities carried forward from **Seerr** — are planned but not yet built; see
-[docs/implementation/roadmap.md](../implementation/roadmap.md).
+and strong interoperability with the surrounding _arr ecosystem. A TMDB-backed discovery view — one of the two
+capabilities carried forward from **Seerr** — is shipped; Plex watchlist integration, the other one, is still planned.
 
 This is **not** a skin that embeds the four existing UIs, and it is **not** four cloned apps behind one login. It is a new
 codebase with a unified model, where movie and TV automation share infrastructure, and where compatibility with the
@@ -72,8 +69,7 @@ Corrections to the research document, verified from source:
    and third parties.
 4. **Explicit compatibility layer.** Existing-ecosystem APIs (Sonarr/Radarr/Prowlarr) are served by isolated
    adapters that translate into the native domain model; they never dictate internal architecture. (A Seerr-compatible
-   surface was built and later removed along with the request/user-accounts workflow it depended on — see
-   [docs/implementation/roadmap.md](../implementation/roadmap.md).)
+   surface was built and later removed along with the request/user-accounts workflow it depended on.)
 5. **Contract-first integrations.** External systems (indexers, download clients, metadata, media servers, notification
    sinks) implement explicit TypeScript interfaces behind provider registries — never ad-hoc calls scattered in core code.
 6. **Docker-first** deployment with persistent volumes, health checks, graceful shutdown, secrets via environment.
@@ -89,7 +85,7 @@ Corrections to the research document, verified from source:
                           ┌──────────────────────┐
                           │   apps/web (React)    │  Vite + Tailwind + TanStack Query + Zustand
                           └──────────┬───────────┘
-                                     │  HTTP JSON /api/v1   (+ SSE realtime, planned)
+                                     │  HTTP JSON /api/v1   (+ SSE realtime)
                           ┌──────────▼───────────┐
                           │   apps/api (NestJS)  │  modular monolith: modules per domain
                           └──────────┬───────────┘
@@ -147,7 +143,7 @@ media-nexus/
 
 > **Status accuracy:** the scaffold is verified **native** (build, test, run) and the Docker image is verified end-to-end
 > (build, boot, `/health/live` + `/health/ready`, SPA, API-key auth) — both locally and via CI's publish-on-tag build.
-> Both storage dialects are implemented and tested (roadmap M1.1/M1.2): SQLite (`better-sqlite3`) is the live default for
+> Both storage dialects are implemented and tested: SQLite (`better-sqlite3`) is the live default for
 > dev/small self-host, chosen from `DATABASE_URL`'s scheme; PostgreSQL (`pg`, `postgres(ql)://`) is fully wired for
 > production. The web/web-facing persist path works end-to-end on both (see ADR-004 for the boundary cast, dual sync/async
 > transaction bodies, and the SQLite-only backup seam).

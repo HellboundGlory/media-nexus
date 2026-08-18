@@ -40,8 +40,8 @@ one admin identity:
   401/403 auth, 404, 409 conflict, 422 semantic, 500 unexpected). Never leak internals or credentials (Rule 7).
 - **Health:** `/health/live` (process up) and `/health/ready` (DB reachable + migrations applied). `/api/v1/system/status`
   returns aggregate app info (version, db vendor, uptime).
-- **Metrics-ready:** NestJS interceptors log timing; a Prometheus `/metrics` endpoint is a planned (not yet implemented)
-  addition — the architecture (guards/interceptors, structured logs) is already metric-friendly.
+- **Metrics:** a Prometheus `/metrics` endpoint is shipped (`apps/api/src/observability/metrics.{controller,service}.ts`),
+  fed by the same NestJS interceptors that log request timing.
 
 ## 4. Conventions
 
@@ -50,12 +50,13 @@ one admin identity:
 - **Command pattern:** long-running or async operations (e.g. `trigger-job`, later `search-all`, `import`, `rename-all`)
   use an `_arr`-style command endpoint `POST /api/v1/system/commands` that enqueues a job and returns the `jobRun` — a
   single consistent async operation surface (see `jobs.md`).
-- **Real-time:** planned Server-Sent Events at `/api/v1/events` (SSE chosen over raw WebSocket for simplicity and HTTP-only
-  proxying; the _arr use SignalR — parity considered, SSE + TanStack Query covers the web and compat clients). Not in the
-  scaffold; tracked in roadmap.
+- **Real-time:** Server-Sent Events at `GET /api/v1/events`, shipped (SSE chosen over raw WebSocket for simplicity and
+  HTTP-only proxying; the _arr use SignalR — parity considered, SSE + TanStack Query covers the web and compat clients).
 - **CORS:** not applicable — the web UI is served same-origin by the same process that serves the API; this app is not
   meant to sit behind a separate origin or a public reverse proxy.
-- **Rate limiting:** planned for auth endpoints; not in scaffold.
+- **Rate limiting:** shipped (`apps/api/src/common/rate-limit.guard.ts`, plus a dedicated
+  `apps/api/src/auth/login-rate-limit.guard.ts` for login attempts), applied to auth and several other
+  write-sensitive endpoints (indexers, blocklist, provider status).
 
 ## 5. Native endpoint inventory
 
@@ -102,6 +103,6 @@ namespace** and are not part of `/api/v1` (see `compatibility.md`).
 ## 6. API-first implications for the frontend
 
 The web app is a pure API client: no direct DB access, no business logic on the client. Shared contract types and zod
-schemas live in `packages/domain` and will later generate a typed client for the web (roadmap: OpenAPI → `openapi-typescript`
-or similar); the scaffold web app currently keeps hand-written client types in `apps/web/src/api/types.ts` and will migrate
-to generated types when the OpenAPI surface stabilizes.
+schemas live in `packages/domain`; the web app keeps hand-written client types in `apps/web/src/api/types.ts` today,
+with a generated client (OpenAPI → `openapi-typescript` or similar) as a future option if that duplication is ever
+worth removing.

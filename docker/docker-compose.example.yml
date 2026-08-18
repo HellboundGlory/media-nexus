@@ -1,12 +1,23 @@
-# MediaNexus — example deployment compose (for your Docker stack / Portainer)
+# MediaNexus — recommended deployment: Postgres + Gluetun VPN
 #
-# 1) `docker compose -f docker/docker-compose.example.yml up -d`
-# 2) Get the first-run API key from logs:
+# All of the app's outbound traffic (indexer/tracker queries, download client connections,
+# TMDB lookups) is routed through a VPN tunnel via Gluetun, and the database runs as a real
+# Postgres server instead of the SQLite default. This is the recommended production shape for
+# anything that talks to indexers/trackers directly — swap back to the plain SQLite/no-VPN
+# example (see git history of this file, or AGENTS.md) if you don't need either.
+#
+# 1) Copy docker/.env.example to docker/.env (same directory as this file — that's where
+#    `env_file:` below resolves its default ".env" from). Fill in MEDIA_NEXUS_SECRET,
+#    POSTGRES_PASSWORD, and your VPN provider's credentials (see the gluetun service below —
+#    the vars shown are WireGuard-shaped; check https://github.com/qdm12/gluetun/wiki for your
+#    provider's exact names if it uses OpenVPN or different variables).
+# 2) `docker compose -f docker/docker-compose.example.yml up -d`
+# 3) Get the first-run API key from logs:
 #      docker compose -f docker/docker-compose.example.yml logs app | grep "API key"
-# 3) Open the web UI (http://host:8080), paste the key under System → API key.
-# 4) Set your root folder(s) to /data/media and downloads root to /data/downloads
+# 4) Open the web UI (http://host:8080), paste the key under System → API key.
+# 5) Set your root folder(s) to /data/media and downloads root to /data/downloads
 #    (System → Settings — these are runtime settings, not environment variables).
-# 5) Set metadata.tmdbApiKey (System) and add indexers + download clients.
+# 6) Set metadata.tmdbApiKey (System) and add indexers + download clients.
 #
 # Image is pulled from GitHub Container Registry (built/published by CI on `v*` tags).
 # Replace `hellboundglory/media-nexus` if you own the repo under a different path.
@@ -14,31 +25,121 @@
 # This is a single container (API + web UI, one port) meant for LAN/private-network
 # use only — it has no login/auth beyond one system API key. Do not put it behind a
 # public reverse proxy or expose it to the internet.
+#
+# --- Gluetun, how the network is wired ---
+# `app` runs with `network_mode: "service:gluetun"` — it shares gluetun's network namespace
+# entirely, so ALL of its outbound traffic goes through the VPN tunnel. Because of that:
+#   - the web UI port is published on `gluetun`, not on `app` (Compose rejects `ports:` +
+#     `network_mode:` on the same service);
+#   - `app` has no `networks:`/`ports:` section of its own at all;
+#   - `depends_on: gluetun: condition: service_healthy` keeps `app` from starting before the
+#     tunnel is actually up.
+# `postgres` stays on the plain `media-nexus` bridge network — a local database has no reason
+# to route through the VPN. `gluetun` is *also* attached to that network so `app` (via
+# gluetun's shared namespace) can still resolve and reach `postgres` by service name.
+# `DOT: "off"` on gluetun matters for this: gluetun's default DNS-over-TLS resolver only knows
+# public DNS, not Docker's internal service names — leaving DoT on breaks `app`'s ability to
+# resolve `postgres` (a very commonly-hit gluetun+sidecar gotcha). `FIREWALL_OUTBOUND_SUBNETS`
+# additionally allow-lists your LAN so the published web UI stays reachable from other devices.
+#
+# --- Postgres, why and how ---
+# See packages/database/src/connection.ts — `DATABASE_URL`'s scheme picks the dialect
+# (`postgres://`/`postgresql://` → Postgres, anything else → SQLite/file). Postgres has no
+# built-in online-backup API on this app (System → Backup will error, "use pg_dump instead") —
+# back up the `./data/postgres` volume, or run `pg_dump`, yourself.
+#
+# --- Paths ---
+# ./data/config, ./data/media, ./data/downloads bind-mount for persistence. Media and
+# downloads MUST share a filesystem for hardlink imports. ./data/postgres is Postgres's own
+# data directory — there is no ./data/db here (that was the SQLite file path; Postgres
+# replaces it entirely, nothing reads or writes a sqlite file in this setup).
 
 name: media-nexus
 
+networks:
+  media-nexus:
+    name: media-nexus
+
 services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: media-nexus-gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      - media-nexus
+    environment:
+      # --- VPN provider (WireGuard shown — see the gluetun wiki for OpenVPN or a different
+      # provider's exact variable names) ---
+      VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER:?set your VPN provider in .env}
+      VPN_TYPE: ${VPN_TYPE:-wireguard}
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:?set your WireGuard private key in .env}
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:?set your WireGuard address in .env}
+      SERVER_COUNTRIES: ${VPN_SERVER_COUNTRIES:-}
+      # Docker's embedded DNS can't be reached through gluetun's DNS-over-TLS resolver, which
+      # breaks `app`'s ability to resolve `postgres` by service name (see note above) — turn
+      # DoT off so plain Docker-internal DNS resolution still works.
+      DOT: "off"
+      # Let your LAN through unencrypted so the published web UI port stays reachable and
+      # Docker-internal traffic to `postgres` isn't forced through the tunnel.
+      FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNET:-192.168.1.0/24}
+    ports:
+      # media-nexus web UI — published here, not on `app` (see note above)
+      - "${WEB_PORT:-8080}:7373"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: media-nexus-postgres
+    networks:
+      - media-nexus
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-medianexus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-medianexus}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-medianexus} -d ${POSTGRES_DB:-medianexus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   app:
     image: ghcr.io/hellboundglory/media-nexus/app:latest
     container_name: media-nexus-app
     restart: unless-stopped
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     env_file:
       - ${MN_ENV_FILE:-.env}
     environment:
       NODE_ENV: production
       PORT: 7373
-      # SQLite default (Postgres is a roadmap item; set postgres://… when supported)
-      DATABASE_URL: file:/data/db/media-nexus.db
+      DATABASE_URL: postgres://${POSTGRES_USER:-medianexus}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-medianexus}
       MEDIA_NEXUS_SECRET: ${MEDIA_NEXUS_SECRET:?set MEDIA_NEXUS_SECRET in .env}
       TZ: ${TZ:-UTC}
     volumes:
-      - ./data/db:/data/db
       - ./data/config:/data/config
       # media + downloads MUST share a filesystem for hardlink imports
       - ./data/media:/data/media
       - ./data/downloads:/data/downloads
-    ports:
-      - "${WEB_PORT:-8080}:7373"
+    # No `ports:` here — `network_mode: service:gluetun` shares gluetun's network stack, and
+    # Compose rejects declaring both `ports:` and `network_mode:` on the same service. The web
+    # UI port is published on `gluetun` above.
     healthcheck:
       test: ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:7373/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

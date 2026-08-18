@@ -40,7 +40,7 @@ async-flow debuggability (Rule/observability).
 - **Persistence now:** a built-in **AuditListener** writes security/admin-relevant events to `audit_log` (async, best
   effort but durable within a transaction when the audit row and the domain write share the DB). Important events are
   audited at the *write call site* too, so audit is not dependent on listener ordering.
-- **Later (roadmap):** outbox pattern (events materialized in DB with the originating transaction) → relay → Redis
+- **Future:** outbox pattern (events materialized in DB with the originating transaction) → relay → Redis
   Streams/NATS for cross-process delivery. The envelope is versioned so this swap is invisible to producers/consumers.
 
 ## 4. Consumers

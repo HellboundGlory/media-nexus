@@ -1,5 +1,12 @@
 # MediaNexus — Docker Deployment
 
+Two compose files, two different jobs:
+
+- **Root `docker-compose.yml`** (this section) — the fastest path to trying the app: builds the image from local
+  source, SQLite on a volume, no VPN. This is what the README's Quick Start uses.
+- **`docker/docker-compose.example.yml`** (see below) — the recommended setup for a real deployment: pulls the
+  published image, Postgres instead of SQLite, and all outbound traffic routed through a VPN via Gluetun.
+
 ## Quick start
 
 ```bash
@@ -11,23 +18,44 @@ docker compose ps      # health check turns green (start_period)
 | Service | Port | Notes |
 |---|---|---|
 | `app` | `${WEB_PORT:-8080}` → container `7373` | single container: NestJS API serves the built web UI directly (static assets + SPA fallback) and swagger at `/api/docs` |
-| *(optional)* `postgres` | n/a | Not included in compose by default — the default remains SQLite on a volume. Postgres is fully supported by the driver (roadmap M1.1/M1.2): to use it, run your own `postgres` service/instance and point `DATABASE_URL` at it (see below). |
 
 This is **one container, one port** — there is no separate `web`/nginx container and no reverse proxy. The first
 time you open it, you'll be walked through creating a single admin login (see [docs/security.md](../security.md)) —
 no API key to copy out of logs. It's still meant for LAN/private-network use only, never exposed directly to the
 public internet.
 
+## Recommended: Postgres + Gluetun VPN
+
+`docker/docker-compose.example.yml` is the recommended production shape — three services (`app`, `postgres`,
+`gluetun`) instead of one:
+
+```bash
+cp docker/.env.example docker/.env   # NOT the repo root .env — this file lives next to the compose file
+# fill in MEDIA_NEXUS_SECRET, POSTGRES_PASSWORD, and your VPN provider's credentials
+docker compose -f docker/docker-compose.example.yml up -d
+docker compose -f docker/docker-compose.example.yml logs app | grep "API key"
+```
+
+| Service | Port | Notes |
+|---|---|---|
+| `gluetun` | `${WEB_PORT:-8080}` → container `7373` | owns the network; publishes the web UI port since `app` has none of its own |
+| `app` | *(shares gluetun's network — no port of its own)* | `network_mode: "service:gluetun"`, so every outbound request (indexers, download clients, TMDB) goes through the VPN tunnel |
+| `postgres` | n/a, internal only | real Postgres instead of the SQLite default; `DATABASE_URL` is assembled from `POSTGRES_USER`/`PASSWORD`/`DB` |
+
+The compose file's own header comments cover the two things that actually trip people up running this pattern
+(gluetun's DNS-over-TLS resolver breaking `app`'s ability to reach `postgres` by name, and the outbound-subnet
+firewall rule needed to keep the LAN and Postgres traffic from being forced through the tunnel) — read them before
+adjusting the VPN provider block.
+
 ## Volumes / persistence
 
-- `./data/db:/data/db` — SQLite database (default). All app config/settings live here (the `setting` table), not in a
-  separate config directory.
-- **Using Postgres instead:** point `DATABASE_URL` at your Postgres instance (e.g.
-  `postgres://user:password@host:5432/medianexus`). The app connects, self-migrates, seeds, and runs its startup
-  backfills against Postgres on boot exactly as it does for SQLite. When you switch dialects, the `data/db` volume is
-  simply unused; you'd migrate your data with `pg_dump`/restore or the import tool first (see
-  [upgrade-and-migration.md](upgrade-and-migration.md)). Note the online backup feature is SQLite-only — on Postgres,
-  the `system.backup` job degrades to `{skipped}`; use `pg_dump` for backups.
+- `./data/db:/data/db` — SQLite database (root compose's default). All app config/settings live here (the `setting`
+  table), not in a separate config directory.
+- **Using Postgres instead** (either the `docker/` example above, or your own instance): point `DATABASE_URL` at it
+  (e.g. `postgres://user:password@host:5432/medianexus`) — the app connects, self-migrates, seeds, and runs its
+  startup backfills against Postgres on boot exactly as it does for SQLite, and `./data/db` goes unused. The online
+  backup feature (System → Backup) is SQLite-only — on Postgres it degrades to `{skipped}`; use `pg_dump` instead
+  (see [upgrade-and-migration.md](upgrade-and-migration.md)).
 - `./data/media:/data/media` — media library (mount the host library here)
 - `./data/downloads:/data/downloads` — downloads staging (must be same filesystem as media for hardlinks)
 

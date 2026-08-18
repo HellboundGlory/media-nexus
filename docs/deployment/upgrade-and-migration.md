@@ -36,7 +36,7 @@ npm run import:upstream -- --kind prowlarr --db /path/to/prowlarr.db
 ```
 
 There is no `--kind seerr`: MediaNexus has no user accounts, requests or watchlists to import data into (that feature
-set was removed — see [docs/implementation/roadmap.md](../implementation/roadmap.md)).
+set was removed).
 
 ### What gets imported (per upstream)
 
@@ -51,13 +51,14 @@ set was removed — see [docs/implementation/roadmap.md](../implementation/roadm
 - **Idempotent** — derived ids mean re-running the importer skips already-imported items. Safe to run repeatedly.
 - **Report** — the CLI prints per-entity counts, `skipped`, `unknown` and any `errors` (exit code 2 on errors).
 - **Not a destructive migration** — the source DB is opened read-only; MediaNexus data is never deleted.
-- **Scope/limits** — only SQLite upstreams today (Postgres-exports are a roadmap item); upstream DB schemas vary by
+- **Scope/limits** — only SQLite upstreams today (a Postgres-exports source isn't supported yet); upstream DB schemas vary by
   version, so if a column is missing the importer tolerates it and reports it rather than aborting. Exotic/custom
   Indexer implementations may land with placeholder settings (baseUrl invalid) — reconfigure them in the UI.
 
 ### After importing
 
-1. Point your media/downloads paths at the volumes (`paths.rootFolders`, `paths.downloads`).
+1. Point your media/downloads paths at the volumes: add root folder(s) (`POST /api/v1/root-folders`, or the web UI)
+   and set `paths.downloads` (System → Settings).
 2. Set `metadata.tmdbApiKey` (System → Settings) and run metadata refresh on series to fill seasons/episodes images.
 3. Add real download clients (SABnzbd/qBittorrent) and indexers, run a health check.
 4. Stop Sonarr/Radarr/Prowlarr and repoint any automation at MediaNexus `/api/v1` (or its compat surfaces:
@@ -66,8 +67,7 @@ set was removed — see [docs/implementation/roadmap.md](../implementation/roadm
 
 ## Backup & restore
 
-Beyond the manual `data.bak` copy above (for upgrades), MediaNexus can back itself up on a schedule
-(roadmap P1, gap report B9):
+Beyond the manual `data.bak` copy above (for upgrades), MediaNexus can back itself up on a schedule:
 
 - Set `system.backupPath` (System → Settings, or `PUT /api/v1/system/config`) to a directory the app can write to —
   it's empty by default, which leaves the `system.backup` job disabled (it no-ops cleanly rather than guessing a
@@ -78,8 +78,11 @@ Beyond the manual `data.bak` copy above (for upgrades), MediaNexus can back itse
   API — safe to run against the live, in-use database (no need to stop the app first). List existing backups with
   `GET /api/v1/system/backups`.
 - **No separate config export.** The backup file already contains the full `setting`/`indexer`/`download_client`
-  tables (including credentials — see [docs/security.md](../security.md) on credentials being stored in plaintext
-  today), so it's a complete, restorable snapshot on its own.
+  tables (credentials included — encrypted at rest, see [docs/security.md](../security.md)), so it's a complete,
+  restorable snapshot on its own.
+- **Postgres:** this whole online-backup flow is SQLite-only — on a Postgres-backed instance `system.backup`
+  degrades to `{skipped}` rather than failing. Use `pg_dump`/`pg_restore` against the `postgres` volume/service
+  instead (see [docker.md](docker.md)).
 
 **To restore a backup** — the in-app flow (System → Backup) is now the normal path:
 

@@ -1,9 +1,9 @@
 # MediaNexus — Unified Domain Model
 
-> This document is the canonical description of the MediaNexus data/domain model. The concrete Drizzle schema (19 tables,
-> SQLite dialect) lives in `packages/database/src/schema.ts`; this document is the source from which that schema is derived. Entities marked
-> **implemented** exist in the current schema; the rest are planned and tracked in
-> [docs/implementation/roadmap.md](../implementation/roadmap.md).
+> This document is the canonical description of the MediaNexus data/domain model. The concrete Drizzle schema (36
+> tables) lives in `packages/database/src/schema.ts` (SQLite dialect) and `packages/database/src/schema.pg.ts`
+> (Postgres, kept in sync table-for-table); this document is the source from which that schema is derived. Entities
+> marked **implemented** exist in the current schema; the rest are planned but not yet built.
 
 ## 1. Design goals
 
@@ -31,7 +31,7 @@
 | `DownloadClient`, `RemotePathMapping` | Sonarr/Radarr/Prowlarr | `download_client`, `setting` (remote path mappings) |
 | `Queue`, `History`, `Blocklist`, `Wanted` | Sonarr/Radarr | `download_queue_entry`, `history_entry`, `blocklist_entry` |
 | `Media` (availability) | Seerr | `media_availability` |
-| `NotificationAgent`-ish config | all | `notification_provider` |
+| `NotificationAgent`-ish config | all | `notification` |
 | auth, `ApiKey` | _arr | `api_key` |
 | scheduled tasks | all | `job_definition`, `job_run` |
 | `System/Logs/Health` | all | `health_check_run` (via jobs), `audit_log` |
@@ -79,7 +79,9 @@ that was deliberately removed (no user accounts to scope it to) and has no equiv
 - **`media_file`** *(implemented)* — one table for movies and episodes: `id, mediaType, mediaId, relativePath, size,
   quality (json), edition, dateAdded, mediaInfo (video/audio json), languages (json), isSample`. Episodes link via
   `episode_ids` (a file can contain several episodes, e.g. multi-episode packs).
-- **`collection`** *(planned)* — `id, tmdbId, name, overview, images, movies (via join table)`.
+- **`collection`** *(implemented, UNI-021)* — `id, tmdbId, name, overview, images, monitored, qualityProfileId?,
+  rootFolderPath, minimumAvailability, searchOnAdd, parts (json), lastSyncAt`. Tracked TMDB movie collections — parts
+  reference movies directly rather than a separate join table.
 - **`genre`** *(planned)* and **`person`**/**`person_credit`** *(planned)* — TMDB/TVDB-backed people and credits
   (`mediaType, mediaId, personId, role, character, order`), shared across movies and series.
 - **`media_image`** *(planned)* — `mediaType, mediaId, coverType (poster|fanart|logo…), remoteUrl, localPath` so artwork
@@ -119,9 +121,8 @@ that was deliberately removed (no user accounts to scope it to) and has no equiv
   status (unknown|processing|partiallyAvailable|available), plexId?, jellyfinId?, tmdbRating, tmdbVoteCount, lastTmdbSyncAt,
   lastAvailabilitySyncAt`. Populated by the media-servers module (Jellyfin and Plex sync, `media.availabilityRefresh`
   job); a future Plex *watchlist* integration (account-linked, separate from library-availability sync) is the planned
-  next consumer of this table (see
-  [docs/implementation/roadmap.md](../implementation/roadmap.md)). The request/approval workflow that used to read this
-  table was removed along with user accounts.
+  next consumer of this table. The request/approval workflow that used to read this table was removed along with
+  user accounts.
 
 ### 3.7 Automation & jobs
 
@@ -134,9 +135,9 @@ that was deliberately removed (no user accounts to scope it to) and has no equiv
 
 ### 3.8 Notifications & observability
 
-- **`notification_provider`** *(planned — schema drafted)* — `id, name, implementation, enabled, settings (json), eventTypes
-  (text[]), tags, created/updated`. Event subscriptions are explicit so future notification sinks receive only relevant
-  domain events.
+- **`notification`** *(implemented, shipped as `notification` not the originally-drafted `notification_provider`)* —
+  `id, kind (webhook|discord|telegram|email), name, enabled, eventTypes (text[]), settings (json), created/updated`.
+  Event subscriptions are explicit so a given notification sink receives only the domain events it's configured for.
 - **`audit_log`** *(implemented)* — `id, correlationId, actor (text, defaults to 'system'), action, entityType, entityId,
   details (json), ip, createdAt`. There's no per-user id to attribute actions to — one admin identity, not multi-user
   accounts — but every security-relevant or admin action is still recorded (Rule 7/observability).

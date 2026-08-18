@@ -3,7 +3,9 @@
 ## Prerequisites
 
 - Node.js **>= 20** (scaffold authored/tested on Node 22) and npm **>= 10**.
-- SQLite is built-in for local dev (`better-sqlite3`). PostgreSQL only needed for prod-style testing.
+- SQLite is built-in for local dev (`better-sqlite3`), no setup required. PostgreSQL is fully supported and is the
+  recommended dialect for a real deployment (see `docs/deployment/docker.md`) — point `DATABASE_URL` at a Postgres
+  instance to develop/test against it locally too.
 
 ## Install & first run
 

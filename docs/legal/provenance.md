@@ -21,7 +21,7 @@ sources.
 | `apps/api` / `packages/*` | Original TypeScript; API shapes modeled on documented public OpenAPI of _arr apps (behavioral, not code) | Merely compatible / original | MIT | Active |
 | Sonarr/Radarr/Prowlarr compat adapters (`packages/compatibility`, `apps/api/src/compat`) | Wire-shape interop against public OpenAPI/docs | Merely compatible | MIT | Active |
 | Seerr-compatible adapter (`/api/seerr/v1`) | Wire-shape interop against Seerr's public API | Merely compatible | MIT | Removed — shipped, then removed along with the request/user-accounts workflow it depended on; no source copied while it existed |
-| Planned: TMDB-backed discover view | Pattern influence from Seerr's discover UI (MIT) | Adapted pattern (no source text) | MIT (attribution noted) | Planned — record adaptations here when landed |
+| TMDB-backed discover view (`apps/web/src/pages/Discover.tsx`) | Pattern influence from Seerr's discover UI (MIT) | Adapted pattern (no source text) | MIT (attribution noted) | Active — shipped 2026-08-11 |
 | Planned: Plex watchlist integration | Pattern influence from Seerr's watchlist model (MIT) | Adapted pattern (no source text) | MIT (attribution noted) | Planned — record adaptations here when landed |
 | Cardigann YAML interpreter (`packages/integrations/src/cardigann.ts`) | Format spec (documented schema); own parser/runtime | Reimplemented format | MIT | Active — never port Prowlarr engine code |
 | Golden-corpus test fixtures (`packages/integrations/src/fixtures/cardigann/`) | Copied unchanged from `github.com/Prowlarr/Indexers` `definitions/v11` (12 definitions; YAML data, not application code) | Data corpus used to validate the interpreter in tests | Owner (Hellbound) granted verbal permission to use the repository for all users — no written license at head; logged as the D4 decision. Test-fixture only, not bundled as product content | Active (test-only) |
@@ -30,8 +30,8 @@ sources.
 ## Attribution
 
 - Seerr (MIT) project: conceptual basis for the Media-Availability/Notification-subscription model, and for the
-  originally-built (later removed) Requests/Users model. It remains the conceptual basis for the planned TMDB discover
-  view and Plex watchlist integration. Repository: <https://github.com/seerr-team/seerr>. No source text copied into
-  MediaNexus as of this record.
+  originally-built (later removed) Requests/Users model. It remains the conceptual basis for the shipped TMDB discover
+  view and the still-planned Plex watchlist integration. Repository: <https://github.com/seerr-team/seerr>. No source
+  text copied into MediaNexus as of this record.
 - Upstream API/protocol documentation referenced: Sonarr/Radarr/Prowlarr public repos & docs; Newznab
   (<https://newznab.readthedocs.io>); Torznab (community spec); Cardigann format docs.
