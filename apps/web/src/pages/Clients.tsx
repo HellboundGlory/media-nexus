@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HeartPulse, Pencil, Plus, Server, Trash2, Route } from "lucide-react";
 import { api } from "../api/client";
 import type { DownloadClient, MediaServer, RemotePathMapping, TagRow } from "../api/types";
-import { EmptyState, ErrorState } from "../lib/ui";
+import { ErrorState } from "../lib/ui";
 import { Modal } from "../components/Modal";
 import { ProviderCard } from "../components/ProviderCard";
 import { TagPicker } from "../components/TagPicker";
@@ -220,31 +220,30 @@ export default function Clients() {
               <HeartPulse className="h-3.5 w-3.5" /> {testAllClients.isPending ? "Testing…" : "Test all"}
             </button>
           </div>
-          {clients.data?.length === 0 ? (
-            <EmptyState title="No download clients" hint="Add an SABnzbd, NZBGet or qBittorrent client to enable real downloads." />
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {clients.data?.map((c) => (
-                <ProviderCard
-                  key={c.id}
-                  name={c.name}
-                  subLine={`${c.implementation} · ${c.kind} · priority ${c.priority}`}
-                  enabled={c.enabled}
-                  protocol={c.kind}
-                  tags={c.tags}
-                  tagLookup={tagLookup}
-                  onClick={() => openClientEdit(c)}
-                />
-              ))}
-              <button
-                type="button"
-                onClick={openClientAdd}
-                className="flex min-h-24 items-center justify-center gap-2 rounded-xl border border-dashed border-rule bg-surface text-sm font-semibold uppercase tracking-wide text-ink-dim transition-colors hover:border-accent/50 hover:text-ink"
-              >
-                <Plus className="h-4 w-4" /> Add
-              </button>
-            </div>
+          {clients.data?.length === 0 && (
+            <p className="mb-3 text-xs text-ink-dim">Add an SABnzbd, NZBGet or qBittorrent client to enable real downloads.</p>
           )}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {clients.data?.map((c) => (
+              <ProviderCard
+                key={c.id}
+                name={c.name}
+                subLine={`${c.implementation} · ${c.kind} · priority ${c.priority}`}
+                enabled={c.enabled}
+                protocol={c.kind}
+                tags={c.tags}
+                tagLookup={tagLookup}
+                onClick={() => openClientEdit(c)}
+              />
+            ))}
+            <button
+              type="button"
+              onClick={openClientAdd}
+              className="flex min-h-24 items-center justify-center gap-2 rounded-xl border border-dashed border-rule bg-surface text-sm font-semibold uppercase tracking-wide text-ink-dim transition-colors hover:border-accent/50 hover:text-ink"
+            >
+              <Plus className="h-4 w-4" /> Add
+            </button>
+          </div>
         </section>
       )}
 
@@ -314,28 +313,24 @@ export default function Clients() {
             </div>
           </div>
           <p className="mb-3 text-xs text-ink-dim">Jellyfin or Plex (HTTP API). Availability sync marks library items as already available.</p>
-          {serversQuery.data?.length === 0 ? (
-            <EmptyState title="No media servers" hint="Add a Jellyfin or Plex server to sync library availability." />
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {serversQuery.data?.map((s) => (
-                <ProviderCard
-                  key={s.id}
-                  name={s.name}
-                  subLine={s.implementation}
-                  enabled={s.enabled}
-                  onClick={() => openServerEdit(s)}
-                />
-              ))}
-              <button
-                type="button"
-                onClick={openServerAdd}
-                className="flex min-h-24 items-center justify-center gap-2 rounded-xl border border-dashed border-rule bg-surface text-sm font-semibold uppercase tracking-wide text-ink-dim transition-colors hover:border-accent/50 hover:text-ink"
-              >
-                <Plus className="h-4 w-4" /> Add
-              </button>
-            </div>
-          )}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {serversQuery.data?.map((s) => (
+              <ProviderCard
+                key={s.id}
+                name={s.name}
+                subLine={s.implementation}
+                enabled={s.enabled}
+                onClick={() => openServerEdit(s)}
+              />
+            ))}
+            <button
+              type="button"
+              onClick={openServerAdd}
+              className="flex min-h-24 items-center justify-center gap-2 rounded-xl border border-dashed border-rule bg-surface text-sm font-semibold uppercase tracking-wide text-ink-dim transition-colors hover:border-accent/50 hover:text-ink"
+            >
+              <Plus className="h-4 w-4" /> Add
+            </button>
+          </div>
         </section>
       )}
 
