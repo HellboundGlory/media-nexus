@@ -11,6 +11,7 @@ import { Film, Tv, Plus, FolderOpen, Check, Loader2 } from "lucide-react";
 import { api } from "../api/client";
 import type { DiscoverItem, DiscoverPage, Paged, Movie, Series, QueueRow, RootFolder } from "../api/types";
 import { Stat, formatBytes, EmptyState, ErrorState } from "../lib/ui";
+import { activeQueueCount } from "../lib/queue";
 import { AddTitleModal, type AddTitleBody } from "../components/AddTitleModal";
 import { Modal } from "../components/Modal";
 import LibraryImport from "./LibraryImport";
@@ -75,7 +76,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat label="Movies" value={movies.data?.total ?? "…"} hint="Total movies" />
         <Stat label="Series" value={series.data?.total ?? "…"} hint="Total shows" />
-        <Stat label="Downloads" value={queue.data?.items.length ?? 0} hint="Active downloads" />
+        <Stat label="Downloads" value={activeQueueCount(queue.data?.items ?? [])} hint="Active downloads" />
         <Stat label="Storage" value={used !== null ? formatBytes(used) : "—"} hint="Total storage used" />
       </div>
 

@@ -10,6 +10,7 @@ import { useAppStore, applyTheme } from "../store/useAppStore";
 import { api } from "../api/client";
 import type { SystemStatus, UpdateCheckState, HealthStatus, Paged, Movie, Series, QueueRow } from "../api/types";
 import { StatusLamp, type LampTone } from "../lib/ui";
+import { activeQueueCount } from "../lib/queue";
 
 type NavItem = {
   to: string;
@@ -53,7 +54,7 @@ export default function Layout() {
     { to: "/movies", label: "Movies", icon: Film, badge: movies.data?.total },
     { to: "/series", label: "Series", icon: Tv, badge: series.data?.total },
     { to: "/collections", label: "Collections", icon: Library },
-    { to: "/downloads", label: "Downloads", icon: Download, badge: queue.data?.items.length },
+    { to: "/downloads", label: "Downloads", icon: Download, badge: activeQueueCount(queue.data?.items ?? []) },
     { to: "/calendar", label: "Calendar", icon: CalendarDays },
     { to: "/activity", label: "Activity", icon: Activity },
     { to: "/wanted", label: "Wanted", icon: AlertTriangle },

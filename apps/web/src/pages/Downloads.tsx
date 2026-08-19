@@ -11,6 +11,7 @@ import { RotateCcw, FolderOpen, Trash2, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import type { QueueRow } from "../api/types";
 import { Badge, EmptyState, ErrorState, formatBytes, formatDate, ProgressBar, statusTone, FormatsBadges } from "../lib/ui";
+import { isActiveQueueEntry } from "../lib/queue";
 
 export default function Downloads() {
   const qc = useQueryClient();
@@ -48,7 +49,7 @@ export default function Downloads() {
   // seed-goal tracking) -- this page is "active grabs", so they're excluded here rather than
   // lingering forever. Failed/stalled stay visible since they need the retry/manual-import
   // actions below.
-  const rows = (queue.data?.items ?? []).filter((q) => q.status !== "imported" && q.status !== "removed");
+  const rows = (queue.data?.items ?? []).filter(isActiveQueueEntry);
 
   return (
     <div className="space-y-4">
