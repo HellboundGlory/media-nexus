@@ -1,0 +1,1 @@
+ALTER TABLE `episode` ADD `episode_type` text;

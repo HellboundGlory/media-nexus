@@ -20,7 +20,13 @@ export interface TmdbSettings {
   language?: string;
 }
 
-export interface TmdbEpisode { episode_number: number; name: string; air_date: string | null; overview: string }
+export interface TmdbEpisode {
+  episode_number: number; name: string; air_date: string | null; overview: string;
+  // TMDB episode_type (EPISODEDETAIL-1): "standard" | "finale" | "mid_season" | "premiere".
+  // Real field on the /tv/{id}/season/{n} endpoint (values confirmed live 2026-08-19); stored on
+  // the local episode row to drive the Series Finale / Midseason Finale badges.
+  episode_type?: string;
+}
 export interface TmdbSeason { season_number: number; episodes?: TmdbEpisode[] }
 export interface TmdbSeriesDetail {
   id: number; name?: string; overview?: string; first_air_date?: string | null;

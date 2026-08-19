@@ -15,7 +15,7 @@ export function Modal({
   wide,
   footer,
 }: {
-  title: string;
+  title: ReactNode;
   onClose: () => void;
   children: ReactNode;
   /** Two-column / larger dialogs (quality profile editor). */

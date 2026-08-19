@@ -212,6 +212,9 @@ export const episode = sqliteTable("episode", {
   seasonId: text("season_id").notNull().references(() => season.id, { onDelete: "cascade" }),
   episodeNumber: integer("episode_number").notNull(),
   absoluteNumber: integer("absolute_number"),
+  // TMDB episode_type (EPISODEDETAIL-1): "standard" | "finale" | "mid_season" | "premiere" — drives
+  // the Series Finale / Midseason Finale badges. Null until a post-migration metadata refresh.
+  episodeType: text("episode_type"),
   title: text("title").notNull().default(""),
   overview: text("overview").notNull().default(""),
   airDateUtc: text("air_date_utc"),

@@ -66,9 +66,14 @@ export interface Episode {
   episodeNumber: number;
   absoluteNumber: number | null;
   title: string;
+  overview: string;
   airDateUtc: string | null;
   monitored: boolean;
   hasFile: boolean;
+  mediaFileId: string | null;
+  /** TMDB episode_type (EPISODEDETAIL-1): "standard" | "finale" | "mid_season" | "premiere" | null.
+   *  Drives the Series Finale / Midseason Finale badges. Null until a post-migration refresh. */
+  episodeType: string | null;
 }
 
 interface WantedEpisode extends Episode {

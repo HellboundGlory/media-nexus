@@ -288,10 +288,23 @@ export class MetadataService {
       for (const ep of season.episodes ?? []) {
         const epId = `ep_${seriesId}_${season.season_number}_${ep.episode_number}`;
         const exists = await this.db.select({ id: schema.episode.id }).from(schema.episode).where(eq(schema.episode.id, epId)).limit(1);
-        if (exists[0]) continue;
+        if (exists[0]) {
+          // EPISODEDETAIL-1: keep a re-refreshed episode's episode_type current — the insert-only
+          // loop would otherwise leave already-imported episodes with null episode_type forever
+          // (and thus no Finale badge) after this migration. Update only when the value changed,
+          // matching the TVDB numbering backfill's write-if-different discipline below.
+          if (ep.episode_type != null) {
+            const row = await this.db.select({ episodeType: schema.episode.episodeType }).from(schema.episode).where(eq(schema.episode.id, epId)).limit(1);
+            if (row[0]?.episodeType !== ep.episode_type) {
+              await this.db.update(schema.episode).set({ episodeType: ep.episode_type }).where(eq(schema.episode.id, epId));
+            }
+          }
+          continue;
+        }
         await this.db.insert(schema.episode).values({
           id: epId, seriesId, seasonId, episodeNumber: ep.episode_number, title: ep.name ?? "",
-          overview: ep.overview ?? "", airDateUtc: ep.air_date ?? null, monitored: true, hasFile: false,
+          overview: ep.overview ?? "", airDateUtc: ep.air_date ?? null, episodeType: ep.episode_type ?? null,
+          monitored: true, hasFile: false,
         });
         episodeCount++;
       }

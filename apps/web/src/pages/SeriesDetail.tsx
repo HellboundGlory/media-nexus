@@ -13,8 +13,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Crosshair, FolderOpen, RefreshCw, FileText, Trash2, ChevronDown, ChevronRight, Search, Eye, EyeOff, Pencil } from "lucide-react";
 import { clsx } from "clsx";
 import { api } from "../api/client";
-import type { Series as SeriesRow, Episode, MediaFileRow, Release } from "../api/types";
+import type { Series as SeriesRow, Episode, MediaFileRow, QualityProfile, Release } from "../api/types";
 import { Badge, ErrorState, formatDate, formatBytes, FormatsBadges } from "../lib/ui";
+import { episodeFinaleBadge } from "../lib/episodeFinale";
 import { DetailHeader, type ReadoutCell } from "../components/detail/DetailHeader";
 import { CompletenessBadge, seriesCompleteness } from "../components/Completeness";
 import { CastCrewStrip } from "../components/detail/CastCrewStrip";
@@ -27,6 +28,7 @@ import { SeasonPill, type SeasonStats } from "../components/detail/SeasonPill";
 import { DeleteConfirmModal } from "../components/detail/DeleteConfirmModal";
 import { MediaFileActions } from "../components/detail/MediaFileActions";
 import { EditTitleModal, type EditTitleBody } from "../components/EditTitleModal";
+import { EpisodeDetailModal } from "../components/detail/EpisodeDetailModal";
 
 interface EpisodeView {
   episode: Episode;
@@ -46,10 +48,14 @@ export default function SeriesDetail() {
   const [collapsed, setCollapsed] = useState<Set<number> | null>(null);
   const [epAuto, setEpAuto] = useState<{ epId: string; tone: "ok" | "none" | "error"; text: string } | null>(null);
   const [seasonAuto, setSeasonAuto] = useState<{ seasonNum: number; tone: "ok" | "none" | "error"; text: string } | null>(null);
+  const [episodeOpen, setEpisodeOpen] = useState<EpisodeView | null>(null);
 
   const series = useQuery({ queryKey: ["series", id], queryFn: () => api.get<SeriesRow>(`/series/${id}`) });
   const episodes = useQuery({ queryKey: ["series-episodes", id], queryFn: () => api.get<EpisodeView[]>(`/series/${id}/episodes`) });
   const files = useQuery({ queryKey: ["files", "series", id], queryFn: () => api.get<MediaFileRow[]>(`/series/${id}/files`) });
+  // Quality profile names come from /quality-profiles (the page only has qualityProfileId on the
+  // series row); the EpisodeDetailModal's Details tab renders the profile name.
+  const profiles = useQuery({ queryKey: ["quality-profiles"], queryFn: () => api.get<QualityProfile[]>("/quality-profiles") });
 
   const setEpisodeMonitored = useMutation({
     mutationFn: ({ ep, monitored }: { ep: string; monitored: boolean }) => api.put(`/series/${id}/episodes/${ep}`, { monitored }),
@@ -123,6 +129,13 @@ export default function SeriesDetail() {
     }
     return [...map.entries()].sort((a, b) => b[0] - a[0]); // most recent first
   }, [episodes.data]);
+
+  // EPISODEDETAIL-1: the highest season number across the series' episodes — the "last season"
+  // used to promote a TMDB "finale" episode to "Series Finale" (episodeFinaleBadge).
+  const maxSeasonNumber = useMemo(
+    () => Math.max(0, ...(episodes.data ?? []).map((e) => e.seasonNumber)),
+    [episodes.data],
+  );
 
   // Attribute each series file to its season via the episode list's season numbers, then sum
   // size per season (the SeasonPill's Size on disk — computed client-side from /files, per FE1).
@@ -359,15 +372,26 @@ export default function SeriesDetail() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-rule">
-                            {list.map(({ episode }) => (
-                              <tr key={episode.id} className="hover:bg-bg/60">
+                            {list.map(({ episode }) => {
+                              const finale = episodeFinaleBadge(episode.episodeType, seasonNum, maxSeasonNumber);
+                              return (
+                              <tr
+                                key={episode.id}
+                                onClick={() => setEpisodeOpen({ episode, seasonNumber: seasonNum })}
+                                className="cursor-pointer hover:bg-bg/60"
+                              >
                                 <td className="px-3 py-1.5 tabular-nums text-ink-dim">E{String(episode.episodeNumber).padStart(2, "0")}</td>
-                                <td className="px-3 py-1.5">{episode.title || "—"}</td>
+                                <td className="px-3 py-1.5">
+                                  <span className="inline-flex items-center gap-2">
+                                    <span>{episode.title || "—"}</span>
+                                    {finale && <Badge tone="info">{finale}</Badge>}
+                                  </span>
+                                </td>
                                 <td className="px-3 py-1.5 text-ink-dim">{episode.airDateUtc ? formatDate(episode.airDateUtc).slice(0, 10) : "—"}</td>
                                 <td className="px-3 py-1.5"><Badge tone={episode.hasFile ? "ok" : "warn"}>{episode.hasFile ? "file" : "missing"}</Badge></td>
                                 <td className="px-3 py-1.5">
                                   <button
-                                    onClick={() => setEpisodeMonitored.mutate({ ep: episode.id, monitored: !episode.monitored })}
+                                    onClick={(e) => { e.stopPropagation(); setEpisodeMonitored.mutate({ ep: episode.id, monitored: !episode.monitored }); }}
                                     title={episode.monitored ? "Monitored — click to unmonitor" : "Unmonitored — click to monitor"}
                                     className={clsx("inline-flex h-6 w-6 items-center justify-center rounded border", episode.monitored ? "border-ok bg-ok/15 text-ok" : "border-rule text-ink-dim hover:border-ink-dim")}
                                   >
@@ -378,7 +402,7 @@ export default function SeriesDetail() {
                                   <div className="flex items-center justify-end gap-0.5">
                                     <button
                                       disabled={episode.hasFile || autoSearchEpisode.isPending}
-                                      onClick={() => autoSearchEpisode.mutate({ epId: episode.id })}
+                                      onClick={(e) => { e.stopPropagation(); autoSearchEpisode.mutate({ epId: episode.id }); }}
                                       className="rounded p-1.5 text-ink-dim hover:bg-rule hover:text-ink disabled:opacity-30"
                                       title={episode.hasFile ? "Already have this file" : "Search and auto-grab the best release for this episode"}
                                     >
@@ -386,11 +410,11 @@ export default function SeriesDetail() {
                                     </button>
                                     <button
                                       disabled={episode.hasFile}
-                                      onClick={() => setSearching({
+                                      onClick={(e) => { e.stopPropagation(); setSearching({
                                         label: `S${String(seasonNum).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")} ${episode.title}`,
                                         mediaType: "series", mediaId: id, query: s.title,
                                         seasons: [seasonNum], episodes: [episode.episodeNumber],
-                                      })}
+                                      }); }}
                                       className="rounded p-1.5 text-ink-dim hover:bg-rule hover:text-ink disabled:opacity-30"
                                       title={episode.hasFile ? "Already have this file" : "Interactive search: this episode"}
                                     >
@@ -404,7 +428,8 @@ export default function SeriesDetail() {
                                   )}
                                 </td>
                               </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -494,6 +519,24 @@ export default function SeriesDetail() {
           }}
           onSave={(body) => update.mutate(body)}
           onClose={() => setEditing(false)}
+        />
+      )}
+      {episodeOpen && (
+        <EpisodeDetailModal
+          seriesTitle={s.title}
+          seasonNumber={episodeOpen.seasonNumber}
+          episode={episodeOpen.episode}
+          qualityProfileName={profiles.data?.find((p) => p.id === s.qualityProfileId)?.name ?? "—"}
+          matchedFile={files.data?.find((f) => f.episodeIds.includes(episodeOpen.episode.id))}
+          maxSeasonNumber={maxSeasonNumber}
+          onClose={() => setEpisodeOpen(null)}
+          onQuickSearch={() => autoSearchEpisode.mutate({ epId: episodeOpen.episode.id })}
+          onInteractiveSearch={() => setSearching({
+            label: `S${String(episodeOpen.seasonNumber).padStart(2, "0")}E${String(episodeOpen.episode.episodeNumber).padStart(2, "0")} ${episodeOpen.episode.title}`,
+            mediaType: "series", mediaId: id, query: s.title,
+            seasons: [episodeOpen.seasonNumber], episodes: [episodeOpen.episode.episodeNumber],
+          })}
+          onFileChanged={() => { qc.invalidateQueries({ queryKey: ["files", "series", id] }); qc.invalidateQueries({ queryKey: ["series-episodes", id] }); }}
         />
       )}
     </div>

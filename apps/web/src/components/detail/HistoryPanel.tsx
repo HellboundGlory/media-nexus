@@ -7,14 +7,25 @@ import { api } from "../../api/client";
 import type { HistoryRow } from "../../api/types";
 import { EmptyState, ErrorState, Spinner, statusTone, formatDate, formatBytes, Badge } from "../../lib/ui";
 
-export function HistoryPanel({ mediaType, mediaId }: { mediaType: "movie" | "series"; mediaId: string }) {
+export function HistoryPanel({ mediaType, mediaId, episodeId }: {
+  mediaType: "movie" | "series";
+  mediaId: string;
+  /** EPISODEDETAIL-1: when present, scope history to just this episode (threaded to the
+   *  /history endpoint's episodeId filter). */
+  episodeId?: string;
+}) {
   const history = useQuery({
-    queryKey: ["history", mediaType, mediaId],
-    queryFn: () => api.get<{ items: HistoryRow[] }>(`/history?mediaType=${mediaType}&mediaId=${mediaId}&limit=50`),
+    queryKey: ["history", mediaType, mediaId, episodeId ?? null],
+    queryFn: () => {
+      const q = new URLSearchParams({ mediaType, mediaId, limit: "50" });
+      if (episodeId) q.set("episodeId", episodeId);
+      return api.get<{ items: HistoryRow[] }>(`/history?${q.toString()}`);
+    },
   });
   return (
     <section className="space-y-2">
       <h4 className="font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink-dim">History</h4>
+      {episodeId && <p className="text-xs text-ink-dim">Showing history for this episode only.</p>}
       {history.isLoading ? <Spinner />
         : history.isError ? <ErrorState error={history.error} onRetry={() => history.refetch()} />
         : history.data?.items.length === 0 ? <EmptyState title="No history yet" hint="Imports and grabs for this title show up here." />
