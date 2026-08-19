@@ -79,6 +79,13 @@ export default function LibraryImport() {
   const roots = rootFolders.data ?? [];
   const selectedRoot = roots[0]?.id ?? null;
   const effectiveRootId = rootId ?? selectedRoot;
+  // Full "name — path" label for the select's title attribute, so the path stays
+  // available on hover even when the select's visible value is truncated (DROPDOWNOVERFLOW-1).
+  const selectedRootLabel =
+    (() => {
+      const sel = roots.find((r) => r.id === effectiveRootId);
+      return sel ? `${sel.name} — ${sel.path}` : "Root folder";
+    })();
 
   const open = (f: UnmappedFolder) => {
     setActive(f);
@@ -98,16 +105,17 @@ export default function LibraryImport() {
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm text-ink-dim">
-              <FolderOpen className="h-4 w-4" />
+            <label className="flex min-w-0 items-center gap-2 text-sm text-ink-dim">
+              <FolderOpen className="h-4 w-4 shrink-0" />
               Root folder
               <select
                 value={effectiveRootId ?? ""}
                 onChange={(e) => { setRootId(e.target.value); setActive(null); }}
-                className="rounded-lg border border-rule bg-surface px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
+                title={selectedRootLabel}
+                className="min-w-0 max-w-full truncate rounded-lg border border-rule bg-surface px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
               >
                 {roots.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name} — {r.path}</option>
+                  <option key={r.id} value={r.id} title={`${r.name} — ${r.path}`}>{r.name} — {r.path}</option>
                 ))}
               </select>
             </label>
