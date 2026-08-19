@@ -61,6 +61,53 @@ export function combine(conds: (SQL | undefined)[]): SQL | undefined {
   return and(...present);
 }
 
+/** A single media type's keyset cursor for the wanted/cutoff merge (WANTEDPAGE-1): the
+ *  `(date, id)` of the last row that type contributed to the previous page, where `date` is
+ *  that type's ordering date (releaseDate for movies, airDateUtc for episodes) and may be
+ *  null. null means "start from the beginning". Kept opaque end-to-end — the API only ever
+ *  round-trips it, never interprets it server-side beyond this shape. */
+export interface KeysetCursor {
+  date: string | null;
+  id: string;
+}
+
+/** Per-type overfetch cap used by the wanted/cutoff services so JS-side filtering (the movie
+ *  availability gate, per-row cutoff quality lookups) has candidates to draw from after
+ *  rejects. Shared with the controller so its hasMore heuristic stays in lockstep. */
+export const wantedOverfetchCap = (limit: number) => Math.max(limit * 4, 200);
+
+/** Dialect-aware keyset order for a nullable date column with an id tiebreak, nulls first:
+ *  Postgres sorts NULLs LAST on ASC by default while SQLite puts them first, so pin `NULLS
+ *  FIRST` on the pg branch — same precedent as metadata.service.ts refreshMissing. */
+export function keysetOrderBy(
+  dialect: Db["dbDialect"],
+  dateCol: SQLiteColumn,
+  idCol: SQLiteColumn,
+): SQL {
+  return dialect === "postgres"
+    ? sql`${dateCol} asc nulls first, ${idCol} asc`
+    : sql`${dateCol} asc, ${idCol} asc`;
+}
+
+/** Keyset 'after this cursor' WHERE for a nullable date column with an id tiebreak, matching
+ *  the nulls-first ordering above. Nulls sort first, so:
+ *  - cursor on a null date -> every non-null date is after, plus remaining nulls with a larger id;
+ *  - cursor on a non-null date -> nothing ancient (null) is after; only later dates, or equal
+ *    dates with a larger id.
+ *  Returns undefined when there is no cursor (start from the beginning) so callers can feed it
+ *  straight into `combine()`. */
+export function keysetAfter(
+  dateCol: SQLiteColumn,
+  idCol: SQLiteColumn,
+  cursor: KeysetCursor | null | undefined,
+): SQL | undefined {
+  if (!cursor) return undefined;
+  if (cursor.date == null) {
+    return sql`(${dateCol} IS NOT NULL) OR (${dateCol} IS NULL AND ${idCol} > ${cursor.id})`;
+  }
+  return sql`(${dateCol} IS NOT NULL) AND (${dateCol} > ${cursor.date} OR (${dateCol} = ${cursor.date} AND ${idCol} > ${cursor.id}))`;
+}
+
 /**
  * One paginated list query for any library table with a title and an addedAt column.
  * Runs the page and the count in parallel — they are independent.

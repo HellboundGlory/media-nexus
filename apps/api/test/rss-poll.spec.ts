@@ -102,8 +102,8 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
       pollRecent: async () => [release()],
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => movieCtx));
 
     const result = await rss.runFeedPoll();
@@ -120,8 +120,8 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
     const dup: WantedMovie = { ...wantedMovie, id: "m2" };
-    const movies = { wantedMissing: async () => [wantedMovie, dup] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie, dup], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => movieCtx));
 
     const result = await rss.runFeedPoll();
@@ -135,8 +135,8 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
       pollRecent: async () => [release({ title: "Some.Unrelated.Film.2014.1080p.WEB-DL" })],
       grab: async () => ({}),
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => movieCtx));
 
     const result = await rss.runFeedPoll();
@@ -150,8 +150,8 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
       pollRecent: async () => [release({ id: "r-pack", title: "Show.S02.1080p.WEB-DL" })],
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [wantedEpisode()] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [wantedEpisode()], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => episodeCtx));
 
     const result = await rss.runFeedPoll();
@@ -165,8 +165,8 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
       pollRecent: async () => [release({ title: "Show.S02E09.1080p.WEB-DL" })], // only E01 is wanted below
       grab: async () => ({}),
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [wantedEpisode({ episodeNumber: 1 })] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [wantedEpisode({ episodeNumber: 1 })], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => episodeCtx));
 
     const result = await rss.runFeedPoll();
@@ -180,8 +180,8 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
       pollRecent: async () => [release({ title: "Interstellar.2015.720p.WEB-DL" })],
       grab: async (input: { releaseId: string }) => { grabbedOffByOne.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
     const rssOk = new RssSyncService(db1, indexersOk, series, movies, new EventsService(new EventBus()), decisionsStub(() => movieCtx));
     expect((await rssOk.runFeedPoll()).matched).toBe(1);
     expect(grabbedOffByOne).toEqual(["r1"]);
@@ -202,11 +202,11 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
       pollRecent: async () => [release({ id: "r-daily", title: "Daily.Chat.2024.05.15.1080p.HDTV" })],
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService;
     const series = {
-      wantedMissing: async () => [
+      wantedMissing: async () => ({ candidates: [
         { ...wantedEpisode(), seriesId: "sDaily", seriesTitle: "Daily Chat", seriesType: "daily", seasonNumber: 1, episodeNumber: 2, airDateUtc: "2024-05-15T00:00:00.000Z" },
-      ],
+      ], rawRowCount: 0 }),
     } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => episodeCtx));
 
@@ -222,11 +222,11 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
       pollRecent: async () => [release({ id: "r-anime", title: "[Subs] Anime.Show - 13 [1080p]" })],
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService;
     const series = {
-      wantedMissing: async () => [
+      wantedMissing: async () => ({ candidates: [
         { ...wantedEpisode(), seriesId: "sAnime", seriesTitle: "Anime Show", seriesType: "anime", seasonNumber: 2, episodeNumber: 1, absoluteNumber: 13, airDateUtc: null },
-      ],
+      ], rawRowCount: 0 }),
     } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => episodeCtx));
 
@@ -242,11 +242,11 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
       pollRecent: async () => [release({ id: "r-aot", title: "AOT.S04E01.1080p.WEB-DL" })],
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService;
     const series = {
-      wantedMissing: async () => [
+      wantedMissing: async () => ({ candidates: [
         { ...wantedEpisode(), seriesId: "sAOT", seriesTitle: "Attack on Titan", seriesType: "standard", seriesAlternateTitles: ["AOT", "SNK"], seasonNumber: 4, episodeNumber: 1 },
-      ],
+      ], rawRowCount: 0 }),
     } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => episodeCtx));
 
@@ -261,11 +261,11 @@ describe("RssSyncService.runFeedPoll() — matching", () => {
       pollRecent: async () => [release({ title: "[Subs] Anime.Show - 13 [1080p]" })],
       grab: async () => ({}),
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService;
     const series = {
-      wantedMissing: async () => [
+      wantedMissing: async () => ({ candidates: [
         { ...wantedEpisode(), seriesId: "sAnime", seriesTitle: "Anime Show", seriesType: "anime", seasonNumber: 2, episodeNumber: 1, absoluteNumber: null, airDateUtc: null },
-      ],
+      ], rawRowCount: 0 }),
     } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => episodeCtx));
 
@@ -285,8 +285,8 @@ describe("RssSyncService.runMissingSearch() — daily/anime queries and matching
       },
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [target] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [target], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), {} as unknown as DecisionService);
 
     const result = await rss.runMissingSearch({ maxSeries: 1, perSeries: 1 });
@@ -305,8 +305,8 @@ describe("RssSyncService.runMissingSearch() — daily/anime queries and matching
       },
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [target] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [target], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), {} as unknown as DecisionService);
 
     const result = await rss.runMissingSearch({ maxSeries: 1, perSeries: 1 });
@@ -325,8 +325,8 @@ describe("RssSyncService.runFeedPoll() — grouping picks the best of several ma
       pollRecent: async () => [worse, better],
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [wantedEpisode()] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [wantedEpisode()], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => episodeCtx));
 
     const result = await rss.runFeedPoll();
@@ -345,8 +345,8 @@ describe("RssSyncService.runFeedPoll() — seen-release cache", () => {
       pollRecent: async () => { calls++; return [release()]; },
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => movieCtx));
 
     const first = await rss.runFeedPoll();
@@ -367,8 +367,8 @@ describe("RssSyncService.runFeedPoll() — seen-release cache", () => {
       pollRecent: async () => { call++; return [release({ id: call === 1 ? "r1" : "r2" })]; },
       grab: async () => ({}),
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService; // nothing wanted -> nothing matched, only testing "unseen" here
-    const series = { wantedMissing: async () => [] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService; // nothing wanted -> nothing matched, only testing "unseen" here
+    const series = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => movieCtx));
 
     expect((await rss.runFeedPoll()).unseen).toBe(1); // r1
@@ -385,8 +385,8 @@ describe("RssSyncService.runFeedPoll() — seen-release cache", () => {
     ]);
 
     const indexers = { pollRecent: async () => [], grab: async () => ({}) } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => movieCtx));
     await rss.runFeedPoll();
 
@@ -409,8 +409,8 @@ describe("RssSyncService.runFeedPoll() — active-queue / recently-grabbed dedup
       pollRecent: async () => [release()],
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => movieCtx));
 
     const result = await rss.runFeedPoll();
@@ -431,8 +431,8 @@ describe("RssSyncService.runFeedPoll() — active-queue / recently-grabbed dedup
       pollRecent: async () => [release()],
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const series = { wantedMissing: async () => [] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
+    const series = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, indexers, series, movies, new EventsService(new EventBus()), decisionsStub(() => movieCtx));
 
     const result = await rss.runFeedPoll();

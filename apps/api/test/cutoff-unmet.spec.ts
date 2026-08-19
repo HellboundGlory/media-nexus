@@ -80,9 +80,9 @@ describe("MoviesService.cutoffUnmet()", () => {
     await db.insert(schema.mediaFile).values(fileRow({ id: "mf_met", mediaId: "m_met", quality: q("web", "1080p") }) as never);
 
     const unmet = await s.cutoffUnmet();
-    expect(unmet.map((m) => m.id)).toEqual(["m_below"]);
-    expect(unmet[0].quality).toEqual(q("sd", "480p"));
-    expect(unmet[0].cutoffQualityId).toBe(CUTOFF_PROFILE.cutoffQualityId);
+    expect(unmet.candidates.map((m) => m.id)).toEqual(["m_below"]);
+    expect(unmet.candidates[0].quality).toEqual(q("sd", "480p"));
+    expect(unmet.candidates[0].cutoffQualityId).toBe(CUTOFF_PROFILE.cutoffQualityId);
   });
 
   it("ignores unmonitored titles and titles with no assigned profile", async () => {
@@ -94,7 +94,7 @@ describe("MoviesService.cutoffUnmet()", () => {
     await db.insert(schema.movie).values(movieRow({ id: "m_noprofile", title: "NoProfile", qualityProfileId: null, hasFile: true }) as never);
     await db.insert(schema.mediaFile).values(fileRow({ id: "mf_noprof", mediaId: "m_noprofile", quality: q("sd", "480p") }) as never);
 
-    expect(await s.cutoffUnmet()).toEqual([]);
+    expect((await s.cutoffUnmet()).candidates).toEqual([]);
   });
 
   it("judges by the BEST held file", async () => {
@@ -106,7 +106,7 @@ describe("MoviesService.cutoffUnmet()", () => {
     await db.insert(schema.mediaFile).values(fileRow({ id: "mf_low", mediaId: "m_two", quality: q("sd", "480p") }) as never);
     await db.insert(schema.mediaFile).values(fileRow({ id: "mf_high", mediaId: "m_two", quality: q("web", "1080p") }) as never);
 
-    expect(await s.cutoffUnmet()).toEqual([]);
+    expect((await s.cutoffUnmet()).candidates).toEqual([]);
   });
 });
 
@@ -147,10 +147,10 @@ describe("SeriesService.cutoffUnmet()", () => {
     await seedSeriesWithEpisode(db, { seriesId: "s2", profileId: "qp_cutoff", epId: "e_met", quality: q("web", "1080p") });
 
     const unmet = await s.cutoffUnmet();
-    expect(unmet.map((e) => e.id)).toEqual(["e_below"]);
-    expect(unmet[0].seriesTitle).toBe("Show");
-    expect(unmet[0].quality).toEqual(q("hdtv", "720p"));
-    expect(unmet[0].cutoffQualityId).toBe(CUTOFF_PROFILE.cutoffQualityId);
+    expect(unmet.candidates.map((e) => e.id)).toEqual(["e_below"]);
+    expect(unmet.candidates[0].seriesTitle).toBe("Show");
+    expect(unmet.candidates[0].quality).toEqual(q("hdtv", "720p"));
+    expect(unmet.candidates[0].cutoffQualityId).toBe(CUTOFF_PROFILE.cutoffQualityId);
   });
 
   it("ignores unmonitored episodes and series without a profile", async () => {
@@ -160,6 +160,6 @@ describe("SeriesService.cutoffUnmet()", () => {
     await seedSeriesWithEpisode(db, { seriesId: "s1", profileId: "qp_cutoff", epId: "e_unmon", monitored: false, quality: q("sd", "480p") });
     await seedSeriesWithEpisode(db, { seriesId: "s2", profileId: null, epId: "e_noprofile", quality: q("sd", "480p") });
 
-    expect(await s.cutoffUnmet()).toEqual([]);
+    expect((await s.cutoffUnmet()).candidates).toEqual([]);
   });
 });

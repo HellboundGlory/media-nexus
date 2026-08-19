@@ -538,7 +538,7 @@ describe("M2: series auto-grab via RSS sync + episode import (mock HTTP + real f
 
     // wanted/missing lists both episodes
     const wantedBefore = await auth(request(http).get("/api/v1/wanted/missing"));
-    expect(wantedBefore.body.filter((e: any) => e.seriesId === sid).length).toBe(2);
+    expect(wantedBefore.body.items.filter((e: any) => e.seriesId === sid).length).toBe(2);
 
     // run RSS sync -> should auto-grab S01E01 (mock returns only that release)
     const rss = await auth(request(http).post("/api/v1/system/commands/media.rssSync"));
@@ -557,7 +557,7 @@ describe("M2: series auto-grab via RSS sync + episode import (mock HTTP + real f
 
     // availability is observable via wanted/missing: only S01E02 remains
     const wantedAfter = await auth(request(http).get("/api/v1/wanted/missing"));
-    const remaining = wantedAfter.body.filter((e: any) => e.seriesId === sid);
+    const remaining = wantedAfter.body.items.filter((e: any) => e.seriesId === sid);
     expect(remaining.length).toBe(1);
     expect(remaining[0].episodeNumber).toBe(2);
 
@@ -586,7 +586,7 @@ describe("M2: series auto-grab via RSS sync + episode import (mock HTTP + real f
     const mono = await auth(request(http).put(`/api/v1/series/${sid}/episodes/${ep2Id}`).send({ monitored: false }));
     expect(mono.status).toBe(200);
     const wantedFinal = await auth(request(http).get("/api/v1/wanted/missing"));
-    expect(wantedFinal.body.some((e: any) => e.id === ep2Id)).toBe(false);
+    expect(wantedFinal.body.items.some((e: any) => e.id === ep2Id)).toBe(false);
   });
 });
 
@@ -679,7 +679,7 @@ describe("M-movie: movie auto-grab via RSS sync + import (mock HTTP + real files
 
     // wanted/missing lists it, tagged as a movie
     const wantedBefore = await auth(request(http).get("/api/v1/wanted/missing"));
-    const wantedRow = wantedBefore.body.find((w: any) => w.id === mid);
+    const wantedRow = wantedBefore.body.items.find((w: any) => w.id === mid);
     expect(wantedRow).toBeDefined();
     expect(wantedRow.mediaType).toBe("movie");
 
@@ -700,7 +700,7 @@ describe("M-movie: movie auto-grab via RSS sync + import (mock HTTP + real files
 
     // no longer wanted
     const wantedAfter = await auth(request(http).get("/api/v1/wanted/missing"));
-    expect(wantedAfter.body.some((w: any) => w.id === mid)).toBe(false);
+    expect(wantedAfter.body.items.some((w: any) => w.id === mid)).toBe(false);
 
     // history has grabbed + import_completed
     const hist = await auth(request(http).get("/api/v1/history"));

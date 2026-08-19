@@ -92,6 +92,21 @@ interface WantedMovieRow {
 /** GET /wanted/missing returns a merge of both (roadmap C1). */
 export type WantedItem = WantedMovieRow | WantedEpisodeRow;
 
+/**
+ * Page envelope for the wanted/cutoff endpoints (WANTEDPAGE-1). Deliberately NOT `Paged<T>`:
+ * cutoff-unmet's exact `total` would require the same expensive per-row DB lookups (quality
+ * profile + media file) its filtering already does, just to produce a count nobody asked for.
+ * hasMore + an opaque nextCursor (a base64 per-type keyset) drives a Load-more button just like
+ * the rest of the app, but with a cursor pageParam instead of a page-number one (those lists
+ * have a cheap COUNT, Wanted does not). Do not 'fix' this back to Paged<T> without re-deriving
+ * that reasoning.
+ */
+export interface WantedPage<T> {
+  items: T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export type CalendarEntry =
   | {
       mediaType: "episode";

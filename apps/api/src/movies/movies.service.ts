@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { and, asc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { extname, join } from "node:path";
 import { newEntityId } from "@medianexus/shared";
 import { ApiError } from "@medianexus/shared";
 import type { RuntimeSettings } from "@medianexus/shared";
 import { LocalStorageProvider } from "@medianexus/integrations";
-import { combine, ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition, attachMatchedFormats } from "../media/library.helpers";
+import { combine, ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, keysetAfter, keysetOrderBy, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition, attachMatchedFormats, wantedOverfetchCap, type KeysetCursor } from "../media/library.helpers";
 import { movieFileName, resolvedMovieFolderName } from "../media/naming.helpers";
 import { runWrite, type MediaFileRow } from "../media/media-file.types";
 import { RecycleBinService } from "../media/recycle-bin.service";
@@ -362,19 +362,29 @@ export class MoviesService {
   /** Want/Missing: monitored movies without a file, past their minimum-availability gate
    *  (roadmap C1). The gate depends on Date.now(), so it can't be pushed into SQL —
    *  overfetch past `limit` and filter in JS, mirroring the shape of
-   *  SeriesService.wantedMissing(). */
-  async wantedMissing(limit = 50): Promise<WantedMovie[]> {
+   *  SeriesService.wantedMissing(). Returns the FULL filtered candidate window (not sliced to
+   *  `limit` — the controller's fair-share allocation decides how many of each type to take,
+   *  so both messaging-symmetric shapes must expose the same window) plus the raw pre-filter
+   *  row count for the controller's hasMore heuristic. `cursor` is a keyset position (release
+   *  date + id) for page 2+; null starts from the beginning. */
+  async wantedMissing(limit = 50, cursor?: KeysetCursor | null): Promise<{ candidates: WantedMovie[]; rawRowCount: number }> {
+    const cap = wantedOverfetchCap(limit);
     const rows = await this.db.select().from(schema.movie)
-      .where(and(eq(schema.movie.monitored, true), eq(schema.movie.hasFile, false)))
-      .orderBy(asc(schema.movie.releaseDate))
-      .limit(Math.max(limit * 4, 200));
-    return rows
-      .filter((m) => hasMinimumAvailability({ minimumAvailability: m.minimumAvailability as MinimumAvailability, releaseDate: m.releaseDate }))
-      .slice(0, limit)
-      .map((m) => ({
-        id: m.id, mediaType: "movie" as const, title: m.title, releaseDate: m.releaseDate,
-        minimumAvailability: m.minimumAvailability as MinimumAvailability, monitored: m.monitored, hasFile: m.hasFile,
-      }));
+      .where(combine([
+        and(eq(schema.movie.monitored, true), eq(schema.movie.hasFile, false)),
+        keysetAfter(schema.movie.releaseDate, schema.movie.id, cursor),
+      ]))
+      .orderBy(keysetOrderBy(this.db.dbDialect, schema.movie.releaseDate, schema.movie.id))
+      .limit(cap);
+    return {
+      candidates: rows
+        .filter((m) => hasMinimumAvailability({ minimumAvailability: m.minimumAvailability as MinimumAvailability, releaseDate: m.releaseDate }))
+        .map((m) => ({
+          id: m.id, mediaType: "movie" as const, title: m.title, releaseDate: m.releaseDate,
+          minimumAvailability: m.minimumAvailability as MinimumAvailability, monitored: m.monitored, hasFile: m.hasFile,
+        })),
+      rawRowCount: rows.length,
+    };
   }
 
   /** Cutoff Unmet (NAV-1 Phase 0): monitored movies that already have a file whose quality is
@@ -382,15 +392,24 @@ export class MoviesService {
    *  `meetsCutoff()` — no reimplementation. `hasFile` is a stored flag, so the real per-file
    *  quality comes from the media_file rows; the best-quality file is the one judged (upgrades
    *  key on the best held file elsewhere too). Titles with no assigned profile have no cutoff
-   *  and are never "unmet". Overfetches past `limit` to absorb per-row rejects, then slices. */
-  async cutoffUnmet(limit = 50): Promise<{
-    id: string; mediaType: "movie"; title: string; releaseDate: string | null;
-    monitored: boolean; hasFile: boolean; quality: Quality | null; cutoffQualityId: number | null;
-  }[]> {
+   *  and are never "unmet". Overfetches past `limit` to absorb per-row rejects, then returns
+   *  the filtered candidates unsliced plus the raw pre-filter row count (WANTEDPAGE-1, same
+   *  shape as wantedMissing). `cursor` is a keyset position for page 2+. */
+  async cutoffUnmet(limit = 50, cursor?: KeysetCursor | null): Promise<{
+    candidates: {
+      id: string; mediaType: "movie"; title: string; releaseDate: string | null;
+      monitored: boolean; hasFile: boolean; quality: Quality | null; cutoffQualityId: number | null;
+    }[];
+    rawRowCount: number;
+  }> {
+    const cap = wantedOverfetchCap(limit);
     const rows = await this.db.select().from(schema.movie)
-      .where(and(eq(schema.movie.monitored, true), eq(schema.movie.hasFile, true)))
-      .orderBy(asc(schema.movie.releaseDate))
-      .limit(Math.max(limit * 4, 200));
+      .where(combine([
+        and(eq(schema.movie.monitored, true), eq(schema.movie.hasFile, true)),
+        keysetAfter(schema.movie.releaseDate, schema.movie.id, cursor),
+      ]))
+      .orderBy(keysetOrderBy(this.db.dbDialect, schema.movie.releaseDate, schema.movie.id))
+      .limit(cap);
     const out: { id: string; mediaType: "movie"; title: string; releaseDate: string | null; monitored: boolean; hasFile: boolean; quality: Quality | null; cutoffQualityId: number | null }[] = [];
     for (const m of rows) {
       const profile = await getQualityProfile(this.db, m.qualityProfileId);
@@ -406,7 +425,7 @@ export class MoviesService {
         monitored: m.monitored, hasFile: true, quality: best.quality, cutoffQualityId: profile.cutoffQualityId,
       });
     }
-    return out.slice(0, limit);
+    return { candidates: out, rawRowCount: rows.length };
   }
 }
 

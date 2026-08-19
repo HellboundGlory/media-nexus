@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { extname, join } from "node:path";
 import { LocalStorageProvider } from "@medianexus/integrations";
-import { ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition, attachMatchedFormats, combine } from "../media/library.helpers";
+import { ensureAvailability, getMediaCredits, getMediaFiles, getQualityProfile, keysetAfter, keysetOrderBy, listPaged, removeMediaItem, requireFound, searchAndGrabRelease, titleSearchCondition, attachMatchedFormats, combine, wantedOverfetchCap, type KeysetCursor } from "../media/library.helpers";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import type { RuntimeSettings } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
@@ -498,7 +498,7 @@ export class SeriesService {
     results: { episodeId: string; grabbed: boolean; release?: Release; error?: string }[];
   }> {
     const series = await this.get(seriesId);
-    const missing = await this.wantedMissing(5000);
+    const { candidates: missing } = await this.wantedMissing(5000);
     const rows = missing.filter((m) => m.seriesId === seriesId);
     const results: { episodeId: string; grabbed: boolean; release?: Release; error?: string }[] = [];
     let grabbed = 0;
@@ -596,8 +596,14 @@ export class SeriesService {
 
   /** Want/Missing: monitored episodes without a file yet (all series). No JS-side reject
    *  filter, but overfetches past `limit` (same max(limit*4, 200) headroom as movies so the
-   *  controller's fair-share merge has candidates to fill leftover slots — WANTEDMISSING-1). */
-  async wantedMissing(limit = 50) {
+   *  controller's fair-share merge has candidates to fill leftover slots — WANTEDMISSING-1).
+   *  Returns the full overfetched window (unsliced — the controller decides how many of each
+   *  type to take) plus the raw row count, matching movies.wantedMissing (WANTEDPAGE-1).
+   *  `cursor` is a keyset position (air date + id) for page 2+; null starts from the beginning. */
+  async wantedMissing(limit = 50, cursor?: KeysetCursor | null): Promise<{ candidates: (typeof schema.episode.$inferSelect & {
+    seasonNumber: number; seriesTitle: string; seriesType: string; seriesAlternateTitles: string[];
+  })[]; rawRowCount: number }> {
+    const cap = wantedOverfetchCap(limit);
     const rows = await this.db
       .select({
         episode: schema.episode,
@@ -607,23 +613,35 @@ export class SeriesService {
       .from(schema.episode)
       .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
       .innerJoin(schema.series, eq(schema.episode.seriesId, schema.series.id))
-      .where(and(eq(schema.episode.monitored, true), eq(schema.episode.hasFile, false)))
-      .orderBy(asc(schema.episode.airDateUtc))
-      .limit(Math.max(limit * 4, 200));
-    return rows.map((r) => ({ ...r.episode, seasonNumber: r.seasonNumber, seriesTitle: r.series.title, seriesType: r.series.seriesType, seriesAlternateTitles: r.series.alternateTitles ?? [] }));
+      .where(combine([
+        and(eq(schema.episode.monitored, true), eq(schema.episode.hasFile, false)),
+        keysetAfter(schema.episode.airDateUtc, schema.episode.id, cursor),
+      ]))
+      .orderBy(keysetOrderBy(this.db.dbDialect, schema.episode.airDateUtc, schema.episode.id))
+      .limit(cap);
+    return {
+      candidates: rows.map((r) => ({ ...r.episode, seriesId: r.series.id, seasonNumber: r.seasonNumber, seriesTitle: r.series.title, seriesType: r.series.seriesType, seriesAlternateTitles: r.series.alternateTitles ?? [] })),
+      rawRowCount: rows.length,
+    };
   }
 
   /** Cutoff Unmet (NAV-1 Phase 0): monitored episodes that already have a file whose quality is
    *  below their series' quality profile cutoff (or outside its allowed qualities). Uses the
    *  shared `meetsCutoff()` — the file quality comes from the episode's media_file via the
    *  `media_file_id` FK (J3). Episodes with no series profile have no cutoff and are never
-   *  "unmet". Overfetches past `limit` to absorb per-row rejects, then slices. */
-  async cutoffUnmet(limit = 50): Promise<{
-    id: string; mediaType: "series"; seriesId: string; episodeNumber: number; title: string;
-    airDateUtc: string | null; monitored: boolean; hasFile: boolean; seasonNumber: number;
-    seriesTitle: string; seriesType: string; seriesAlternateTitles: string[];
-    quality: Quality | null; cutoffQualityId: number | null;
-  }[]> {
+   *  "unmet". Overfetches past `limit` to absorb per-row rejects, then returns the filtered
+   *  candidates unsliced plus the raw pre-filter row count (WANTEDPAGE-1). `cursor` is a
+   *  keyset position for page 2+. */
+  async cutoffUnmet(limit = 50, cursor?: KeysetCursor | null): Promise<{
+    candidates: {
+      id: string; mediaType: "series"; seriesId: string; episodeNumber: number; title: string;
+      airDateUtc: string | null; monitored: boolean; hasFile: boolean; seasonNumber: number;
+      seriesTitle: string; seriesType: string; seriesAlternateTitles: string[];
+      quality: Quality | null; cutoffQualityId: number | null;
+    }[];
+    rawRowCount: number;
+  }> {
+    const cap = wantedOverfetchCap(limit);
     const rows = await this.db
       .select({
         episode: schema.episode,
@@ -633,9 +651,12 @@ export class SeriesService {
       .from(schema.episode)
       .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
       .innerJoin(schema.series, eq(schema.episode.seriesId, schema.series.id))
-      .where(and(eq(schema.episode.monitored, true), eq(schema.episode.hasFile, true)))
-      .orderBy(asc(schema.episode.airDateUtc))
-      .limit(Math.max(limit * 4, 200));
+      .where(combine([
+        and(eq(schema.episode.monitored, true), eq(schema.episode.hasFile, true)),
+        keysetAfter(schema.episode.airDateUtc, schema.episode.id, cursor),
+      ]))
+      .orderBy(keysetOrderBy(this.db.dbDialect, schema.episode.airDateUtc, schema.episode.id))
+      .limit(cap);
     const out: { id: string; mediaType: "series"; seriesId: string; episodeNumber: number; title: string; airDateUtc: string | null; monitored: boolean; hasFile: boolean; seasonNumber: number; seriesTitle: string; seriesType: string; seriesAlternateTitles: string[]; quality: Quality | null; cutoffQualityId: number | null }[] = [];
     for (const r of rows) {
       const profile = await getQualityProfile(this.db, r.series.qualityProfileId);
@@ -649,7 +670,7 @@ export class SeriesService {
         seasonNumber: r.seasonNumber, seriesTitle: r.series.title, seriesType: r.series.seriesType, seriesAlternateTitles: r.series.alternateTitles ?? [],
       });
     }
-    return out.slice(0, limit);
+    return { candidates: out, rawRowCount: rows.length };
   }
 
   /**

@@ -223,17 +223,17 @@ describe("P0.4/P0.3 — RssSyncService grabs the best *approved* candidate, not 
       grab: async (input: { releaseId: string }) => { grabbed.push(input.releaseId); return {}; },
     } as unknown as IndexersService;
     const series = {
-      wantedMissing: async () => [{
+      wantedMissing: async () => ({ candidates: [{
         id: "ep1", seriesId: "s1", seasonId: "sea2", episodeNumber: 1, absoluteNumber: null,
         title: "", overview: "", airDateUtc: null, monitored: true, hasFile: false,
         sceneSeasonNumber: null, sceneEpisodeNumber: null,
         seasonNumber: 2, seriesTitle: "Show",
-      }],
+      }], rawRowCount: 0 }),
     } as unknown as SeriesService;
     // RssSyncService only reads the db (active-queue check, recent-grab dedupe) — both
     // go through the same select().from().where().limit() chain, so one stub covers both.
     const dbStub = { select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) } as never;
-    const movies = { wantedMissing: async () => [] } as unknown as MoviesService;
+    const movies = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as MoviesService;
     const decisionsStub = {} as unknown as DecisionService;
     const rss = new RssSyncService(dbStub, indexers, series, movies, events, decisionsStub);
 

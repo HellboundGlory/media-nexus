@@ -84,10 +84,10 @@ describe("GET /wanted/missing merge (WANTEDMISSING-1)", () => {
     await db.insert(schema.movie).values(movieRow({ id: "m_recent", title: "Recent Movie" }) as never);
 
     const res = await controller.wanted({ limit: 50 });
-    const movieIds = res.filter((r) => r.mediaType === "movie").map((r) => r.id);
+    const movieIds = res.items.filter((r) => r.mediaType === "movie").map((r) => r.id);
     // The movie must appear even though the 60-episode backlog is older and fills the list.
     expect(movieIds).toContain("m_recent");
-    expect(res.length).toBeLessThanOrEqual(50);
+    expect(res.items.length).toBeLessThanOrEqual(50);
   });
 
   it("leaves the natural date-sorted union unchanged when neither type is starved", async () => {
@@ -99,16 +99,16 @@ describe("GET /wanted/missing merge (WANTEDMISSING-1)", () => {
     await db.insert(schema.movie).values(movieRow({ id: "m_b", title: "B", releaseDate: "2023-01-01" }) as never);
 
     const res = await controller.wanted({ limit: 50 });
-    expect(res.map((r) => r.id)).toHaveLength(5); // 3 episodes + 2 movies, none dropped
-    expect(res.filter((r) => r.mediaType === "series")).toHaveLength(3);
-    expect(res.filter((r) => r.mediaType === "movie")).toHaveLength(2);
+    expect(res.items.map((r) => r.id)).toHaveLength(5); // 3 episodes + 2 movies, none dropped
+    expect(res.items.filter((r) => r.mediaType === "series")).toHaveLength(3);
+    expect(res.items.filter((r) => r.mediaType === "movie")).toHaveLength(2);
   });
 
   it("series.wantedMissing overfetches past the limit so it can fill leftover slots", async () => {
     const db = await freshDb();
     const { series } = await harness(db);
     const seriesId = await seedOldEpisodeBacklog(db, 60);
-    const epIds = (await series.wantedMissing(50)).map((e) => e.id as string);
+    const epIds = (await series.wantedMissing(50)).candidates.map((e) => e.id as string);
     // It must return more than `limit` candidates (headroom for the allocation), all from the seed.
     expect(epIds.length).toBeGreaterThan(50);
     expect(epIds.every((id) => id.startsWith(`e${seriesId}_`))).toBe(true);
@@ -135,8 +135,63 @@ describe("GET /wanted/cutoff-unmet merge (WANTEDMISSING-1)", () => {
 
     const res = await controller.cutoffUnmet({ limit: 50 });
     // The lone unmet episode must be present despite the 60-older-movie backlog.
-    expect(res.filter((r) => r.mediaType === "series").map((r) => r.id)).toContain("e_unmet");
-    expect(res.length).toBeLessThanOrEqual(50);
+    expect(res.items.filter((r) => r.mediaType === "series").map((r) => r.id)).toContain("e_unmet");
+    expect(res.items.length).toBeLessThanOrEqual(50);
+  });
+});
+
+describe("GET /wanted/missing cross-page keyset pagination (WANTEDPAGE-1)", () => {
+  it("keeps both media types represented on every page and returns every row exactly once across pages", async () => {
+    const db = await freshDb();
+    const { controller } = await harness(db);
+    // More than one page's worth of BOTH types: 6 old episodes + 6 movies, small limit=4 so the
+    // fair-share split (base 2 each) leaves both types with candidates remaining past page 1.
+    const seriesId = await seedOldEpisodeBacklog(db, 6);
+    for (let i = 1; i <= 6; i++) {
+      await db.insert(schema.movie).values(movieRow({
+        id: `m_page_${i}`, title: `Page Movie ${i}`, releaseDate: `2025-01-0${i}`,
+      }) as never);
+    }
+
+    const page1 = await controller.wanted({ limit: 4 });
+    expect(page1.items).toHaveLength(4);
+    // Page 1 fair-share: 2 episodes + 2 movies (base = floor(4/2)).
+    expect(page1.items.filter((r) => r.mediaType === "series")).toHaveLength(2);
+    expect(page1.items.filter((r) => r.mediaType === "movie")).toHaveLength(2);
+    expect(page1.hasMore).toBe(true);
+    expect(page1.nextCursor).toBeTruthy();
+
+    // Page 2 must STILL represent both media types (the true WANTEDPAGE-1 regression, not just
+    // page 1), and no row may be duplicated or dropped across the two pages.
+    const page2 = await controller.wanted({ limit: 4, cursor: page1.nextCursor! });
+    expect(page2.items).toHaveLength(4);
+    expect(page2.items.some((r) => r.mediaType === "series")).toBe(true);
+    expect(page2.items.some((r) => r.mediaType === "movie")).toBe(true);
+
+    const allIds = [...page1.items, ...page2.items].map((r) => r.id);
+    expect(new Set(allIds).size).toBe(allIds.length); // no duplicates across pages
+
+    // Final page: the remaining 2 episodes + 2 movies must surface with no gaps (no row skipped
+    // because a cursor overshot), and pagination must terminate.
+    const page3 = await controller.wanted({ limit: 4, cursor: page2.nextCursor! });
+    expect(page3.items).toHaveLength(4);
+    expect(page3.hasMore).toBe(false);
+
+    const everything = [...page1.items, ...page2.items, ...page3.items];
+    const movieIds = everything.filter((r) => r.mediaType === "movie").map((r) => r.id);
+    const episodeIds = everything.filter((r) => r.mediaType === "series").map((r) => r.id);
+    expect(episodeIds.sort()).toEqual(["e" + seriesId + "_1", "e" + seriesId + "_2", "e" + seriesId + "_3", "e" + seriesId + "_4", "e" + seriesId + "_5", "e" + seriesId + "_6"].sort());
+    expect(movieIds.sort()).toEqual(["m_page_1", "m_page_2", "m_page_3", "m_page_4", "m_page_5", "m_page_6"]);
+  });
+
+  it("rejects a corrupted cursor with a validation error rather than silently resetting", async () => {
+    const db = await freshDb();
+    const { controller } = await harness(db);
+    await db.insert(schema.movie).values(movieRow({ id: "m_a", title: "A" }) as never);
+    await expect(controller.wanted({ limit: 50, cursor: "not-base64-json!!" })).rejects.toThrow("invalid cursor");
+    // A well-formed-looking cursor with the wrong shape must also fail loudly.
+    const bogus = Buffer.from(JSON.stringify({ m: { d: 5 }, e: "oops" })).toString("base64");
+    await expect(controller.wanted({ limit: 50, cursor: bogus })).rejects.toThrow("invalid cursor");
   });
 });
 

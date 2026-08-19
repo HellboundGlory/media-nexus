@@ -78,14 +78,14 @@ describe("MoviesService.wantedMissing()", () => {
     await seedMovie(db);
     const svc = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
     const wanted = await svc.wantedMissing();
-    expect(wanted.map((w) => w.id)).toEqual(["m1"]);
+    expect(wanted.candidates.map((w) => w.id)).toEqual(["m1"]);
   });
 
   it("excludes a 'released'-gated movie whose release date is in the future", async () => {
     const db = await freshDb();
     await seedMovie(db, { minimumAvailability: "released", releaseDate: "2099-01-01" });
     const svc = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
-    expect(await svc.wantedMissing()).toEqual([]);
+    expect((await svc.wantedMissing()).candidates).toEqual([]);
   });
 
   it("includes a 'released'-gated movie whose release date has passed", async () => {
@@ -93,21 +93,21 @@ describe("MoviesService.wantedMissing()", () => {
     await seedMovie(db, { minimumAvailability: "released", releaseDate: "2020-01-01" });
     const svc = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
     const wanted = await svc.wantedMissing();
-    expect(wanted.map((w) => w.id)).toEqual(["m1"]);
+    expect(wanted.candidates.map((w) => w.id)).toEqual(["m1"]);
   });
 
   it("excludes an unmonitored movie", async () => {
     const db = await freshDb();
     await seedMovie(db, { monitored: false });
     const svc = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
-    expect(await svc.wantedMissing()).toEqual([]);
+    expect((await svc.wantedMissing()).candidates).toEqual([]);
   });
 
   it("excludes a movie that already has a file", async () => {
     const db = await freshDb();
     await seedMovie(db, { hasFile: true });
     const svc = new MoviesService(db, new EventsService(new EventBus()), new AutoTagsService(db));
-    expect(await svc.wantedMissing()).toEqual([]);
+    expect((await svc.wantedMissing()).candidates).toEqual([]);
   });
 });
 
@@ -127,12 +127,12 @@ describe("RssSyncService — movie pass", () => {
     minimumAvailability: "announced" as const, monitored: true, hasFile: false,
   };
   const dbStub = { select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) } as never;
-  const seriesStub = { wantedMissing: async () => [] } as unknown as SeriesService;
+  const seriesStub = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
 
   it("grabs the best approved candidate for a movie", async () => {
     const grabbed: string[] = [];
     const indexers = stubIndexers([release()], grabbed);
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
     const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
     const result = await rss.runMissingSearch({ maxMovies: 5 });
@@ -143,7 +143,7 @@ describe("RssSyncService — movie pass", () => {
   it("matches a release title whose embedded year is off by one", async () => {
     const grabbed: string[] = [];
     const indexers = stubIndexers([release({ title: "Interstellar.2015.720p.WEB-DL" })], grabbed);
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
     const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
     const result = await rss.runMissingSearch({ maxMovies: 5 });
@@ -153,7 +153,7 @@ describe("RssSyncService — movie pass", () => {
   it("rejects a release title whose embedded year is off by two or more", async () => {
     const grabbed: string[] = [];
     const indexers = stubIndexers([release({ title: "Interstellar.2020.720p.WEB-DL" })], grabbed);
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
     const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
     const result = await rss.runMissingSearch({ maxMovies: 5 });
@@ -164,7 +164,7 @@ describe("RssSyncService — movie pass", () => {
   it("rejects a release with an unrelated title regardless of a matching year", async () => {
     const grabbed: string[] = [];
     const indexers = stubIndexers([release({ title: "Some.Other.Movie.2014.1080p.WEB-DL" })], grabbed);
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
     const rss = new RssSyncService(dbStub, indexers, seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
     const result = await rss.runMissingSearch({ maxMovies: 5 });
@@ -197,8 +197,8 @@ describe("RssSyncService — generalized active-queue / recently-grabbed dedupe 
       data: {}, addedAt: now, updatedAt: now,
     });
     const grabbed: string[] = [];
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const seriesStub = { wantedMissing: async () => [] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
+    const seriesStub = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, stubIndexers(grabbed), seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
     const result = await rss.runMissingSearch({ maxMovies: 5 });
@@ -214,8 +214,8 @@ describe("RssSyncService — generalized active-queue / recently-grabbed dedupe 
       data: { releaseTitle: "Interstellar.2014.1080p.WEB-DL" }, createdAt: now,
     });
     const grabbed: string[] = [];
-    const movies = { wantedMissing: async () => [wantedMovie] } as unknown as MoviesService;
-    const seriesStub = { wantedMissing: async () => [] } as unknown as SeriesService;
+    const movies = { wantedMissing: async () => ({ candidates: [wantedMovie], rawRowCount: 0 }) } as unknown as MoviesService;
+    const seriesStub = { wantedMissing: async () => ({ candidates: [], rawRowCount: 0 }) } as unknown as SeriesService;
     const rss = new RssSyncService(db, stubIndexers(grabbed), seriesStub, movies, new EventsService(new EventBus()), decisionsStub);
 
     const result = await rss.runMissingSearch({ maxMovies: 5 });

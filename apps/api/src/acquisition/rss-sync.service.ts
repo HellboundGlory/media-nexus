@@ -18,7 +18,7 @@ import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 
 /** A single wanted (monitored, missing) episode row as returned by `wantedMissing()`. */
-type WantedEpisode = Awaited<ReturnType<SeriesService["wantedMissing"]>>[number];
+type WantedEpisode = Awaited<ReturnType<SeriesService["wantedMissing"]>>["candidates"][number];
 
 /**
  * Two related but distinct mechanisms, both against monitored movies/episodes that are
@@ -71,8 +71,8 @@ export class RssSyncService {
     // engine has no monitored/missing check of its own (only upgradeSpecification, a
     // quality comparison), so reverse-matching against anything broader than this would let
     // an unmonitored title match and auto-grab.
-    const movieCandidates = await this.movies.wantedMissing(5000);
-    const wantedEpisodes = await this.series.wantedMissing(5000);
+    const { candidates: movieCandidates } = await this.movies.wantedMissing(5000);
+    const { candidates: wantedEpisodes } = await this.series.wantedMissing(5000);
     const seriesById = new Map<string, { title: string; seriesType: SeriesType; alternateTitles: string[] }>();
     for (const ep of wantedEpisodes) {
       if (!seriesById.has(ep.seriesId)) seriesById.set(ep.seriesId, { title: ep.seriesTitle, seriesType: ep.seriesType as SeriesType, alternateTitles: ep.seriesAlternateTitles ?? [] });
@@ -138,7 +138,7 @@ export class RssSyncService {
     release: Release,
     movieCandidates: WantedMovie[],
     seriesById: Map<string, { title: string; seriesType: SeriesType; alternateTitles: string[] }>,
-    wantedEpisodes: Awaited<ReturnType<SeriesService["wantedMissing"]>>,
+    wantedEpisodes: Awaited<ReturnType<SeriesService["wantedMissing"]>>["candidates"],
   ): { mediaType: "movie" | "series"; mediaId: string } | null {
     const parsed = parseEpisodeRelease(release.title);
     if (parsed.season !== undefined) {
@@ -165,7 +165,7 @@ export class RssSyncService {
   private matchDailyOrAnime(
     parsed: ReturnType<typeof parseEpisodeRelease>,
     seriesById: Map<string, { title: string; seriesType: SeriesType; alternateTitles: string[] }>,
-    wantedEpisodes: Awaited<ReturnType<SeriesService["wantedMissing"]>>,
+    wantedEpisodes: Awaited<ReturnType<SeriesService["wantedMissing"]>>["candidates"],
   ): { mediaType: "series"; mediaId: string } | null {
     if (parsed.dailyDate === undefined && parsed.absoluteNumber === undefined) return null;
     let matchedSeriesId: string | null = null;
@@ -262,7 +262,7 @@ export class RssSyncService {
   }
 
   private async runMovies(maxMovies: number): Promise<{ scannedMovies: number; grabbed: number; skipped: number }> {
-    const wanted = await this.movies.wantedMissing(500);
+    const { candidates: wanted } = await this.movies.wantedMissing(500);
     let scannedMovies = 0;
     let grabbed = 0;
     let skipped = 0;
@@ -309,7 +309,7 @@ export class RssSyncService {
   }
 
   private async runSeries(maxSeries: number, perSeries: number): Promise<{ scannedSeries: number; grabbed: number; skipped: number }> {
-    const wanted = await this.series.wantedMissing(500);
+    const { candidates: wanted } = await this.series.wantedMissing(500);
     // group wanted episodes by series (keep air-dated first)
     const bySeries = new Map<string, typeof wanted>();
     for (const ep of wanted) {
