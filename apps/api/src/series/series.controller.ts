@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createSeriesSchema, updateSeriesSchema, type CreateSeries, type UpdateSeriesBody } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { SeriesService } from "./series.service";
-import { LibraryScanService } from "../library-scan/library-scan.service";
+import { LibraryScanService, type ManageApplyOptions } from "../library-scan/library-scan.service";
 
 const episodesQuery = z.object({ season: z.coerce.number().int().min(0).optional() });
 const createEpisodesBody = z.object({
@@ -35,9 +35,24 @@ const deleteSeriesSchema = z.object({
 
 const renameBodySchema = z.object({ mediaFileIds: z.array(z.string()).default([]) });
 
+// MANAGEFILES-1: the apply body grew from the original {removeStale, importUntracked} selection
+// to also carry explicit deletes (tracked + untracked) and per-row edits on tracked files — the
+// latter including the series-only episode reassignment (`episodes`, the exact episode ids the
+// file should now cover). Quality mirrors the media_file.quality column (modifier optional).
 const manageApplyBodySchema = z.object({
   removeStale: z.array(z.string()).default([]),
   importUntracked: z.array(z.string()).default([]),
+  deleteFiles: z.array(z.string()).default([]),
+  deleteUntracked: z.array(z.string()).default([]),
+  updates: z.array(z.object({
+    mediaFileId: z.string(),
+    quality: z.object({ source: z.string(), resolution: z.string(), edition: z.string(), modifier: z.string().optional() }).optional(),
+    languages: z.array(z.string()).optional(),
+    releaseGroup: z.string().nullable().optional(),
+    releaseType: z.enum(["single", "multi", "season"]).nullable().optional(),
+    indexerFlags: z.number().int().nonnegative().optional(),
+    episodes: z.array(z.string()).optional(),
+  })).default([]),
 });
 
 // ---- Bulk actions (UNI-020): fan out over existing single-item update()/remove(). Reuses
@@ -178,8 +193,8 @@ export class SeriesController {
   }
 
   @Post(":id/manage-files/apply")
-  @ApiOperation({ summary: "Apply the user's Manage Episodes selection: import the checked untracked episodes and remove the checked stale rows (only what's ticked; optional ?season=N scopes to one season)" })
-  manageApply(@Param("id") id: string, @Query(new ZodValidationPipe(episodesQuery)) q: { season?: number }, @Body(new ZodValidationPipe(manageApplyBodySchema)) body: { removeStale: string[]; importUntracked: string[] }) {
+  @ApiOperation({ summary: "Apply the user's Manage Episodes selection: import the checked untracked episodes, remove the checked stale rows, delete the checked tracked/untracked files, and apply per-row edits (incl. episode reassignment) — only what's ticked; optional ?season=N scopes to one season" })
+  manageApply(@Param("id") id: string, @Query(new ZodValidationPipe(episodesQuery)) q: { season?: number }, @Body(new ZodValidationPipe(manageApplyBodySchema)) body: ManageApplyOptions) {
     return this.scan.applySeries(id, body, q.season);
   }
 

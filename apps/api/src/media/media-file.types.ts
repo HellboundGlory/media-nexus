@@ -35,6 +35,10 @@ export interface MediaFileRow {
   languages: string[];
   releaseGroup: string | null;
   dateAdded: string | null;
+  /** Indexer-flag bitmask (MANAGEFILES-1) — OR'd IndexerFlags bits, 0 when none. */
+  indexerFlags: number;
+  /** Series-only release shape (single | multi | season), null for movies/unknown. */
+  releaseType: "single" | "multi" | "season" | null;
   /** Custom formats this file currently matches, recomputed live against the CURRENT
    *  custom-format definitions at read time (never a frozen snapshot — see attachMatchedFormats).
    *  Left `[]` by toMediaFileRow; only the /files endpoints populate it. */
@@ -52,6 +56,8 @@ type RawMediaFileRow = {
   languages: unknown;
   releaseGroup: string | null;
   dateAdded: string | null;
+  indexerFlags?: number;
+  releaseType?: string | null;
 };
 
 /** Map a raw DB row onto the clean MediaFileRow shape (null-safe for the JSON columns).
@@ -70,6 +76,8 @@ export function toMediaFileRow<T extends RawMediaFileRow>(row: T): MediaFileRow 
     languages: Array.isArray(row.languages) ? (row.languages as string[]) : [],
     releaseGroup: row.releaseGroup ?? null,
     dateAdded: row.dateAdded,
+    indexerFlags: row.indexerFlags ?? 0,
+    releaseType: row.releaseType == null ? null : (row.releaseType as MediaFileRow["releaseType"]),
     matchedFormats: [],
   };
 }

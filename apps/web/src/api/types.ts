@@ -313,6 +313,10 @@ export interface MediaFileRow {
   languages: string[];
   releaseGroup: string | null;
   dateAdded: string | null;
+  /** Indexer-flag bitmask (MANAGEFILES-1) — OR'd IndexerFlags bits, 0 when none. */
+  indexerFlags: number;
+  /** Series-only release shape (single | multi | season), null for movies/unknown. */
+  releaseType: "single" | "multi" | "season" | null;
   /** Custom formats this file currently matches, computed live by the /files endpoint (SON-024). */
   matchedFormats: { id: string; name: string }[];
 }
@@ -347,11 +351,63 @@ export interface ScanUntrackedFile {
   supersedes?: { mediaFileId: string; relativePath: string }[];
 }
 
-/** GET /movies|series/:id/manage-files — what differs between disk and the DB, the input to the
- *  Manage Files/Episodes modal. */
+/** GET /movies|series/:id/manage-files — what differs between disk and the DB, plus the merged
+ *  tracked+untracked table (MANAGEFILES-1) the rebuilt Manage Files/Episodes modal renders. */
 export interface ScanPreview {
   stale: { mediaFileId: string; relativePath: string }[];
   untracked: ScanUntrackedFile[];
+  items: ManageFileRow[];
+}
+
+/** One episode reference shown in a merged Manage Files row (series only). */
+export interface ManageEpisodeRef {
+  id: string;
+  seasonNumber: number;
+  episodeNumber: number;
+  title: string;
+  airDateUtc: string | null;
+}
+
+/** One row of the merged Manage Files/Episodes table (MANAGEFILES-1). `mediaFileId` marks a
+ *  tracked row (has a media_file row); `stale` marks a tracked row whose file vanished on disk
+ *  (deletable, not editable). Untracked rows carry neither. */
+export interface ManageFileRow {
+  mediaFileId?: string;
+  stale?: boolean;
+  relativePath: string;
+  size: number;
+  quality: { source: string; resolution: string; edition: string } | null;
+  /** Series only. */
+  seasonNumber?: number;
+  /** Series only — episodes the row currently covers (tracked) or matched (untracked). */
+  episodes?: ManageEpisodeRef[];
+  releaseGroup: string | null;
+  languages: string[];
+  releaseType: "single" | "multi" | "season" | null;
+  matchedFormats: { id: string; name: string }[];
+  indexerFlags: number;
+  rejections: { reason: string; message: string }[];
+}
+
+/** A per-row edit on an already-tracked file, sent in POST :id/manage-files/apply (MANAGEFILES-1). */
+export interface ManageFileUpdate {
+  mediaFileId: string;
+  quality?: { source: string; resolution: string; edition: string; modifier?: string };
+  languages?: string[];
+  releaseGroup?: string | null;
+  releaseType?: "single" | "multi" | "season" | null;
+  indexerFlags?: number;
+  /** Series only — the exact episode ids the file should now cover. */
+  episodes?: string[];
+}
+
+/** The POST :id/manage-files/apply body (FILEMGMT-2 + MANAGEFILES-1). */
+export interface ManageApplyBody {
+  removeStale: string[];
+  importUntracked: string[];
+  deleteFiles: string[];
+  deleteUntracked: string[];
+  updates: ManageFileUpdate[];
 }
 
 export interface RemotePathMapping {
@@ -521,7 +577,29 @@ export type CustomFormatSpec =
 export type ResolutionValue = "unknown" | "480p" | "576p" | "720p" | "1080p" | "2160p";
 export type SourceValue = "unknown" | "sd" | "dvd" | "hdtv" | "web" | "webdl" | "webrip" | "bluray";
 export type ModifierValue = "none" | "brdisk" | "remux";
-export type IndexerFlagValue = "freeleech" | "freeleech75" | "halfleech" | "freeleech25" | "doubleUpload";
+/** Indexer flags (NzbDrone.Core.Parser.Model.IndexerFlags) — the full 9-value set, OR'd into a
+ *  single int bitmask on a media_file row (MANAGEFILES-1). Mirrors the domain union. */
+export type IndexerFlagValue = "freeleech" | "freeleech75" | "halfleech" | "freeleech25" | "doubleUpload" | "internal" | "scene" | "nuked" | "subtitles";
+
+/** The 9-value flag catalog (value → bitmask + display label), mirroring the domain's
+ *  INDEXER_FLAGS so the picker and the column's badge labels can never drift from the API's
+ *  stored bitmask values. Values match upstream exactly. */
+export const INDEXER_FLAGS: readonly { value: IndexerFlagValue; bit: number; label: string }[] = [
+  { value: "freeleech", bit: 1, label: "Freeleech" },
+  { value: "halfleech", bit: 2, label: "Halfleech" },
+  { value: "doubleUpload", bit: 4, label: "Double Upload" },
+  { value: "internal", bit: 8, label: "Internal" },
+  { value: "scene", bit: 16, label: "Scene" },
+  { value: "freeleech75", bit: 32, label: "Freeleech 75%" },
+  { value: "freeleech25", bit: 64, label: "Freeleech 25%" },
+  { value: "nuked", bit: 128, label: "Nuked" },
+  { value: "subtitles", bit: 256, label: "Subtitles" },
+];
+
+/** The flags present in a bitmask, as display labels. */
+export function indexerFlagLabels(mask: number): string[] {
+  return INDEXER_FLAGS.filter((f) => (mask & f.bit) === f.bit).map((f) => f.label);
+}
 
 export interface CustomFormat {
   id: string;

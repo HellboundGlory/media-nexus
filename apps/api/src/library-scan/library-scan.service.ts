@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { Inject, Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, Logger, OnModuleInit, Optional } from "@nestjs/common";
 import { and, eq } from "drizzle-orm";
 import { join, relative } from "node:path";
 import { existsSync } from "node:fs";
@@ -9,13 +9,16 @@ import { DB_TOKEN } from "../db/database.module";
 import type { Db } from "@medianexus/database";
 import {
   movieTarget, episodeTarget, parseQualityFromTitle, parseEpisodeRelease, compareQuality,
-  decideImportFile, type MediaType, type Quality, type KnownEpisode, type SeriesType,
-  type ImportRejection,
+  decideImportFile, meetsCutoff, qualityId, qualityMeta,
+  type MediaType, type Quality, type KnownEpisode, type SeriesType, type ImportRejection,
+  type ReleaseTypeValue,
 } from "@medianexus/domain";
 import { LocalStorageProvider, findAllVideos } from "@medianexus/integrations";
 import { MediaRepository } from "../media/media.repository";
-import { ensureAvailabilitySync, ensureAvailabilityTx, getQualityProfile, type Tx } from "../media/library.helpers";
+import { RecycleBinService } from "../media/recycle-bin.service";
+import { ensureAvailabilitySync, ensureAvailabilityTx, getQualityProfile, attachMatchedFormats, type Tx } from "../media/library.helpers";
 import { resolvedMovieFolderName, resolvedSeriesFolderName } from "../media/naming.helpers";
+import { selectMediaFiles, type MediaFileRow } from "../media/media-file.types";
 import { EventsService } from "../events/events.service";
 import { EventTypes } from "@medianexus/events";
 
@@ -47,9 +50,74 @@ export interface ScanUntrackedFile {
 export interface ScanPreview {
   stale: { mediaFileId: string; relativePath: string }[];
   untracked: ScanUntrackedFile[];
+  /** The merged tracked+untracked table (MANAGEFILES-1) — the single row source for the rebuilt
+   *  Manage Files/Episodes modal. Kept alongside `stale`/`untracked` so the older consumers and
+   *  the scheduled-scan path keep working; the modal reads only `items`. */
+  items: ManageFileRow[];
 }
 
-const EMPTY_PREVIEW: ScanPreview = { stale: [], untracked: [] };
+/** One episode reference shown in a merged Manage Files row (series only). */
+export interface ManageEpisodeRef {
+  id: string;
+  seasonNumber: number;
+  episodeNumber: number;
+  title: string;
+  airDateUtc: string | null;
+}
+
+/** One row of the merged Manage Files/Episodes table (MANAGEFILES-1) — the real folder rescan
+ *  combining tracked DB rows (surviving + stale) with on-disk untracked files, mirroring
+ *  upstream's InteractiveImportModal. `mediaFileId` marks a tracked row; `stale` marks a tracked
+ *  row whose file has vanished (deletable, not editable). Untracked rows carry neither. */
+export interface ManageFileRow {
+  mediaFileId?: string;
+  stale?: boolean;
+  relativePath: string;
+  size: number;
+  quality: Quality | null;
+  /** Series only. */
+  seasonNumber?: number;
+  /** Series only — episodes the row currently covers (tracked) or matched (untracked). */
+  episodes?: ManageEpisodeRef[];
+  releaseGroup: string | null;
+  languages: string[];
+  /** Series only. Set for tracked rows (persisted column or derived) and matched untracked rows;
+   *  null for movies and unmatched series files. */
+  releaseType: ReleaseTypeValue | null;
+  matchedFormats: { id: string; name: string }[];
+  indexerFlags: number;
+  /** Quality-cutoff rejection for tracked rows below the title's profile cutoff; for untracked
+   *  series rows the import-decision rejections. Movies always importable -> [] until imported. */
+  rejections: ImportRejection[];
+}
+
+/** A per-row edit on an already-tracked file, applied by POST :id/manage-files/apply. */
+export interface ManageFileUpdate {
+  mediaFileId: string;
+  quality?: Quality;
+  languages?: string[];
+  releaseGroup?: string | null;
+  releaseType?: ReleaseTypeValue | null;
+  indexerFlags?: number;
+  /** Series only: reassign the file to cover exactly these episode ids (absent = unchanged). */
+  episodes?: string[];
+}
+
+/** The interactive apply's full request surface (FILEMGMT-2 + MANAGEFILES-1). `removeStale` and
+ *  `importUntracked` are the pre-existing selection; `deleteFiles`/`deleteUntracked`/`updates`
+ *  are the MANAGEFILES-1 additions. */
+export interface ManageApplyOptions {
+  removeStale: string[];
+  importUntracked: string[];
+  /** Tracked media_file ids to delete: physical file disposed (recycle bin) + row removed. */
+  deleteFiles?: string[];
+  /** Untracked on-disk relativePaths to delete: physical file disposed only (no row). */
+  deleteUntracked?: string[];
+  /** Per-row edits on tracked files. */
+  updates?: ManageFileUpdate[];
+}
+
+const EMPTY_PREVIEW: ScanPreview = { stale: [], untracked: [], items: [] };
 
 /** An existing tracked row, as `existingFiles` returns it — the pieces the compute needs. */
 interface ExistingFile {
@@ -71,16 +139,18 @@ interface PlannedImport {
 }
 
 /** Per-season write plan. `episodeUpdates` mirrors `seasonEpisodes` order; `mediaFileId` is
- *  omitted (undefined) when the episode's file must be left to the FK (auto path) and set when
- *  it must be (re)pointed explicitly (interactive path). */
+ *  undefined when the episode's file must be left alone (auto path), null when it must be
+ *  cleared (a removed/repointed file), and set when it must be (re)pointed explicitly.
+ *  `updates` are column patches applied to this season's surviving tracked files (MANAGEFILES-1). */
 interface SeasonPlan {
   removeIds: string[];
   imports: PlannedImport[];
   episodeUpdates: {
     episodeId: string;
     hasFile: boolean;
-    mediaFileId: string | undefined;
+    mediaFileId: string | null | undefined;
   }[];
+  updates?: { mediaFileId: string; patch: Partial<typeof schema.mediaFile.$inferInsert> }[];
 }
 
 /**
@@ -114,6 +184,7 @@ export class LibraryScanService implements OnModuleInit {
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly media: MediaRepository,
     private readonly events: EventsService,
+    @Optional() private readonly recycleBin?: RecycleBinService,
   ) {}
 
   /** Scan a newly-added title automatically — covers a user adding a title whose files are
@@ -222,10 +293,41 @@ export class LibraryScanService implements OnModuleInit {
   async previewMovie(movieId: string): Promise<ScanPreview> {
     const movie = await this.getMovie(movieId);
     if (!movie?.rootFolderPath) return EMPTY_PREVIEW;
-    const { stale, untracked } = await this.computeMovie(movie);
+    const { stale, untracked, surviving } = await this.computeMovie(movie);
+    const profile = await getQualityProfile(this.db, movie.qualityProfileId);
+    const tracked = await selectMediaFiles(this.db, "movie", movieId);
+    const trackedById = new Map(tracked.map((f) => [f.id, f]));
+
+    const items: ManageFileRow[] = [];
+    const slotByPath = new Map<string, ManageFileRow>();
+    const formatRows: MediaFileRow[] = [...tracked];
+    for (const s of surviving) {
+      const item = this.trackedManageRow(s.id, trackedById.get(s.id), false, profile, "movie");
+      items.push(item); slotByPath.set(item.relativePath, item);
+    }
+    for (const s of stale) {
+      const item = this.trackedManageRow(s.id, trackedById.get(s.id), true, profile, "movie");
+      items.push(item); slotByPath.set(item.relativePath, item);
+    }
+    for (const u of untracked) {
+      const item: ManageFileRow = {
+        relativePath: u.relativePath, size: u.size, quality: u.quality, releaseGroup: null,
+        languages: [], releaseType: null, matchedFormats: [], indexerFlags: 0, rejections: [],
+      };
+      items.push(item); slotByPath.set(item.relativePath, item);
+      formatRows.push(this.pseudoFormatRow(`untracked:${u.relativePath}`, u.relativePath, u.size, u.quality));
+    }
+    // matchedFormats for every row (tracked + untracked) in one pass through the shared helper.
+    await attachMatchedFormats(this.db, formatRows);
+    for (const f of formatRows) {
+      const item = slotByPath.get(f.relativePath);
+      if (item) item.matchedFormats = f.matchedFormats;
+    }
+
     return {
       stale: stale.map((s) => ({ mediaFileId: s.id, relativePath: s.relativePath })),
       untracked,
+      items,
     };
   }
 
@@ -236,38 +338,119 @@ export class LibraryScanService implements OnModuleInit {
     const seasons = (await this.db.select().from(schema.season).where(eq(schema.season.seriesId, seriesId)))
       .filter((s) => seasonNumber === undefined || s.seasonNumber === seasonNumber);
 
+    const allFiles = await selectMediaFiles(this.db, "series", seriesId);
+    const trackedById = new Map(allFiles.map((f) => [f.id, f]));
+    const allEpisodes = await this.db
+      .select({
+        id: schema.episode.id,
+        seasonNumber: schema.season.seasonNumber,
+        episodeNumber: schema.episode.episodeNumber,
+        title: schema.episode.title,
+        airDateUtc: schema.episode.airDateUtc,
+      })
+      .from(schema.episode)
+      .innerJoin(schema.season, eq(schema.episode.seasonId, schema.season.id))
+      .where(eq(schema.episode.seriesId, seriesId));
+    const episodeById = new Map(allEpisodes.map((e) => [e.id, e]));
+
     const stale: { mediaFileId: string; relativePath: string }[] = [];
     const untracked: ScanUntrackedFile[] = [];
+    const items: ManageFileRow[] = [];
+    const slotByPath = new Map<string, ManageFileRow>();
+    const formatRows: MediaFileRow[] = [...allFiles];
+
     for (const season of seasons) {
       const compute = await this.computeSeriesSeason(series, season.seasonNumber, profile);
       if (compute.seasonEpisodes.length === 0) continue;
       for (const s of compute.stale) stale.push({ mediaFileId: s.id, relativePath: s.relativePath });
       untracked.push(...compute.untracked);
+
+      const epRefs = (ids: string[]): ManageEpisodeRef[] =>
+        ids.map((id) => episodeById.get(id)).filter((e): e is ManageEpisodeRef => e !== undefined);
+      const seasonEpCount = compute.seasonEpisodes.length;
+
+      for (const s of compute.surviving) {
+        const row = trackedById.get(s.id);
+        const episodes = epRefs(row?.episodeIds ?? []);
+        const item = this.trackedManageRow(s.id, row, false, profile, "series", episodes, episodes[0]?.seasonNumber, seasonEpCount);
+        items.push(item); slotByPath.set(item.relativePath, item);
+      }
+      for (const s of compute.stale) {
+        const row = trackedById.get(s.id);
+        const episodes = epRefs(row?.episodeIds ?? []);
+        const item = this.trackedManageRow(s.id, row, true, profile, "series", episodes, episodes[0]?.seasonNumber, seasonEpCount);
+        items.push(item); slotByPath.set(item.relativePath, item);
+      }
+      for (const u of compute.untracked) {
+        const matched = (u.episodeIds ?? []).map((id) => episodeById.get(id)).filter((e): e is ManageEpisodeRef => e !== undefined);
+        const releaseType: ReleaseTypeValue | null =
+          matched.length === 0 ? null
+            : matched.length >= seasonEpCount ? "season"
+              : matched.length > 1 ? "multi" : "single";
+        const item: ManageFileRow = {
+          relativePath: u.relativePath, size: u.size, quality: u.quality, releaseGroup: null,
+          languages: [], releaseType, matchedFormats: [], indexerFlags: 0,
+          seasonNumber: matched[0]?.seasonNumber,
+          episodes: matched.length > 0 ? matched : undefined,
+          rejections: u.rejections ?? [],
+        };
+        items.push(item); slotByPath.set(item.relativePath, item);
+        formatRows.push(this.pseudoFormatRow(`untracked:${u.relativePath}`, u.relativePath, u.size, u.quality));
+      }
     }
-    return { stale, untracked };
+
+    await attachMatchedFormats(this.db, formatRows);
+    for (const f of formatRows) {
+      const item = slotByPath.get(f.relativePath);
+      if (item) item.matchedFormats = f.matchedFormats;
+    }
+
+    return { stale, untracked, items };
   }
 
-  async applyMovie(movieId: string, opts: { removeStale: string[]; importUntracked: string[] }): Promise<ScanResult> {
+  async applyMovie(movieId: string, opts: ManageApplyOptions): Promise<ScanResult> {
     const movie = await this.getMovie(movieId);
     if (!movie?.rootFolderPath) return EMPTY_RESULT;
-    const { survivingCount, stale, untracked } = await this.computeMovie(movie);
+    const { survivingCount, surviving, stale, untracked } = await this.computeMovie(movie);
 
     const selectedStale = new Set(opts.removeStale);
     const selectedImports = new Set(opts.importUntracked);
-    const removeIds = stale.filter((s) => selectedStale.has(s.id)).map((s) => s.id);
-    const imports: PlannedImport[] = untracked
-      .filter((u) => selectedImports.has(u.relativePath))
-      .map((u) => ({ mediaFileId: newEntityId("mf"), relativePath: u.relativePath, size: u.size, quality: u.quality, episodeIds: [] }));
-    if (removeIds.length === 0 && imports.length === 0) return EMPTY_RESULT;
+    const deleteIds = new Set(opts.deleteFiles ?? []);
+    const deleteUntracked = new Set(opts.deleteUntracked ?? []);
+    const deleteUntrackedList = untracked.filter((u) => deleteUntracked.has(u.relativePath));
 
-    const hasFile = survivingCount - removeIds.length + imports.length > 0;
-    await this.writeMovie(movie, { removeIds, imports }, hasFile, new Date().toISOString());
-    return { filesFound: untracked.length, filesAdded: imports.length, filesRemoved: removeIds.length };
+    const removeIds = new Set<string>([
+      ...stale.filter((s) => selectedStale.has(s.id) || deleteIds.has(s.id)).map((s) => s.id),
+      ...surviving.filter((f) => deleteIds.has(f.id)).map((f) => f.id),
+    ]);
+    const imports: PlannedImport[] = untracked
+      .filter((u) => selectedImports.has(u.relativePath) && !deleteUntracked.has(u.relativePath))
+      .map((u) => ({ mediaFileId: newEntityId("mf"), relativePath: u.relativePath, size: u.size, quality: u.quality, episodeIds: [] }));
+    // An update on a row that is simultaneously being deleted is a no-op (delete wins).
+    const updates = (opts.updates ?? [])
+      .filter((u) => !deleteIds.has(u.mediaFileId) && !selectedStale.has(u.mediaFileId))
+      .map((u) => ({ mediaFileId: u.mediaFileId, patch: this.columnPatch(u) }));
+
+    const changed = removeIds.size > 0 || imports.length > 0 || updates.length > 0 || deleteUntrackedList.length > 0;
+    if (!changed) return EMPTY_RESULT;
+
+    // Dispose physical files for explicit deletes OUTSIDE any transaction (fs ops; a missing
+    // source must not block — same wrapper MediaFilesService.remove uses).
+    const survivingById = new Map(surviving.map((f) => [f.id, f]));
+    for (const id of deleteIds) {
+      const f = survivingById.get(id);
+      if (f) await this.disposePhysical(join(movie.rootFolderPath!, f.relativePath));
+    }
+    for (const u of deleteUntrackedList) await this.disposePhysical(u.path);
+
+    const hasFile = survivingCount - removeIds.size + imports.length > 0;
+    await this.writeMovie(movie, { removeIds: [...removeIds], imports, updates }, hasFile, new Date().toISOString());
+    return { filesFound: untracked.length, filesAdded: imports.length, filesRemoved: removeIds.size + deleteUntrackedList.length };
   }
 
   async applySeries(
     seriesId: string,
-    opts: { removeStale: string[]; importUntracked: string[] },
+    opts: ManageApplyOptions,
     seasonNumber?: number,
   ): Promise<ScanResult> {
     const series = await this.getSeries(seriesId);
@@ -278,42 +461,99 @@ export class LibraryScanService implements OnModuleInit {
 
     const selectedStale = new Set(opts.removeStale);
     const selectedImports = new Set(opts.importUntracked);
-    let filesAdded = 0, filesRemoved = 0, untrackedTotal = 0;
+    const deleteIds = new Set(opts.deleteFiles ?? []);
+    const deleteUntracked = new Set(opts.deleteUntracked ?? []);
+    const updatesById = new Map((opts.updates ?? []).map((u) => [u.mediaFileId, u]));
 
+    // Tracked-row surface (for delete disposal paths + episode repointing) and the post-apply
+    // episode→file map computed ONCE over the whole series so repoints can cross seasons.
+    const allEpisodes = await this.db.select().from(schema.episode).where(eq(schema.episode.seriesId, seriesId));
+    const finalByEpisode = new Map<string, string>();
+    for (const e of allEpisodes) if (e.mediaFileId) finalByEpisode.set(e.id, e.mediaFileId);
+
+    let filesAdded = 0, filesRemoved = 0, untrackedDeleted = 0, untrackedTotal = 0;
+    const allRemoveIds = new Set<string>();
+    const allImports: PlannedImport[] = [];
+
+    // Pass 1: compute imports/removals/repoints per season + the final coverage map.
     for (const season of seasons) {
       const compute = await this.computeSeriesSeason(series, season.seasonNumber, profile);
       if (compute.seasonEpisodes.length === 0) continue;
       untrackedTotal += compute.untracked.length;
 
-      // Only approved (matched) files are importable; selection is by relative path, everything
-      // else re-derived here. `supersedes` is recomputed from THIS selection only — a superseded
-      // file is removed solely as a consequence of the user ticking the file that replaces it
-      // (never automatically for a merely-approved-but-unselected candidate), and `removeStale`
-      // removes only the explicitly-checked stale rows.
-      const chosenImports = compute.untracked.filter((u) => selectedImports.has(u.relativePath) && (u.episodeIds?.length ?? 0) > 0);
-      // `supersedes` is computed over `surviving`, so the files it names are always surviving rows
-      // (a superseded file is one still on disk — never one already counted as stale).
+      const chosenImports = compute.untracked.filter((u) => selectedImports.has(u.relativePath) && (u.episodeIds?.length ?? 0) > 0 && !deleteUntracked.has(u.relativePath));
       const supersededIds = new Set(chosenImports.flatMap((u) => (u.supersedes ?? []).map((s) => s.mediaFileId)));
-      const removeIds = new Set<string>([
-        ...compute.stale.filter((s) => selectedStale.has(s.id)).map((s) => s.id),
-        ...compute.surviving.filter((f) => supersededIds.has(f.id)).map((f) => f.id),
-      ]);
-      if (chosenImports.length === 0 && removeIds.size === 0) continue;
+      for (const id of [...compute.stale.filter((s) => selectedStale.has(s.id)).map((s) => s.id),
+        ...compute.surviving.filter((f) => supersededIds.has(f.id)).map((f) => f.id)]) allRemoveIds.add(id);
 
       const imports: PlannedImport[] = chosenImports.map((u) => ({
         mediaFileId: newEntityId("mf"), relativePath: u.relativePath, size: u.size, quality: u.quality, episodeIds: u.episodeIds!,
       }));
+      allImports.push(...imports);
       filesAdded += imports.length;
-      filesRemoved += removeIds.size;
 
-      const plan = this.buildSeriesInteractivePlan(compute, [...removeIds], imports);
-      await this.writeSeriesSeason(series.id, compute.seasonEpisodes, plan);
+      for (const u of compute.untracked) {
+        if (deleteUntracked.has(u.relativePath)) {
+          untrackedDeleted += 1;
+          await this.disposePhysical(u.path);
+        }
+      }
+      for (const f of compute.surviving) {
+        if (deleteIds.has(f.id)) {
+          allRemoveIds.add(f.id);
+          await this.disposePhysical(join(series.rootFolderPath!, f.relativePath));
+        }
+      }
+      for (const s of compute.stale) {
+        if (deleteIds.has(s.id)) allRemoveIds.add(s.id);
+      }
     }
 
-    if (filesAdded > 0 || filesRemoved > 0) {
+    // Post-apply coverage: clear deleted files + repointed files, then add imports.
+    for (const id of allRemoveIds) {
+      for (const [epId, fid] of [...finalByEpisode]) if (fid === id) finalByEpisode.delete(epId);
+    }
+    for (const [fileId, up] of updatesById) {
+      if (allRemoveIds.has(fileId) || up.episodes === undefined) continue;
+      for (const [epId, fid] of [...finalByEpisode]) if (fid === fileId) finalByEpisode.delete(epId);
+      for (const epId of up.episodes) finalByEpisode.set(epId, fileId);
+    }
+    for (const im of allImports) {
+      for (const epId of im.episodeIds) finalByEpisode.set(epId, im.mediaFileId);
+    }
+
+    // Pass 2: write per season (transaction granularity preserved), applying column patches and
+    // the final coverage for each season's episodes. writeSeriesSeason diffs every episode row
+    // against its current value, so a season with nothing actually changing is a no-op write.
+    for (const season of seasons) {
+      const compute = await this.computeSeriesSeason(series, season.seasonNumber, profile);
+      if (compute.seasonEpisodes.length === 0) continue;
+
+      const seasonRemove = [...allRemoveIds].filter((id) =>
+        compute.surviving.some((f) => f.id === id) || compute.stale.some((s) => s.id === id));
+      const seasonImports = allImports.filter((im) =>
+        im.episodeIds.some((id) => compute.seasonEpisodes.some((e) => e.id === id)));
+      const seasonUpdates = [...updatesById]
+        .filter(([id]) => !allRemoveIds.has(id) && (compute.surviving.some((f) => f.id === id) || compute.stale.some((s) => s.id === id)))
+        .map(([id, u]) => ({ mediaFileId: id, patch: this.columnPatch(u) }));
+      const episodeUpdates = compute.seasonEpisodes.map((ep) => {
+        const fileId = finalByEpisode.get(ep.id);
+        return { episodeId: ep.id, hasFile: fileId !== undefined, mediaFileId: fileId ?? null };
+      });
+
+      filesRemoved += seasonRemove.length;
+      await this.writeSeriesSeason(series.id, compute.seasonEpisodes, {
+        removeIds: seasonRemove,
+        imports: seasonImports,
+        episodeUpdates,
+        updates: seasonUpdates,
+      });
+    }
+
+    if (filesAdded > 0 || filesRemoved > 0 || untrackedDeleted > 0) {
       await this.updateAvailability(seriesId, "series", new Date().toISOString());
     }
-    return { filesFound: untrackedTotal, filesAdded, filesRemoved };
+    return { filesFound: untrackedTotal, filesAdded, filesRemoved: filesRemoved + untrackedDeleted };
   }
 
   // ------------------------------------------------------------------
@@ -442,29 +682,9 @@ export class LibraryScanService implements OnModuleInit {
     return { removeIds, imports, episodeUpdates };
   }
 
-  /** The interactive per-season plan: import only the chosen files, remove only the chosen stale
-   *  rows plus the explicit supersessions of the chosen imports (never automatic), and recompute
-   *  every episode's hasFile/mediaFileId from the real post-apply covering set — NOT from the
-   *  auto-scan's assumption that everything approved was applied. */
-  private buildSeriesInteractivePlan(
-    compute: Awaited<ReturnType<LibraryScanService["computeSeriesSeason"]>>,
-    removeIds: string[],
-    imports: PlannedImport[],
-  ): SeasonPlan {
-    const removeSet = new Set(removeIds);
-    const imported = imports.map((i) => ({ id: i.mediaFileId, episodeIds: i.episodeIds }));
-    const covering = [...compute.surviving.filter((f) => !removeSet.has(f.id)), ...imported];
-    const byEpisode = new Map<string, string>();
-    for (const f of covering) for (const epId of f.episodeIds) {
-      if (!byEpisode.has(epId)) byEpisode.set(epId, f.id);
-    }
-    const episodeUpdates = compute.seasonEpisodes.map((ep) => ({
-      episodeId: ep.id,
-      hasFile: byEpisode.has(ep.id),
-      mediaFileId: byEpisode.get(ep.id),
-    }));
-    return { removeIds, imports, episodeUpdates };
-  }
+  /** The interactive apply builds its per-season plan directly in applySeries (MANAGEFILES-1) —
+   *  it needs the whole series' final coverage map plus per-row column patches, not the old
+   *  single-season covering-set derivation, so that helper was folded into the apply loop. */
 
   // ------------------------------------------------------------------
   // SHARED WRITE — the ONE implementation both the auto scan and the
@@ -474,11 +694,11 @@ export class LibraryScanService implements OnModuleInit {
 
   private async writeMovie(
     movie: typeof schema.movie.$inferSelect,
-    plan: { removeIds: string[]; imports: PlannedImport[] },
+    plan: { removeIds: string[]; imports: PlannedImport[]; updates?: { mediaFileId: string; patch: Partial<typeof schema.mediaFile.$inferInsert> }[] },
     hasFile: boolean,
     now: string,
   ): Promise<void> {
-    const changed = plan.removeIds.length > 0 || plan.imports.length > 0;
+    const changed = plan.removeIds.length > 0 || plan.imports.length > 0 || (plan.updates?.length ?? 0) > 0;
     if (this.db.dbDialect === "postgres") {
       await this.db.transaction(async (tx) => {
         for (const id of plan.removeIds) await tx.delete(schema.mediaFile).where(eq(schema.mediaFile.id, id));
@@ -487,6 +707,10 @@ export class LibraryScanService implements OnModuleInit {
             id: im.mediaFileId, mediaType: "movie", mediaId: movie.id,
             relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: now,
           });
+        }
+        for (const up of plan.updates ?? []) {
+          if (Object.keys(up.patch).length === 0) continue; // episode-only edit (no column patch)
+          await tx.update(schema.mediaFile).set(up.patch).where(eq(schema.mediaFile.id, up.mediaFileId));
         }
         if (hasFile !== movie.hasFile) {
           await tx.update(schema.movie).set({ hasFile, updatedAt: now }).where(eq(schema.movie.id, movie.id));
@@ -501,6 +725,10 @@ export class LibraryScanService implements OnModuleInit {
             id: im.mediaFileId, mediaType: "movie", mediaId: movie.id,
             relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: now,
           }).run();
+        }
+        for (const up of plan.updates ?? []) {
+          if (Object.keys(up.patch).length === 0) continue; // episode-only edit (no column patch)
+          tx.update(schema.mediaFile).set(up.patch).where(eq(schema.mediaFile.id, up.mediaFileId)).run();
         }
         if (hasFile !== movie.hasFile) {
           tx.update(schema.movie).set({ hasFile, updatedAt: now }).where(eq(schema.movie.id, movie.id)).run();
@@ -525,12 +753,16 @@ export class LibraryScanService implements OnModuleInit {
             relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: new Date().toISOString(),
           });
         }
+        for (const up of plan.updates ?? []) {
+          if (Object.keys(up.patch).length === 0) continue; // episode-only edit (no column patch)
+          await tx.update(schema.mediaFile).set(up.patch).where(eq(schema.mediaFile.id, up.mediaFileId));
+        }
         // J3: point newly/re-pointed episodes at their file via media_file_id — the single
         // source of coverage truth now (the episode_ids JSON column is gone).
         for (let i = 0; i < plan.episodeUpdates.length; i++) {
           const up = plan.episodeUpdates[i];
           const current = seasonEpisodes[i];
-          const set: { hasFile?: boolean; mediaFileId?: string } = {};
+          const set: { hasFile?: boolean; mediaFileId?: string | null } = {};
           if (up.hasFile !== current.hasFile) set.hasFile = up.hasFile;
           if (up.mediaFileId !== undefined) set.mediaFileId = up.mediaFileId;
           if (Object.keys(set).length > 0) {
@@ -547,11 +779,15 @@ export class LibraryScanService implements OnModuleInit {
             relativePath: im.relativePath, size: im.size, quality: im.quality, dateAdded: new Date().toISOString(),
           }).run();
         }
+        for (const up of plan.updates ?? []) {
+          if (Object.keys(up.patch).length === 0) continue; // episode-only edit (no column patch)
+          tx.update(schema.mediaFile).set(up.patch).where(eq(schema.mediaFile.id, up.mediaFileId)).run();
+        }
         // J3 (sync body — SQLite path): same episode->file FK wiring as the pg body.
         for (let i = 0; i < plan.episodeUpdates.length; i++) {
           const up = plan.episodeUpdates[i];
           const current = seasonEpisodes[i];
-          const set: { hasFile?: boolean; mediaFileId?: string } = {};
+          const set: { hasFile?: boolean; mediaFileId?: string | null } = {};
           if (up.hasFile !== current.hasFile) set.hasFile = up.hasFile;
           if (up.mediaFileId !== undefined) set.mediaFileId = up.mediaFileId;
           if (Object.keys(set).length > 0) {
@@ -565,6 +801,88 @@ export class LibraryScanService implements OnModuleInit {
   // ------------------------------------------------------------------
   // Small shared helpers.
   // ------------------------------------------------------------------
+
+  /** Build a merged-table row for a tracked media_file (surviving or stale). Below-cutoff
+   *  rejection uses the same `meetsCutoff()` domain function Cutoff Unmet uses; the message
+   *  carries the canonical registry quality title. */
+  private trackedManageRow(
+    id: string,
+    row: MediaFileRow | undefined,
+    stale: boolean,
+    profile: Awaited<ReturnType<typeof getQualityProfile>>,
+    mediaType: "movie" | "series",
+    episodes?: ManageEpisodeRef[],
+    seasonNumber?: number,
+    seasonEpisodeCount?: number,
+  ): ManageFileRow {
+    const quality = (row?.quality ?? null) as Quality | null;
+    let releaseType = row?.releaseType ?? null;
+    if (mediaType === "series" && releaseType === null && episodes && episodes.length > 0) {
+      releaseType = episodes.length >= (seasonEpisodeCount ?? -1) && episodes.length > 1 ? "season" : episodes.length > 1 ? "multi" : "single";
+    }
+    const rejections: ImportRejection[] = [];
+    if (!stale && quality && profile && !meetsCutoff(profile, quality)) {
+      const title = qualityMeta(qualityId(quality))?.title ?? `${quality.source}/${quality.resolution}`;
+      rejections.push({ reason: "below_cutoff", message: `Below cutoff (${title})` });
+    }
+    return {
+      mediaFileId: id,
+      stale,
+      relativePath: row?.relativePath ?? "",
+      size: row?.size ?? 0,
+      quality,
+      seasonNumber,
+      episodes,
+      releaseGroup: row?.releaseGroup ?? null,
+      languages: row?.languages ?? [],
+      releaseType,
+      matchedFormats: row?.matchedFormats ?? [],
+      indexerFlags: row?.indexerFlags ?? 0,
+      rejections,
+    };
+  }
+
+  /** A lightweight MediaFileRow stand-in for an untracked on-disk file, so the shared
+   *  `attachMatchedFormats` helper can score it in the same single pass as the tracked rows. */
+  private pseudoFormatRow(id: string, relativePath: string, size: number, quality: Quality): MediaFileRow {
+    return {
+      id, mediaType: "series", mediaId: "", episodeIds: [], relativePath, size, quality,
+      mediaInfo: null, languages: [], releaseGroup: null, dateAdded: null,
+      indexerFlags: 0, releaseType: null, matchedFormats: [],
+    };
+  }
+
+  /** Dispose a physical file through the recycle bin (or outright when unconfigured). A
+   *  missing source must not block the surrounding apply — same wrapper MediaFilesService.remove
+   *  uses, so a stale-looking delete can't half-fail. A real disposal failure is logged, never
+   *  silently swallowed (the .catch(() => {}) pattern has caused real bugs in this repo). */
+  private async disposePhysical(absolutePath: string): Promise<void> {
+    if (!this.recycleBin) {
+      try {
+        await this.storage.delete(absolutePath);
+      } catch (err) {
+        this.logger.warn(`Failed to dispose media file ${absolutePath}: ${(err as Error).message}`);
+      }
+      return;
+    }
+    try {
+      await this.recycleBin.dispose(absolutePath);
+    } catch (err) {
+      this.logger.warn(`Failed to dispose media file ${absolutePath}: ${(err as Error).message}`);
+    }
+  }
+
+  /** Reduce a ManageFileUpdate to the plain column patch it implies — episode reassignment is
+   *  handled by the coverage-map repoint, never a column write. */
+  private columnPatch(u: ManageFileUpdate): Partial<typeof schema.mediaFile.$inferInsert> {
+    const patch: Partial<typeof schema.mediaFile.$inferInsert> = {};
+    if (u.quality !== undefined) patch.quality = u.quality;
+    if (u.languages !== undefined) patch.languages = u.languages;
+    if (u.releaseGroup !== undefined) patch.releaseGroup = u.releaseGroup;
+    if (u.releaseType !== undefined) patch.releaseType = u.releaseType;
+    if (u.indexerFlags !== undefined) patch.indexerFlags = u.indexerFlags;
+    return patch;
+  }
 
   private async getMovie(movieId: string) {
     const rows = await this.db.select().from(schema.movie).where(eq(schema.movie.id, movieId)).limit(1);

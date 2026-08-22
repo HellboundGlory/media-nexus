@@ -219,6 +219,10 @@ export const mediaFile = pgTable("media_file", {
   mediaInfo: json<Record<string, unknown>>("media_info"),
   languages: json<string[]>("languages"),
   releaseGroup: text("release_group"),
+  // Indexer-flag bitmask (MANAGEFILES-1) — pg twin of schema.ts's media_file.indexer_flags.
+  indexerFlags: integer("indexer_flags").notNull().default(0),
+  // Series-only release shape (MANAGEFILES-1) — pg twin of schema.ts's media_file.release_type.
+  releaseType: text("release_type"),
   dateAdded: iso("date_added"),
 }, (t) => [index("media_file_media_idx").on(t.mediaType, t.mediaId)]);
 

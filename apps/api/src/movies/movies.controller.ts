@@ -8,7 +8,7 @@ import {
 } from "@medianexus/domain";
 import { ZodValidationPipe } from "../common/zod.pipe";
 import { MoviesService, type ListQuery } from "./movies.service";
-import { LibraryScanService } from "../library-scan/library-scan.service";
+import { LibraryScanService, type ManageApplyOptions } from "../library-scan/library-scan.service";
 
 const listQuerySchema = z.object({
   search: z.string().optional(),
@@ -24,9 +24,22 @@ const listQuerySchema = z.object({
 
 const renameBodySchema = z.object({ mediaFileIds: z.array(z.string()).default([]) });
 
+// MANAGEFILES-1: the apply body grew from the original {removeStale, importUntracked} selection
+// to also carry explicit deletes (tracked + untracked) and per-row edits on tracked files. The
+// quality field mirrors the media_file.quality column shape (modifier optional).
 const manageApplyBodySchema = z.object({
   removeStale: z.array(z.string()).default([]),
   importUntracked: z.array(z.string()).default([]),
+  deleteFiles: z.array(z.string()).default([]),
+  deleteUntracked: z.array(z.string()).default([]),
+  updates: z.array(z.object({
+    mediaFileId: z.string(),
+    quality: z.object({ source: z.string(), resolution: z.string(), edition: z.string(), modifier: z.string().optional() }).optional(),
+    languages: z.array(z.string()).optional(),
+    releaseGroup: z.string().nullable().optional(),
+    releaseType: z.enum(["single", "multi", "season"]).nullable().optional(),
+    indexerFlags: z.number().int().nonnegative().optional(),
+  })).default([]),
 });
 
 // ---- Bulk actions (UNI-020): one request fans out over the existing single-item update()/
@@ -113,8 +126,8 @@ export class MoviesController {
   }
 
   @Post(":id/manage-files/apply")
-  @ApiOperation({ summary: "Apply the user's Manage Files selection: import the checked untracked files and remove the checked stale rows (only what's ticked)" })
-  manageApply(@Param("id") id: string, @Body(new ZodValidationPipe(manageApplyBodySchema)) body: { removeStale: string[]; importUntracked: string[] }) {
+  @ApiOperation({ summary: "Apply the user's Manage Files selection: import the checked untracked files, remove the checked stale rows, delete the checked tracked/untracked files, and apply per-row edits — only what's ticked" })
+  manageApply(@Param("id") id: string, @Body(new ZodValidationPipe(manageApplyBodySchema)) body: ManageApplyOptions) {
     return this.scan.applyMovie(id, body);
   }
 

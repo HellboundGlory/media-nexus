@@ -78,6 +78,13 @@
       "when": 1787146606121,
       "tag": "0010_absent_texas_twister",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787387071379,
+      "tag": "0011_thin_genesis",
+      "breakpoints": true
     }
   ]
 }

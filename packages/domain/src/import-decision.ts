@@ -34,7 +34,10 @@ export type ImportRejectionReason =
   | "incomplete_transfer"
   | "no_matching_episode"
   | "cutoff_already_met"
-  | "not_an_upgrade";
+  | "not_an_upgrade"
+  // Manage Files/Episodes only (MANAGEFILES-1): a tracked file whose quality sits below the
+  // title's profile cutoff. Reuses the same ImportRejection wire shape as the import reasons.
+  | "below_cutoff";
 
 export interface ImportRejection {
   reason: ImportRejectionReason;

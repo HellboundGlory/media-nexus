@@ -242,6 +242,13 @@ export const mediaFile = sqliteTable("media_file", {
   mediaInfo: json<Record<string, unknown>>("media_info"),
   languages: json<string[]>("languages"),
   releaseGroup: text("release_group"),
+  // Indexer-flag bitmask (MANAGEFILES-1): a single int holding the OR'd bits of
+  // NzbDrone.Core.Parser.Model.IndexerFlags (freeleech=1 … subtitles=256). Flat column
+  // matches upstream's own storage model and media_file's existing flat-column convention.
+  indexerFlags: integer("indexer_flags").notNull().default(0),
+  // Series-only release shape (MANAGEFILES-1): single | multi | season, set via the Manage
+  // Episodes table's Release Type picker. Null = unknown. Movies never carry a release type.
+  releaseType: text("release_type"),
   dateAdded: iso("date_added"),
 }, (t) => [index("media_file_media_idx").on(t.mediaType, t.mediaId)]);
 

@@ -14,7 +14,7 @@ import { ArrowLeft, Crosshair, FolderOpen, RefreshCw, FileText, Trash2, ChevronD
 import { clsx } from "clsx";
 import { api } from "../api/client";
 import type { Series as SeriesRow, Episode, MediaFileRow, QualityProfile, Release } from "../api/types";
-import { Badge, ErrorState, formatDate, formatBytes, FormatsBadges } from "../lib/ui";
+import { Badge, ErrorState, formatDate } from "../lib/ui";
 import { episodeFinaleBadge } from "../lib/episodeFinale";
 import { DetailHeader, type ReadoutCell } from "../components/detail/DetailHeader";
 import { CompletenessBadge, seriesCompleteness } from "../components/Completeness";
@@ -26,7 +26,6 @@ import { ManageFilesModal } from "../components/detail/ManageFilesModal";
 import { MonitoredLamp } from "../components/detail/MonitoredLamp";
 import { SeasonPill, type SeasonStats } from "../components/detail/SeasonPill";
 import { DeleteConfirmModal } from "../components/detail/DeleteConfirmModal";
-import { MediaFileActions } from "../components/detail/MediaFileActions";
 import { EditTitleModal, type EditTitleBody } from "../components/EditTitleModal";
 import { EpisodeDetailModal } from "../components/detail/EpisodeDetailModal";
 
@@ -441,52 +440,8 @@ export default function SeriesDetail() {
           )}
       </section>
 
-      {/* Files panel — real media_file rows, same shape/treatment as the movie detail page. */}
-      <section className="space-y-2">
-        <h4 className="font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink-dim">Files</h4>
-        {files.isLoading ? <p className="text-sm text-ink-dim">Loading…</p>
-          : files.isError ? <ErrorState error={files.error} onRetry={() => files.refetch()} />
-          : files.data?.length === 0 ? <p className="text-sm text-ink-dim">No files yet.</p>
-          : (
-            // No overflow-hidden here: MediaFileActions' hover popover must be able to escape the
-            // panel (same clipping fix previously applied to SeasonPill).
-            <div className="rounded-lg border border-rule">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-bg text-[10px] font-semibold uppercase tracking-wide text-ink-dim">
-                  <tr>
-                    <th className="px-3 py-2">Path</th>
-                    <th className="px-3 py-2">Size</th>
-                    <th className="px-3 py-2">Quality</th>
-                    <th className="px-3 py-2">Formats</th>
-                    <th className="px-3 py-2">Codec</th>
-                    <th className="px-3 py-2">Resolution</th>
-                    <th className="px-3 py-2">Languages</th>
-                    <th className="px-3 py-2">Added</th>
-                    <th className="px-3 py-2"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-rule">
-                  {files.data?.map((f) => (
-                    <tr key={f.id}>
-                      <td className="max-w-[26rem] truncate px-3 py-2" title={f.relativePath}>{f.relativePath}</td>
-                      <td className="px-3 py-2 tabular-nums text-ink-dim">{formatBytes(f.size)}</td>
-                      <td className="px-3 py-2 text-ink-dim">{f.quality ? `${f.quality.source} · ${f.quality.resolution}` : "—"}</td>
-                      <td className="px-3 py-2"><FormatsBadges formats={f.matchedFormats} /></td>
-                      <td className="px-3 py-2 text-ink-dim">{f.mediaInfo?.videoCodec ?? "—"}</td>
-                      <td className="px-3 py-2 text-ink-dim">{f.mediaInfo?.resolution ?? "—"}</td>
-                      <td className="px-3 py-2 text-ink-dim">{f.languages.length ? f.languages.join(", ") : "—"}</td>
-                      <td className="px-3 py-2 text-ink-dim">{f.dateAdded ? formatDate(f.dateAdded).slice(0, 10) : "—"}</td>
-                      <td className="px-3 py-2 text-right">
-                        <MediaFileActions file={f} onChanged={() => { qc.invalidateQueries({ queryKey: ["files", "series", id] }); qc.invalidateQueries({ queryKey: ["series", id] }); qc.invalidateQueries({ queryKey: ["series-episodes", id] }); }} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-      </section>
-
+      {/* No page-level Files section on series — Sonarr has none (MANAGEFILES-1). Manage
+          Episodes (header/season actions) is the only file-management surface. */}
       <CastCrewStrip mediaType="series" mediaId={id} />
       <HistoryPanel mediaType="series" mediaId={id} />
 

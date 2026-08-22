@@ -131,8 +131,10 @@ export const customFormatSpecSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("indexerFlag"),
     /** Availability/ratio flag derived from the release's volume factors (SON-025b). The
-     *  threshold mapping lives in `releaseFlagMatches` so it can never drift from the UI labels. */
-    flag: z.enum(["freeleech", "freeleech75", "halfleech", "freeleech25", "doubleUpload"]),
+     *  threshold mapping lives in `releaseFlagMatches` so it can never drift from the UI labels.
+     *  Full 9-value set (MANAGEFILES-1) matching upstream's `IndexerFlags` [Flags] enum, though
+     *  only the five volume-factor flags are ever derivable from a release here. */
+    flag: z.enum(["freeleech", "freeleech75", "halfleech", "freeleech25", "doubleUpload", "internal", "scene", "nuked", "subtitles"]),
     negate: z.boolean().default(false),
     required: z.boolean().default(true),
     caseSensitive: z.boolean().default(false),
@@ -150,7 +152,26 @@ export type CustomFormatSpec =
   | { type: "releaseType"; releaseType: ReleaseTypeValue; negate?: boolean; required?: boolean; caseSensitive?: boolean }
   | { type: "indexerFlag"; flag: IndexerFlagValue; negate?: boolean; required?: boolean; caseSensitive?: boolean };
 export type ReleaseTypeValue = "single" | "multi" | "season";
-export type IndexerFlagValue = "freeleech" | "freeleech75" | "halfleech" | "freeleech25" | "doubleUpload";
+/** Indexer flags (NzbDrone.Core.Parser.Model.IndexerFlags) — the full 9-value set, stored as a
+ *  single bitmask int on a media_file row (MANAGEFILES-1). Only the five volume-factor flags are
+ *  also derivable from a release's volume data (see `releaseFlagMatches`); internal/scene/nuked/
+ *  subtitles are metadata-only and persist purely as user-set bits. */
+export type IndexerFlagValue = "freeleech" | "freeleech75" | "halfleech" | "freeleech25" | "doubleUpload" | "internal" | "scene" | "nuked" | "subtitles";
+
+/** The 9-value flag catalog: value (domain name), bit (the mask value stored in the int) and the
+ *  display label. Values match upstream exactly; the single source the API and any mirroring UI
+ *  derive their picker/display lists from, so a flag's bit and label can never drift. */
+export const INDEXER_FLAGS: readonly { value: IndexerFlagValue; bit: number; label: string }[] = [
+  { value: "freeleech", bit: 1, label: "Freeleech" },
+  { value: "halfleech", bit: 2, label: "Halfleech" },
+  { value: "doubleUpload", bit: 4, label: "Double Upload" },
+  { value: "internal", bit: 8, label: "Internal" },
+  { value: "scene", bit: 16, label: "Scene" },
+  { value: "freeleech75", bit: 32, label: "Freeleech 75%" },
+  { value: "freeleech25", bit: 64, label: "Freeleech 25%" },
+  { value: "nuked", bit: 128, label: "Nuked" },
+  { value: "subtitles", bit: 256, label: "Subtitles" },
+];
 
 export const customFormatSchema = z.object({
   name: z.string().min(1),
@@ -338,6 +359,12 @@ export function releaseFlagMatches(rel: { downloadVolumeFactor?: number; uploadV
     case "halfleech": return rel.downloadVolumeFactor !== undefined && rel.downloadVolumeFactor === 0.5;
     case "freeleech25": return rel.downloadVolumeFactor !== undefined && rel.downloadVolumeFactor === 0.75;
     case "doubleUpload": return rel.uploadVolumeFactor !== undefined && rel.uploadVolumeFactor > 1;
+    // internal/scene/nuked/subtitles carry no volume-factor signal — they are metadata-only bits
+    // (set explicitly on a file via Manage Files), never derivable from a release's factors.
+    case "internal":
+    case "scene":
+    case "nuked":
+    case "subtitles": return false;
   }
 }
 
