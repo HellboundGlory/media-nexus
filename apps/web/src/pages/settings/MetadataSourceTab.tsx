@@ -4,8 +4,8 @@
 // backfill). All through the generic PUT /system/config. Attribution copy retained.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Database } from "lucide-react";
 import { api } from "../../api/client";
+import { TmdbLogo, TvdbLogo } from "../../components/ProviderLogos";
 
 const monoCls = "w-full rounded-lg border border-rule bg-transparent px-3 py-1.5 font-mono text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
 
@@ -24,7 +24,14 @@ export function MetadataSourceTab() {
   return (
     <div className="space-y-4">
       <section className="rounded-xl border border-rule bg-surface p-4">
-        <h3 className="mb-1 flex items-center gap-2 font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink-dim"><Database className="h-4 w-4" /> TMDB</h3>
+        <TmdbLogo className="mb-2 h-8 w-auto text-ink" />
+        <p className="mb-1 text-xs text-ink-dim">
+          Movie and series metadata is provided by{" "}
+          <a href="https://www.themoviedb.org/" target="_blank" rel="noreferrer" className="underline text-accent">
+            TMDB
+          </a>
+          . This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.
+        </p>
         <p className="mb-3 text-xs text-ink-dim">Powers Discover and per-title metadata refresh. Get a free API key at <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer" className="underline text-accent">themoviedb.org/settings/api</a>.</p>
         <label className="block">
           <span className="mb-1 block text-xs text-ink-dim">TMDB API key</span>
@@ -36,7 +43,18 @@ export function MetadataSourceTab() {
       </section>
 
       <section className="rounded-xl border border-rule bg-surface p-4">
-        <h3 className="mb-1 font-display text-sm font-semibold uppercase tracking-[0.05em] text-ink-dim">TheTVDB</h3>
+        <TvdbLogo className="mb-2 h-8 w-auto text-ink" />
+        <p className="mb-1 text-xs text-ink-dim">
+          Series and episode information is provided by{" "}
+          <a href="https://thetvdb.com/" target="_blank" rel="noreferrer" className="underline text-accent">
+            TheTVDB.com
+          </a>
+          .{" "}
+          <a href="https://thetvdb.com/subscribe" target="_blank" rel="noreferrer" className="underline text-accent">
+            Please consider supporting them
+          </a>
+          .
+        </p>
         <p className="mb-3 text-xs text-ink-dim">
           Provides series absolute/scene episode numbering backfill. Leave blank to use the shared proxy.
         </p>
