@@ -89,25 +89,29 @@ function toSpec(row: SpecRow): CustomFormatSpec {
   }
 }
 
-/** One-line card summary of a condition (e.g. `term: x265`, `size: >5GB`, `!lang: en`). */
-function specSummary(spec: CustomFormatSpec): { text: string; tone: "ok" | "warn" | "info" | "neutral" } {
+/** One-line card summary of a condition (e.g. `term: x265`, `size: >5GB`, `!lang: en`).
+ *  Tone encodes polarity per the upstream Radarr convention — negated conditions render
+ *  danger, normal ones render the project's positive token (ok) — so the card's color
+ *  answers positive-vs-negated at a glance while the text still names the field. */
+function specSummary(spec: CustomFormatSpec): { text: string; tone: "ok" | "warn" | "info" | "neutral" | "danger" } {
   const neg = spec.negate ? "!" : "";
+  const tone = spec.negate ? "danger" : "ok";
   switch (spec.type) {
-    case "term": return { text: `${neg}term: ${spec.term}${spec.useRegex ? " /re" : ""}`, tone: "info" };
+    case "term": return { text: `${neg}term: ${spec.term}${spec.useRegex ? " /re" : ""}`, tone };
     case "size": {
       let s = "";
       if (spec.min !== undefined) s += `>${spec.min}B`;
       if (spec.max !== undefined) s += `${s ? " " : ""}<${spec.max}B`;
-      return { text: `${neg}size: ${s}`, tone: "neutral" };
+      return { text: `${neg}size: ${s}`, tone };
     }
-    case "language": return { text: `${neg}lang: ${spec.language}`, tone: "ok" };
-    case "indexer": return { text: `${neg}indexer: ${spec.indexerId}`, tone: "warn" };
-    case "resolution": return { text: `${neg}res: ${spec.resolution}`, tone: "neutral" };
-    case "source": return { text: `${neg}src: ${spec.source}`, tone: "ok" };
-    case "modifier": return { text: `${neg}mod: ${spec.modifier}`, tone: "info" };
-    case "releaseGroup": return { text: `${neg}group: ${spec.releaseGroup}${spec.useRegex ? " /re" : ""}`, tone: "warn" };
-    case "releaseType": return { text: `${neg}type: ${spec.releaseType}`, tone: "ok" };
-    case "indexerFlag": return { text: `${neg}flag: ${spec.flag}`, tone: "warn" };
+    case "language": return { text: `${neg}lang: ${spec.language}`, tone };
+    case "indexer": return { text: `${neg}indexer: ${spec.indexerId}`, tone };
+    case "resolution": return { text: `${neg}res: ${spec.resolution}`, tone };
+    case "source": return { text: `${neg}src: ${spec.source}`, tone };
+    case "modifier": return { text: `${neg}mod: ${spec.modifier}`, tone };
+    case "releaseGroup": return { text: `${neg}group: ${spec.releaseGroup}${spec.useRegex ? " /re" : ""}`, tone };
+    case "releaseType": return { text: `${neg}type: ${spec.releaseType}`, tone };
+    case "indexerFlag": return { text: `${neg}flag: ${spec.flag}`, tone };
   }
 }
 
