@@ -15,7 +15,12 @@ const discoverQuery = z.object({
 });
 const discoverAddBody = z.object({
   mediaType: z.enum(["movie", "series"]),
-  tmdbId: z.number().int().positive(),
+  // Id in the caller's source space (TVDB migration): a TMDB id for movies and Discover
+  // trending-TV adds, a tvdbId for Add Series search results.
+  externalId: z.number().int().positive(),
+  // Which id space `externalId` names. Defaults to "tmdb" so existing callers (movies, Discover)
+  // behave identically without sending the field; the Add Series modal sends "tvdb".
+  source: z.enum(["tmdb", "tvdb"]).default("tmdb"),
   // Add-modal choices threaded through to create (QUALITYPROFILES-1 / UNI-014) — all optional;
   // the service defaults each to the historical literals when absent.
   qualityProfileId: z.string().optional(),
@@ -32,7 +37,7 @@ export class MetadataController {
   constructor(private readonly metadata: MetadataService) {}
 
   @Get("api/v1/metadata/search")
-  @ApiOperation({ summary: "Search TMDB for candidates to add" })
+  @ApiOperation({ summary: "Search candidates to add (TheTVDB for series, TMDB for movies)" })
   lookup(@Query(new ZodValidationPipe(lookupQuery)) q: z.infer<typeof lookupQuery>) {
     return this.metadata.lookup(q.query, q.type);
   }
@@ -44,7 +49,7 @@ export class MetadataController {
   }
 
   @Post("api/v1/series/:id/metadata")
-  @ApiOperation({ summary: "Refresh series metadata + auto-create seasons/episodes from TMDB" })
+  @ApiOperation({ summary: "Refresh series metadata + auto-create seasons/episodes from TheTVDB" })
   refreshSeries(@Param("id") id: string) {
     return this.metadata.refreshSeries(id);
   }
@@ -56,14 +61,14 @@ export class MetadataController {
   }
 
   @Post("api/v1/discover/add")
-  @ApiOperation({ summary: "Add a movie/series to the library from a TMDB discover result" })
+  @ApiOperation({ summary: "Add a movie/series to the library from a discover/search result" })
   addFromDiscover(@Body(new ZodValidationPipe(discoverAddBody)) body: z.infer<typeof discoverAddBody>) {
-    return this.metadata.addFromDiscover(body.mediaType, body.tmdbId, {
+    return this.metadata.addFromDiscover(body.mediaType, body.externalId, {
       qualityProfileId: body.qualityProfileId,
       rootFolderPath: body.rootFolderPath,
       tags: body.tags,
       seriesType: body.seriesType,
       monitored: body.monitored,
-    });
+    }, body.source);
   }
 }

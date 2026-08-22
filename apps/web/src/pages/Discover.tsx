@@ -36,9 +36,11 @@ export default function Discover() {
   const add = useMutation({
     // QUALITYPROFILES-1: the add modal's fields ride along on POST /discover/add, which now
     // accepts qualityProfileId/rootFolderPath/tags/seriesType and threads them into create.
+    // Discover stays TMDB-sourced, so the body sends the TMDB id as `externalId` and omits
+    // `source` (server default "tmdb" resolves it to TheTVDB for series).
     mutationFn: (vars: { item: DiscoverItem; body: AddTitleBody }) =>
       api.post<{ id: string; created: boolean }>("/discover/add", {
-        mediaType: vars.item.mediaType, tmdbId: vars.item.tmdbId, ...vars.body,
+        mediaType: vars.item.mediaType, externalId: vars.item.tmdbId, ...vars.body,
       }),
     onSuccess: (res, vars) => {
       const item = vars.item;

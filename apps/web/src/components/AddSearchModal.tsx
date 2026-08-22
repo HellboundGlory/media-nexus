@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 // AddSearchModal — UNI-029 pass 2: the wide, live-search "Add" modal shared by Movies and Series.
 // Replaces the old crude title + optional numeric-id quick-add form. Search results come from
-// /metadata/search, which returns SearchResult (a MediaSummary annotated with inLibrary/libraryId
-// + a rating) — the externalId is the TMDB id as a string, and the poster lives in `images`
-// (resolved via the posterUrl helper). The "+ Add" flow goes through POST /discover/add (NOT
-// /movies|/series create): that endpoint resolves a real tvdbId for series (without it the
-// tvdbId-requiring season/episode backfill is silently skipped) and computes minimumAvailability
-// server-side for movies. Because /discover/add requires a real tmdbId, there is no "type any
-// title with no TMDB match" fallback anymore — matching upstream, you can only add a real
-// search result.
+// /metadata/search, which returns SearchResult (a MediaSummary annotated with inLibrary/libraryId)
+// — the externalId is the provider's native id as a string (TMDB for movies, TVDB for series),
+// and the poster lives in `images` (resolved via the posterUrl helper). The "+ Add" flow goes
+// through POST /discover/add (NOT /movies|/series create): it computes minimumAvailability
+// server-side for movies and, for series, hands the tvdbId straight to the TVDB-backed add path
+// (source: "tvdb") so seasons/episodes populate from the same canonical record Sonarr uses.
+// Because /discover/add requires a real search-result id, there is no "type any title with no
+// match" fallback anymore — matching upstream, you can only add a real search result.
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, Star, Plus, Check, Film, Tv } from "lucide-react";
@@ -57,7 +57,15 @@ export function AddSearchModal({
 
   const add = useMutation({
     mutationFn: ({ hit, body }: { hit: SearchResult; body: AddTitleBody }) =>
-      api.post<{ id: string; created: boolean }>("/discover/add", { mediaType, tmdbId: Number(hit.externalId), ...body }),
+      api.post<{ id: string; created: boolean }>("/discover/add", {
+        mediaType,
+        externalId: Number(hit.externalId),
+        // Series search results are TVDB ids — add through the TVDB path directly (the bug this
+        // fixes: a TMDB-sourced id could not always be resolved back to TheTVDB). Movies keep
+        // the default "tmdb" source.
+        ...(mediaType === "series" ? { source: "tvdb" as const } : {}),
+        ...body,
+      }),
     onSuccess: (_, { hit }) => {
       qc.invalidateQueries({ queryKey: [mediaType === "movie" ? "movies" : "series"] });
       // Flip this result to the "In library" state immediately for the rest of the session.
@@ -69,7 +77,7 @@ export function AddSearchModal({
   // True when the backend already knows the title is in the library (inLibrary) or we added it
   // this session — preventing accidental duplicate adds is the whole point of the flag.
   const inLibrary = (h: SearchResult) => h.inLibrary || added.has(Number(h.externalId));
-  const plural = mediaType === "movie" ? "movie" : "series";
+  const providerName = mediaType === "movie" ? "TMDB" : "TVDB";
 
   return (
     <>
@@ -87,14 +95,14 @@ export function AddSearchModal({
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={`Search TMDB for a ${plural}…`}
+              placeholder={`Search ${providerName} for a ${mediaType}…`}
               autoFocus
               className="w-full rounded-lg border border-rule bg-surface px-3 py-1.5 pl-8 pr-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
             />
           </div>
           <div className="max-h-[55vh] space-y-1 overflow-y-auto">
             {debounced.length === 0 ? (
-              <p className="py-6 text-center text-sm text-ink-dim">Type to search TMDB.</p>
+              <p className="py-6 text-center text-sm text-ink-dim">Type to search {providerName}.</p>
             ) : results.isFetching ? (
               <p className="py-6 text-center text-sm text-ink-dim">Searching…</p>
             ) : results.isError ? (

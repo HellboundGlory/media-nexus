@@ -89,9 +89,15 @@ function stubProvider(title: string): TmdbProvider {
   } as unknown as TmdbProvider;
 }
 
-/** A no-op TheTVDB stub so the post-add series refresh never touches the network. */
+/** A no-op TheTVDB stub (now the series primary source) so the post-add series refresh never
+ *  touches the network. */
 function stubTvdb() {
-  return { episodes: async () => [], seriesAliases: async () => [] } as never;
+  return {
+    getDetails: async () => ({ externalId: "234567", title: "Discover Series", overview: "", genres: [], images: [] }),
+    seriesSeasons: async () => [],
+    episodes: async () => [],
+    seriesAliases: async () => [],
+  } as never;
 }
 
 function buildSvc(db: Awaited<ReturnType<typeof freshDb>>) {

@@ -32,17 +32,20 @@ beforeAll(() => {
 });
 afterAll(() => handle.close());
 
-/** Fake TMDB provider returning a real status for both media types. */
+/** Fake TMDB provider returning a real status for movies (series status now comes from TVDB). */
 async function makeMetadata(movies?: MoviesService, series?: SeriesService): Promise<MetadataService> {
   const fakeProvider = {
     tmdbIdForTvdb: async () => 900000,
-    getDetails: async (mediaType: string) =>
-      mediaType === "movie"
-        ? { title: "Inception", overview: "o", genres: ["Sci-Fi"], images: [], releaseDate: "2010-07-16", status: "Released" }
-        : { title: "Breaking Bad", overview: "o", genres: ["Drama"], images: [], year: 2008, status: "Ended" },
-    seriesSeasons: async () => [],
+    getDetails: async () =>
+      ({ title: "Inception", overview: "o", genres: ["Sci-Fi"], images: [], releaseDate: "2010-07-16", status: "Released" }),
   };
-  const fakeTvdb = { episodes: async () => [], seriesAliases: async () => [] };
+  // TheTVDB is the series primary source: its extended record's status feeds refreshSeries.
+  const fakeTvdb = {
+    getDetails: async () => ({ externalId: "900001", title: "Breaking Bad", overview: "o", genres: ["Drama"], images: [], year: 2008, status: "Ended" }),
+    seriesSeasons: async () => [],
+    episodes: async () => [],
+    seriesAliases: async () => [],
+  };
   const events = new EventsService(eventBus);
   const autoTags = new AutoTagsService(db);
   const svc = new MetadataService(
@@ -57,7 +60,7 @@ async function makeMetadata(movies?: MoviesService, series?: SeriesService): Pro
   return svc;
 }
 
-describe("refreshMovie/refreshSeries persist TMDB status (SERIESSTATUS-2)", () => {
+describe("refreshMovie (TMDB) / refreshSeries (TheTVDB) persist provider status (SERIESSTATUS-2)", () => {
   it("refreshMovie overwrites the placeholder status with TMDB's real value", async () => {
     await db.insert(schema.movie).values({
       id: "m1", tmdbId: 123, imdbId: null, title: "Inception", originalTitle: null, overview: "",
@@ -71,7 +74,7 @@ describe("refreshMovie/refreshSeries persist TMDB status (SERIESSTATUS-2)", () =
     expect(row.status).toBe("Released");
   });
 
-  it("refreshSeries overwrites the placeholder status with TMDB's real value", async () => {
+  it("refreshSeries overwrites the placeholder status with TheTVDB's real value", async () => {
     await db.insert(schema.series).values({
       id: "s1", tvdbId: 900001, tmdbId: 901, imdbId: null, title: "Breaking Bad", overview: "",
       status: "unknown", seriesType: "standard", network: null, firstAirYear: 2008,

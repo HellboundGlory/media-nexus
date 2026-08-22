@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: MIT
-/** TheTVDB numbering backfill (roadmap P2, gap D8) — driven through refreshSeries(). */
+/**
+ * TheTVDB as the primary series metadata source (TVDB migration) — driven through refreshSeries().
+ *
+ * refreshSeries() sources overview/images/genres/status/certification/runtime AND the
+ * season/episode upsert loop from TvdbProvider.getDetails()/seriesSeasons(); the row's tvdbId is
+ * the primary id (no TMDB-resolution gate). series.tmdbId is best-effort backfilled off the TVDB
+ * remoteIds first, with the legacy TMDB reverse-lookup as fallback, and cast/crew credits still
+ * come from TMDB when an id is known. The additive numbering/alias backfills are unchanged.
+ */
 import { AutoTagsService } from "../src/auto-tags/auto-tags.service";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
@@ -21,37 +29,49 @@ beforeAll(async () => {
 });
 afterAll(() => handle.close());
 
-/** A fully-stubbed TMDB provider returning a fixed series with two season-1 episodes. */
+/** Stubbed TMDB provider: only the pieces refreshSeries still uses for series — the tmdbId
+ *  reverse-lookup fallback and (optionally) credits. getDetails is never called for series. */
 const fakeTmdb = {
   tmdbIdForTvdb: async () => "12345",
-  getDetails: async () => ({ title: "Test Show", overview: "overview-set-by-tmdb", genres: ["Drama"], images: [], year: 2020 }),
-  seriesSeasons: async () => [
-    { season_number: 1, episodes: [
-      { episode_number: 1, name: "E1", air_date: "2020-01-01", overview: "" },
-      { episode_number: 2, name: "E2", air_date: "2020-01-08", overview: "" },
-    ] },
-  ],
+  getCredits: async () => ({ cast: [], crew: [] }),
 };
 
-/** TVDB numbering fixture: official S&E (matching the local TMDB rows) + absolute, and a
- *  dvd/scene ordering that diverges (ep 1 <-> scene S03E04, ep 2 <-> S03E05). */
-const fakeTvdbOk = {
-  episodes: async (tvdbId: number, seasonType: string) => {
-    if (seasonType === "dvd") {
+/** Full TVDB stub mirroring live shapes: details + official-order seasons/episodes (with a
+ *  series finale marker), plus official/dvd orderings for the numbering backfill. */
+function makeTvdb(over: { tmdbIdInRemoteIds?: boolean } = {}) {
+  return {
+    getDetails: async () => ({
+      externalId: "7", title: "Test Show", overview: "overview-set-by-tvdb", year: 2020,
+      status: "Ended", genres: ["Drama"], images: [{ coverType: "poster", url: "/p.jpg" }],
+      certification: "TV-MA", runtime: 45,
+      ...(over.tmdbIdInRemoteIds === false ? {} : { tmdbId: 555000 }),
+    }),
+    seriesSeasons: async () => [
+      {
+        seasonNumber: 1,
+        episodes: [
+          { episodeNumber: 1, name: "E1", airDate: "2020-01-01", overview: "", episodeType: undefined },
+          { episodeNumber: 2, name: "E2", airDate: "2020-01-08", overview: "", episodeType: "finale" },
+        ],
+      },
+    ],
+    episodes: async (_tvdbId: number, seasonType: string) => {
+      if (seasonType === "dvd") {
+        return [
+          { id: 101, seasonNumber: 3, number: 4, absoluteNumber: null, aired: null },
+          { id: 102, seasonNumber: 3, number: 5, absoluteNumber: null, aired: null },
+        ];
+      }
       return [
-        { id: 101, seasonNumber: 3, number: 4, absoluteNumber: null, aired: null },
-        { id: 102, seasonNumber: 3, number: 5, absoluteNumber: null, aired: null },
+        { id: 101, seasonNumber: 1, number: 1, absoluteNumber: 5, aired: "2020-01-01" },
+        { id: 102, seasonNumber: 1, number: 2, absoluteNumber: 6, aired: "2020-01-08" },
       ];
-    }
-    return [
-      { id: 101, seasonNumber: 1, number: 1, absoluteNumber: 5, aired: "2020-01-01" },
-      { id: 102, seasonNumber: 1, number: 2, absoluteNumber: 6, aired: "2020-01-08" },
-    ];
-  },
-  seriesAliases: async () => ["AOT", "SNK"],
-};
+    },
+    seriesAliases: async () => ["AOT", "SNK"],
+  };
+}
 
-async function seedSeries(seriesId: string, ids: { tvdbId: number; tmdbId: number }): Promise<void> {
+async function seedSeries(seriesId: string, ids: { tvdbId: number | null; tmdbId: number | null }): Promise<void> {
   const now = new Date().toISOString();
   await db.insert(schema.series).values({
     id: seriesId, tvdbId: ids.tvdbId, tmdbId: ids.tmdbId, imdbId: null, title: "Test Show", overview: "",
@@ -66,48 +86,100 @@ async function seedSeries(seriesId: string, ids: { tvdbId: number; tmdbId: numbe
   ]);
 }
 
-function service(overrides: { tvdb?: object }): MetadataService {
+function service(tvdb: object, tmdb: object = fakeTmdb): MetadataService {
   const svc = new MetadataService(db, new ConfigService(db), {} as never, {} as never, new AutoTagsService(db)) as MetadataService;
-  (svc as unknown as { provider: () => Promise<typeof fakeTmdb> }).provider = async () => fakeTmdb;
-  (svc as unknown as { tvdbProvider: () => Promise<{ episodes: (...a: unknown[]) => Promise<unknown> }> }).tvdbProvider = async () => (overrides.tvdb ?? fakeTvdbOk) as never;
+  (svc as unknown as { provider: () => Promise<object> }).provider = async () => tmdb;
+  (svc as unknown as { tvdbProvider: () => Promise<object> }).tvdbProvider = async () => tvdb;
   return svc;
 }
 
-describe("refreshSeries() TheTVDB numbering backfill", () => {
-  it("backfills absolute + scene numbering from TVDB for matched episodes", async () => {
-    await seedSeries("backfill", { tvdbId: 7, tmdbId: 12345 });
-    await service({}).refreshSeries("backfill");
-
-    const e1 = (await db.select().from(schema.episode).where(eq(schema.episode.id, "ep_backfill_1_1")))[0];
-    const e2 = (await db.select().from(schema.episode).where(eq(schema.episode.id, "ep_backfill_1_2")))[0];
-    expect(e1.absoluteNumber).toBe(5);
-    expect(e1.sceneSeasonNumber).toBe(3);
-    expect(e1.sceneEpisodeNumber).toBe(4);
-    expect(e2.absoluteNumber).toBe(6);
-    expect(e2.sceneSeasonNumber).toBe(3);
-    expect(e2.sceneEpisodeNumber).toBe(5);
-  });
-
-  it("backs up alternate titles (TVDB aliases) onto the series row", async () => {
-    await seedSeries("alias", { tvdbId: 9, tmdbId: 99901 });
-    await service({}).refreshSeries("alias");
-
-    const s = (await db.select().from(schema.series).where(eq(schema.series.id, "alias")))[0];
-    expect(s.alternateTitles).toEqual(["AOT", "SNK"]);
-  });
-
-  it("still succeeds with TMDB fields intact when TVDB is unavailable (backfill no-ops)", async () => {
-    await seedSeries("graceful", { tvdbId: 8, tmdbId: 54321 });
-    const failingTvdb = { episodes: async () => { throw new Error("worker unreachable"); } };
-    const result = await service({ tvdb: failingTvdb }).refreshSeries("graceful");
+describe("refreshSeries() sourced from TheTVDB", () => {
+  it("re-sources overview/status/certification/runtime and maps finaleType onto existing rows", async () => {
+    await seedSeries("tvdbprimary", { tvdbId: 7, tmdbId: 12345 });
+    const result = await service(makeTvdb()).refreshSeries("tvdbprimary");
 
     expect(result.updated).toBe(true);
     expect(result.title).toBe("Test Show");
-    const series = (await db.select().from(schema.series).where(eq(schema.series.id, "graceful")))[0];
-    expect(series.overview).toBe("overview-set-by-tmdb"); // TMDB portion applied despite TVDB failure
-    expect(series.alternateTitles ?? []).toEqual([]); // gracefully left empty
-    const e1 = (await db.select().from(schema.episode).where(eq(schema.episode.id, "ep_graceful_1_1")))[0];
-    expect(e1.absoluteNumber).toBeNull(); // gracefully left null
-    expect(e1.sceneSeasonNumber).toBeNull();
+    const s = (await db.select().from(schema.series).where(eq(schema.series.id, "tvdbprimary")))[0];
+    expect(s.overview).toBe("overview-set-by-tvdb");
+    expect(s.status).toBe("Ended");
+    expect(s.certification).toBe("TV-MA");
+    expect(s.runtime).toBe(45);
+    // Pre-existing tmdbId is never overwritten (UNIQUE column), even though remoteIds had one.
+    expect(s.tmdbId).toBe(12345);
+
+    // EPISODEDETAIL-1: TVDB finaleType "series" -> our "finale"; regular episodes stay null.
+    const e1 = (await db.select().from(schema.episode).where(eq(schema.episode.id, "ep_tvdbprimary_1_1")))[0];
+    const e2 = (await db.select().from(schema.episode).where(eq(schema.episode.id, "ep_tvdbprimary_1_2")))[0];
+    expect(e1.episodeType).toBeNull();
+    expect(e2.episodeType).toBe("finale");
+  });
+
+  it("backfills tmdbId from TVDB remoteIds when the row has none", async () => {
+    await seedSeries("remoteids", { tvdbId: 8, tmdbId: null });
+    await service(makeTvdb()).refreshSeries("remoteids");
+    const s = (await db.select().from(schema.series).where(eq(schema.series.id, "remoteids")))[0];
+    expect(s.tmdbId).toBe(555000);
+  });
+
+  it("falls back to the TMDB reverse-lookup when remoteIds carry no TMDB entry", async () => {
+    await seedSeries("fallback", { tvdbId: 9, tmdbId: null });
+    // Distinct id: another row in this shared DB already claims fakeTmdb's default 12345, and the
+    // UNIQUE-conflict guard must skip (not crash) — asserted separately below.
+    const tmdb = { ...fakeTmdb, tmdbIdForTvdb: async () => "77777" };
+    await service(makeTvdb({ tmdbIdInRemoteIds: false }), tmdb).refreshSeries("fallback");
+    const s = (await db.select().from(schema.series).where(eq(schema.series.id, "fallback")))[0];
+    expect(s.tmdbId).toBe(77777); // from tmdb.tmdbIdForTvdb
+  });
+
+  it("skips the tmdbId backfill without failing the refresh when another series already owns that TMDB id", async () => {
+    await seedSeries("clash", { tvdbId: 13, tmdbId: null });
+    await service(makeTvdb({ tmdbIdInRemoteIds: false })).refreshSeries("clash"); // reverse-lookup says 12345 — claimed by "tvdbprimary"
+    const s = (await db.select().from(schema.series).where(eq(schema.series.id, "clash")))[0];
+    expect(s.tmdbId).toBeNull();
+    const fresh = (await db.select().from(schema.series).where(eq(schema.series.id, "clash")))[0];
+    expect(fresh.overview).toBe("overview-set-by-tvdb"); // the refresh itself still applied
+  });
+
+  it("backs up alternate titles (TVDB aliases) onto the series row and scene numbers from DVD ordering", async () => {
+    await seedSeries("alias", { tvdbId: 10, tmdbId: 99901 });
+    await service(makeTvdb()).refreshSeries("alias");
+
+    const s = (await db.select().from(schema.series).where(eq(schema.series.id, "alias")))[0];
+    expect(s.alternateTitles).toEqual(["AOT", "SNK"]);
+    const e1 = (await db.select().from(schema.episode).where(eq(schema.episode.id, "ep_alias_1_1")))[0];
+    expect(e1.absoluteNumber).toBe(5);
+    expect(e1.sceneSeasonNumber).toBe(3);
+    expect(e1.sceneEpisodeNumber).toBe(4);
+  });
+
+  it("still succeeds when TMDB is unreachable (backfill/credits are best-effort only)", async () => {
+    await seedSeries("graceful", { tvdbId: 11, tmdbId: null });
+    const failingTmdb = {
+      tmdbIdForTvdb: async () => { throw new Error("tmdb unreachable"); },
+      getCredits: async () => { throw new Error("tmdb unreachable"); },
+    };
+    const result = await service(makeTvdb({ tmdbIdInRemoteIds: false }), failingTmdb).refreshSeries("graceful");
+
+    expect(result.updated).toBe(true);
+    const s = (await db.select().from(schema.series).where(eq(schema.series.id, "graceful")))[0];
+    expect(s.overview).toBe("overview-set-by-tvdb"); // TVDB portion applied despite TMDB failure
+    expect(s.tmdbId).toBeNull(); // backfill skipped, not fatal
+  });
+
+  it("fails when TVDB is unavailable (it is now the primary source, not an additive extra)", async () => {
+    await seedSeries("hardfail", { tvdbId: 12, tmdbId: 54321 });
+    const failingTvdb = {
+      getDetails: async () => { throw new Error("worker unreachable"); },
+      seriesSeasons: async () => { throw new Error("worker unreachable"); },
+      episodes: async () => { throw new Error("worker unreachable"); },
+      seriesAliases: async () => [],
+    };
+    await expect(service(failingTvdb).refreshSeries("hardfail")).rejects.toThrow("worker unreachable");
+  });
+
+  it("rejects a series without any tvdbId (TVDB needs its own id now)", async () => {
+    await seedSeries("notvid", { tvdbId: null, tmdbId: 777 });
+    await expect(service(makeTvdb()).refreshSeries("notvid")).rejects.toThrow(/no tvdbId/);
   });
 });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { ApiError, newEntityId } from "@medianexus/shared";
 import { schema } from "@medianexus/database";
 import { DB_TOKEN } from "../db/database.module";
@@ -37,8 +37,9 @@ export interface DiscoverAddOverrides {
 }
 
 /**
- * Metadata import (metadata): TMDB provides movie/series enrichment and — critically —
- * auto-populates seasons + episodes (M2 previously needed manual episode seeding).
+ * Metadata import (metadata): movies are TMDB-driven; series are TheTVDB-driven (real Sonarr
+ * parity — one canonical record per show, plus the absolute/scene numbering TMDB lacks) and
+ * auto-populate seasons + episodes (M2 previously needed manual episode seeding).
  */
 @Injectable()
 export class MetadataService {
@@ -77,16 +78,24 @@ export class MetadataService {
   }
 
   async lookup(query: string, mediaType: "movie" | "series"): Promise<SearchResult[]> {
-    const p = await this.provider();
-    const results = await p.search(query, mediaType);
+    // Series searches TheTVDB (the source real Sonarr searches; TMDB splits continuations into
+    // duplicate ids), movies stay TMDB. `externalId` is therefore in the provider's native space:
+    // tmdbId for movies, tvdbId for series — the in-library annotation must match on that column.
+    const results = mediaType === "movie"
+      ? await (await this.provider()).search(query, mediaType)
+      : await (await this.tvdbProvider()).search(query);
     // Annotate in-library membership with one batched query (same discipline as `discover()`) so
     // the Add search modal can show "In library"/"+ Add" correctly for already-added titles.
-    const tmdbIds = results.map((r) => Number(r.externalId)).filter((n) => Number.isFinite(n));
+    const externalIds = results.map((r) => Number(r.externalId)).filter((n) => Number.isFinite(n));
     const inLibrary = new Map<number, string>();
-    if (tmdbIds.length) {
-      const table = mediaType === "movie" ? schema.movie : schema.series;
-      const rows = await this.db.select({ id: table.id, tmdbId: table.tmdbId }).from(table).where(inArray(table.tmdbId, tmdbIds));
-      for (const r of rows) if (r.tmdbId != null) inLibrary.set(r.tmdbId, r.id);
+    if (externalIds.length) {
+      if (mediaType === "movie") {
+        const rows = await this.db.select({ id: schema.movie.id, external: schema.movie.tmdbId }).from(schema.movie).where(inArray(schema.movie.tmdbId, externalIds));
+        for (const r of rows) if (r.external != null) inLibrary.set(r.external, r.id);
+      } else {
+        const rows = await this.db.select({ id: schema.series.id, external: schema.series.tvdbId }).from(schema.series).where(inArray(schema.series.tvdbId, externalIds));
+        for (const r of rows) if (r.external != null) inLibrary.set(r.external, r.id);
+      }
     }
     return results.map((r) => {
       const id = Number(r.externalId);
@@ -221,16 +230,40 @@ export class MetadataService {
     await this.db.insert(schema.mediaCredit).values(rows);
   }
 
+  /**
+   * Refresh a series from TheTVDB, its primary metadata source (real Sonarr parity): overview,
+   * images, genres, status, certification and runtime plus the full season/episode rebuild come
+   * from TvdbProvider. The row's tvdbId IS the primary id, so there is no TMDB-resolution gate —
+   * a TVDB-native series refreshes with no TMDB dependency at all. series.tmdbId is only
+   * best-effort backfilled (TVDB remoteIds first, legacy TMDB reverse-lookup as fallback)
+   * because the DetailHeader TMDb link (DETAILPAGE-FE1) and cast/crew credits (DETAILPAGE-BE2,
+   * still TMDB-sourced) read it; both backfill paths are strictly non-fatal.
+   */
   async refreshSeries(seriesId: string): Promise<{ updated: boolean; title?: string; seasons: number; episodes: number }> {
     const p = await this.provider();
+    const tvdb = await this.tvdbProvider();
     const series = await this.db.select().from(schema.series).where(eq(schema.series.id, seriesId)).limit(1);
     if (!series[0]) throw ApiError.notFound("series", seriesId);
+    if (!series[0].tvdbId) throw new ApiError({ code: "UNPROCESSABLE", message: "series has no tvdbId" });
 
-    const tmdbId = series[0].tvdbId ? await p.tmdbIdForTvdb(series[0].tvdbId) : null;
-    if (!tmdbId) throw new ApiError({ code: "UNPROCESSABLE", message: "could not resolve a TMDB id for this series (needs tvdbId)" });
+    const d = await tvdb.getDetails(String(series[0].tvdbId));
+    const seasons = await tvdb.seriesSeasons(String(series[0].tvdbId));
 
-    const d = await p.getDetails("series", tmdbId);
-    const seasons = await p.seriesSeasons(Number(tmdbId));
+    // Best-effort tmdbId backfill (never fails the refresh): prefer reading it straight off the
+    // extended record's remoteIds; fall back to the TMDB reverse-lookup only when the row has no
+    // id yet AND remoteIds came up empty. It is written below ONLY when the row has none:
+    // series.tmdb_id is UNIQUE, and overwriting a pre-existing (already correct) id with a
+    // conflicting one would throw on the constraint.
+    let resolvedTmdbId: number | null = d.tmdbId ?? null;
+    if (resolvedTmdbId == null && !series[0].tmdbId) {
+      resolvedTmdbId = await p.tmdbIdForTvdb(series[0].tvdbId)
+        .then((s) => (Number.isFinite(Number(s)) ? Number(s) : null))
+        .catch((err) => {
+          this.logger.warn(`TMDB reverse-lookup skipped for "${d.title}": ${(err as Error).message}`);
+          return null;
+        });
+    }
+
     const now = new Date().toISOString();
     const tags = await this.autoTags.appliedTags({
       tags: series[0].tags ?? [],
@@ -248,62 +281,71 @@ export class MetadataService {
       genres: d.genres ?? [],
       images: d.images ?? [],
       firstAirYear: d.year ?? series[0].firstAirYear,
-      // TMDB's real lifecycle status (SERIESSTATUS-2), verbatim; keep the DB value if TMDB gave
-      // nothing this time (never regress a real value to null).
+      // TheTVDB's real lifecycle status verbatim ("Ended"/"Continuing"/...); keep the DB value if
+      // TVDB gave nothing this time (never regress a real value to null).
       status: d.status ?? series[0].status,
-      // Persist the resolved TMDB id back onto the row — but only when the row has none yet.
-      // Without the backfill at all, a series added via TVDB keeps tmdbId null forever, which in
-      // turn hides the DetailHeader TMDb link (DETAILPAGE-FE1). It must NOT blindly overwrite an
-      // existing id though: series.tmdb_id is UNIQUE, and a refresh that resolves a conflicting id
-      // (e.g. two rows mapping to one TMDB title) would throw a unique-constraint error. A
-      // pre-existing id is already correct (derived from the same tvdbId), so leave it alone.
-      // tmdbId here is a string from tmdbIdForTvdb(); the column is an integer.
-      tmdbId: series[0].tmdbId ?? Number(tmdbId),
-      // Detail-page metadata (DETAILPAGE-BE1) — new nullable columns threaded from MediaSummary.
-      certification: d.certification ?? null,
-      runtime: d.runtime ?? null,
-      trailerId: d.trailerId ?? null,
-      tmdbRating: d.rating ?? null,
+      // Detail-page metadata (DETAILPAGE-BE1). Certification/runtime follow the same never-regress
+      // rule as status: a sparse TVDB record must not blank what an earlier refresh stored.
+      // tmdbRating/trailerId are left untouched: TVDB's `score` is a popularity count, not a 0-10
+      // rating, and its trailers are not mapped — overwriting would destroy real TMDB values.
+      certification: d.certification ?? series[0].certification,
+      runtime: d.runtime ?? series[0].runtime,
       tags,
       updatedAt: now,
       lastRefreshedAt: now,
     }).where(eq(schema.series.id, seriesId));
-    // Cast & crew (DETAILPAGE-BE2): replace this title's credit rows with the fresh set. Same
-    // best-effort posture as refreshMovie — a credits failure is a warn, not a refresh failure.
-    await this.replaceCredits(p, "series", String(tmdbId), seriesId).catch((err) =>
-      this.logger.warn(`credits refresh skipped for "${d.title}": ${(err as Error).message}`));
+    // Backfill-only write of the resolved TMDB id (see the note above), as its own statement so a
+    // conflict can never fail the refresh: series.tmdb_id is UNIQUE, and two TVDB records can
+    // legitimately name the same TMDB id in their remoteIds — the first row keeps it, this one
+    // just logs and moves on.
+    if (series[0].tmdbId == null && resolvedTmdbId != null) {
+      const clash = await this.db.select({ id: schema.series.id }).from(schema.series)
+        .where(and(eq(schema.series.tmdbId, resolvedTmdbId), ne(schema.series.id, seriesId))).limit(1);
+      if (clash[0]) {
+        this.logger.warn(`tmdbId backfill skipped for "${d.title}": TMDB id ${resolvedTmdbId} is already claimed by series ${clash[0].id}`);
+      } else {
+        await this.db.update(schema.series).set({ tmdbId: resolvedTmdbId }).where(eq(schema.series.id, seriesId));
+      }
+    }
+    // Cast & crew stay TMDB-sourced (DETAILPAGE-BE2; TVDB has no credits endpoint in scope).
+    // Skipped outright for pure-TVDB records with no tmdbId anywhere — nothing to fetch from.
+    const creditsTmdbId = series[0].tmdbId ?? resolvedTmdbId;
+    if (creditsTmdbId != null) {
+      await this.replaceCredits(p, "series", String(creditsTmdbId), seriesId).catch((err) =>
+        this.logger.warn(`credits refresh skipped for "${d.title}": ${(err as Error).message}`));
+    }
 
-    // upsert seasons + episodes idempotently
+    // upsert seasons + episodes idempotently (from the assembled TVDB official ordering)
     let seasonCount = 0;
     let episodeCount = 0;
     for (const season of seasons) {
       const existing = await this.db.select({ id: schema.season.id }).from(schema.season)
-        .where(and(eq(schema.season.seriesId, seriesId), eq(schema.season.seasonNumber, season.season_number))).limit(1);
+        .where(and(eq(schema.season.seriesId, seriesId), eq(schema.season.seasonNumber, season.seasonNumber))).limit(1);
       let seasonId = existing[0]?.id ?? null;
       if (!seasonId) {
-        seasonId = `sea_${seriesId}_${season.season_number}`;
-        await this.db.insert(schema.season).values({ id: seasonId, seriesId, seasonNumber: season.season_number, monitored: true });
+        seasonId = `sea_${seriesId}_${season.seasonNumber}`;
+        await this.db.insert(schema.season).values({ id: seasonId, seriesId, seasonNumber: season.seasonNumber, monitored: true });
         seasonCount++;
       }
-      for (const ep of season.episodes ?? []) {
-        const epId = `ep_${seriesId}_${season.season_number}_${ep.episode_number}`;
+      for (const ep of season.episodes) {
+        const epId = `ep_${seriesId}_${season.seasonNumber}_${ep.episodeNumber}`;
         const exists = await this.db.select({ id: schema.episode.id }).from(schema.episode).where(eq(schema.episode.id, epId)).limit(1);
         if (exists[0]) {
           // EPISODEDETAIL-1: keep a re-refreshed episode's episode_type current — the insert-only
           // loop would otherwise leave already-imported episodes with null episode_type forever
           // (and thus no Finale badge) after this migration. Update only when the value changed,
           // matching the TVDB numbering backfill's write-if-different discipline below.
-          if (ep.episode_type != null) {
+          if (ep.episodeType != null) {
             const row = await this.db.select({ episodeType: schema.episode.episodeType }).from(schema.episode).where(eq(schema.episode.id, epId)).limit(1);
-            if (row[0]?.episodeType !== ep.episode_type) {
-              await this.db.update(schema.episode).set({ episodeType: ep.episode_type }).where(eq(schema.episode.id, epId));
+            if (row[0]?.episodeType !== ep.episodeType) {
+              await this.db.update(schema.episode).set({ episodeType: ep.episodeType }).where(eq(schema.episode.id, epId));
             }
           }
           continue;
         }
         await this.db.insert(schema.episode).values({
-          id: epId, seriesId, seasonId, episodeNumber: ep.episode_number, title: ep.name ?? "",
-          overview: ep.overview ?? "", airDateUtc: ep.air_date ?? null, episodeType: ep.episode_type ?? null,
+          id: epId, seriesId, seasonId, episodeNumber: ep.episodeNumber, title: ep.name ?? "",
+          overview: ep.overview ?? "", airDateUtc: ep.airDate ?? null, episodeType: ep.episodeType ?? null,
           monitored: true, hasFile: false,
         });
         episodeCount++;
@@ -311,10 +353,10 @@ export class MetadataService {
     }
     this.logger.log(`metadata refresh "${series[0].title}": +${seasonCount} seasons +${episodeCount} episodes`);
 
-    // Best-effort TheTVDB numbering backfill (roadmap P2, gap D8): TMDB does not expose
-    // absolute/scene numbers, so fill `absoluteNumber` / `sceneSeasonNumber` /
-    // `sceneEpisodeNumber` from TVDB. Strictly additive and non-fatal — a TVDB failure must
-    // never fail the TMDB portion of the refresh (which already succeeded above).
+    // Best-effort TheTVDB numbering backfill (roadmap P2, gap D8): fill `sceneSeasonNumber` /
+    // `sceneEpisodeNumber` from the DVD ordering (and absolute numbers for any rows the upsert
+    // loop above didn't just create). Strictly additive and non-fatal — a TVDB failure must never
+    // fail the refresh (which already succeeded above).
     await this.backfillTvdbNumbering(series[0]);
     await this.backfillTvdbAliases(series[0]);
 
@@ -469,21 +511,30 @@ export class MetadataService {
     };
   }
 
-  /** One-click add from discover: create the title, then best-effort enrich (images/genres/seasons).
-   *  `overrides` (QUALITYPROFILES-1) carry the user's add-modal choices — quality profile, root
-   *  folder, tags, series type — through to the create; the TMDB-release-date-derived
-   *  minimumAvailability default stays non-overridable (a deliberate, existing smart default). */
+  /**
+   * One-click add from discover/search: create the title, then best-effort enrich
+   * (images/genres/seasons). `overrides` (QUALITYPROFILES-1) carry the user's add-modal choices —
+   * quality profile, root folder, tags, series type — through to the create; the
+   * TMDB-release-date-derived minimumAvailability default stays non-overridable (a deliberate,
+   * existing smart default).
+   *
+   * `source` discriminates the series branch's id space (TVDB migration): the Add Series search
+   * modal passes `source: "tvdb"` and a tvdbId directly; Discover's TMDB-sourced trending-TV add
+   * (and every pre-existing caller, via the default) passes a tmdbId that is resolved to its
+   * TheTVDB record first — throwing UNPROCESSABLE when TVDB has none, exactly as before.
+   */
   async addFromDiscover(
     mediaType: "movie" | "series",
-    tmdbId: number,
+    externalId: number,
     overrides: DiscoverAddOverrides = {},
+    source: "tmdb" | "tvdb" = "tmdb",
   ): Promise<{ id: string; created: boolean }> {
     const p = await this.provider();
 
     if (mediaType === "movie") {
-      const existing = await this.db.select({ id: schema.movie.id }).from(schema.movie).where(eq(schema.movie.tmdbId, tmdbId)).limit(1);
+      const existing = await this.db.select({ id: schema.movie.id }).from(schema.movie).where(eq(schema.movie.tmdbId, externalId)).limit(1);
       if (existing[0]) return { id: existing[0].id, created: false };
-      const details = await p.getDetails("movie", String(tmdbId));
+      const details = await p.getDetails("movie", String(externalId));
       // Movie automation (roadmap C1) searches anything past its minimum-availability gate.
       // TMDB already tells us whether the film has actually come out — use it, rather than
       // defaulting every Discover-added movie to "announced" (always searchable), which
@@ -493,7 +544,7 @@ export class MetadataService {
       const minimumAvailability = overrides.minimumAvailability
         ?? (details.releaseDate && new Date(details.releaseDate) > new Date() ? "released" : "announced");
       const created = await this.movies.create({
-        title: details.title, tmdbId, overview: details.overview ?? "", releaseDate: details.releaseDate,
+        title: details.title, tmdbId: externalId, overview: details.overview ?? "", releaseDate: details.releaseDate,
         monitored: overrides.monitored ?? true, rootFolderPath: overrides.rootFolderPath ?? "", tags: overrides.tags ?? [],
         qualityProfileId: overrides.qualityProfileId, minimumAvailability,
       });
@@ -501,13 +552,54 @@ export class MetadataService {
       return { id: created.id, created: true };
     }
 
-    const existingSeries = await this.db.select({ id: schema.series.id }).from(schema.series).where(eq(schema.series.tmdbId, tmdbId)).limit(1);
-    if (existingSeries[0]) return { id: existingSeries[0].id, created: false };
-    const tvdbId = await p.tvdbIdForTmdb(tmdbId);
-    if (!tvdbId) throw new ApiError({ code: "UNPROCESSABLE", message: "Could not resolve a TVDB id for this series from TMDB" });
-    const details = await p.getDetails("series", String(tmdbId));
+    const tvdb = await this.tvdbProvider();
+    let tvdbId: number;
+    let title: string;
+    let overview: string | undefined;
+    let firstAirYear: number | undefined;
+    let tmdbId: number | undefined;
+
+    if (source === "tvdb") {
+      // Add Series search: the id IS the tvdbId. Details come from TheTVDB directly; tmdbId is
+      // only a best-effort backfill off remoteIds (the refresh re-checks with the reverse lookup).
+      const existingByTvdb = await this.db.select({ id: schema.series.id }).from(schema.series).where(eq(schema.series.tvdbId, externalId)).limit(1);
+      if (existingByTvdb[0]) return { id: existingByTvdb[0].id, created: false };
+      const d = await tvdb.getDetails(String(externalId));
+      tvdbId = externalId;
+      title = d.title;
+      overview = d.overview;
+      firstAirYear = d.year;
+      tmdbId = d.tmdbId;
+    } else {
+      // Existing TMDB-sourced path (Discover trending-TV): resolve tmdbId -> tvdbId first; without
+      // a TVDB record the season/episode pipeline has no source, so this stays a hard error.
+      const existingByTmdb = await this.db.select({ id: schema.series.id }).from(schema.series).where(eq(schema.series.tmdbId, externalId)).limit(1);
+      if (existingByTmdb[0]) return { id: existingByTmdb[0].id, created: false };
+      const resolved = await p.tvdbIdForTmdb(externalId);
+      if (!resolved) throw new ApiError({ code: "UNPROCESSABLE", message: "Could not resolve a TVDB id for this series from TMDB" });
+      tvdbId = Number(resolved);
+      const d = await p.getDetails("series", String(externalId));
+      title = d.title;
+      overview = d.overview;
+      firstAirYear = d.year;
+      tmdbId = externalId;
+    }
+
+    // Guard the same clash refreshSeries()'s backfill already guards: TheTVDB's remoteIds are a
+    // best-effort tmdbId (source === "tvdb" only — the tmdb-source path's id was just confirmed
+    // free by existingByTmdb above), and two TVDB records can legitimately name the same TMDB id.
+    // series.tmdb_id is UNIQUE, so an uncaught collision here would surface as a raw DB error
+    // instead of a clean one — drop it and let the post-add refresh's own backfill retry instead.
+    if (source === "tvdb" && tmdbId != null) {
+      const clash = await this.db.select({ id: schema.series.id }).from(schema.series).where(eq(schema.series.tmdbId, tmdbId)).limit(1);
+      if (clash[0]) {
+        this.logger.warn(`tmdbId ${tmdbId} for "${title}" is already claimed by series ${clash[0].id} — adding without it`);
+        tmdbId = undefined;
+      }
+    }
+
     const createdSeries = await this.series.create({
-      title: details.title, tvdbId, tmdbId, overview: details.overview ?? "", firstAirYear: details.year,
+      title, tvdbId, tmdbId, overview: overview ?? "", firstAirYear,
       monitored: overrides.monitored ?? true, rootFolderPath: overrides.rootFolderPath ?? "",
       seriesType: overrides.seriesType ?? "standard", tags: overrides.tags ?? [],
       qualityProfileId: overrides.qualityProfileId,

@@ -53,9 +53,11 @@ export default function Dashboard() {
 
   const add = useMutation({
     // Same add-to-library flow Discover.tsx uses: the modal's fields ride on POST /discover/add.
+    // Trending stays TMDB-sourced, so the TMDB id goes out as `externalId` with no `source`
+    // (server default "tmdb").
     mutationFn: (vars: { item: DiscoverItem; body: AddTitleBody }) =>
       api.post<{ id: string; created: boolean }>("/discover/add", {
-        mediaType: vars.item.mediaType, tmdbId: vars.item.tmdbId, ...vars.body,
+        mediaType: vars.item.mediaType, externalId: vars.item.tmdbId, ...vars.body,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [addModal?.mediaType === "movie" ? "movies" : "series"] });

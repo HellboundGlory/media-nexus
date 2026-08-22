@@ -32,14 +32,16 @@ afterAll(() => handle.close());
 /** Fake TMDB provider: every movie/series resolves successfully and bumps nothing extra. */
 const fakeProvider = {
   tmdbIdForTvdb: async () => 900000,
-  getDetails: async (mediaType: string) =>
-    mediaType === "movie"
-      ? { title: "Test Movie", overview: "o", genres: ["Drama"], images: [], releaseDate: null }
-      : { title: "Test Series", overview: "o", genres: ["Drama"], images: [], year: 2020 },
-  seriesSeasons: async () => [],
+  getDetails: async () =>
+    ({ title: "Test Movie", overview: "o", genres: ["Drama"], images: [], releaseDate: null }),
 };
-/** Fake TVDB: no numbering/aliases (null fields, no extra effect). */
-const fakeTvdb = { episodes: async () => [], seriesAliases: async () => [] };
+/** Fake TVDB (now the series primary source): plain details, no seasons/numbering/aliases. */
+const fakeTvdb = {
+  getDetails: async () => ({ externalId: "1", title: "Test Series", overview: "o", genres: ["Drama"], images: [], year: 2020 }),
+  seriesSeasons: async () => [],
+  episodes: async () => [],
+  seriesAliases: async () => [],
+};
 
 // Seed rows with `lastRefreshedAt` deliberately OMITTED (NULL) — i.e. "never metadata-refreshed".
 // The rotation test then proves NULL rows are picked first and a successful refresh stamps a real

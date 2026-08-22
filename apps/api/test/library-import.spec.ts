@@ -196,15 +196,16 @@ describe("Library Import end-to-end (folder-name override)", () => {
     // (The on-add scan fired inside create() but no episodes existed yet, so it imported
     // nothing — exactly the gap this test guards.)
 
-    // 2. Metadata refresh populates season 1 + episode 1 from the (faked) TMDB provider.
+    // 2. Metadata refresh populates season 1 + episode 1 from the (faked) TVDB provider.
     const svc = new MetadataService(h.db, h.config, {} as never, {} as never, new AutoTagsService(h.db)) as MetadataService;
     (svc as unknown as { provider: () => Promise<unknown> }).provider = async () => ({
       tmdbIdForTvdb: async () => 900000,
-      getDetails: async () => ({ title: "My Show", overview: "o", genres: [], images: [], year: 2020 }),
-      seriesSeasons: async () => [{ season_number: 1, episodes: [{ episode_number: 1, name: "Pilot", overview: "", air_date: "2020-01-01" }] }],
     });
     (svc as unknown as { tvdbProvider: () => Promise<unknown> }).tvdbProvider = async () => ({
-      episodes: async () => [], seriesAliases: async () => [],
+      getDetails: async () => ({ externalId: "1", title: "My Show", overview: "o", genres: [], images: [], year: 2020 }),
+      seriesSeasons: async () => [{ seasonNumber: 1, episodes: [{ episodeNumber: 1, name: "Pilot", overview: "", airDate: "2020-01-01" }] }],
+      episodes: async () => [],
+      seriesAliases: async () => [],
     });
     const refreshed = await svc.refreshSeries(created.id);
     expect(refreshed.episodes).toBe(1);

@@ -1167,8 +1167,9 @@ describe("M6: compatibility APIs — Sonarr/Radarr/Prowlarr", () => {
   });
 });
 
-describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", () => {
+describe("Metadata import: TMDB movies + TheTVDB series (seasons/episodes + enrichment)", () => {
   let tmdbUrl: string;
+  let tvdbUrl: string;
   const servers: import("node:http").Server[] = [];
 
   beforeAll(async () => {
@@ -1221,9 +1222,78 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
     await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
     tmdbUrl = `http://127.0.0.1:${(srv.address() as any).port}`;
 
+    // TheTVDB mock (series primary source): /search, /series/{id}/extended, /series/{id}/episodes/
+    // official — shapes mirror live API responses (status object, contentRatings country "usa",
+    // seasons list carrying non-official orderings too, remoteIds with sourceName).
+    const tvdb = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      const u = new URL(_req.url ?? "/", "http://x");
+      const p = u.pathname;
+      if (p === "/search") {
+        res.end(JSON.stringify({
+          data: [
+            {
+              tvdb_id: "900123", name: "Discover Show", year: "2026", first_air_time: "2026-06-01",
+              overview: "a discover show", status: "Continuing", image_url: "/ds-tvdb.jpg", aliases: [],
+            },
+            { tvdb_id: "321", name: "Discoveries About Boxes", year: "2015", status: "Ended" }, // name contains the query but is a different show
+          ],
+        }));
+        return;
+      }
+      const ext = /^\/series\/([0-9]+)\/extended$/.exec(p);
+      if (ext) {
+        const id = Number(ext[1]);
+        res.end(JSON.stringify({
+          data: {
+            id,
+            name: id === 900123 ? "Discover Show" : "Meta Show",
+            overview: id === 900123 ? "a discover show" : "a show",
+            image: "/tvposter.jpg",
+            firstAired: id === 900123 ? "2026-06-01" : "2021-01-01",
+            year: id === 900123 ? "2026" : "2021",
+            status: { id: 1, name: "Continuing", recordType: "series", keepUpdated: true },
+            genres: [id === 900123 ? { name: "Sci-Fi" } : { name: "Drama" }],
+            contentRatings: [{ name: "TV-MA", country: "usa" }],
+            averageRuntime: 45,
+            score: 4242, // popularity count — must NOT surface as a rating
+            remoteIds: [{ id: String(id === 900123 ? 100600 : 5555), type: 12, sourceName: "TheMovieDB.com" }],
+            aliases: [{ language: "eng", name: "Alt Title" }],
+            seasons: [
+              { number: 0, type: { type: "official" } },
+              { number: 1, type: { type: "official" } },
+              { number: 1, type: { type: "dvd" } }, // non-official ordering — must be ignored
+            ],
+          },
+        }));
+        return;
+      }
+      const eps = /^\/series\/([0-9]+)\/episodes\/official$/.exec(p);
+      if (eps) {
+        res.end(JSON.stringify({
+          data: {
+            episodes: [{
+              id: 1, seasonNumber: 1, number: 1, absoluteNumber: 1,
+              aired: eps[1] === "900123" ? "2026-06-02" : "2021-01-02",
+              name: eps[1] === "900123" ? "Discover Pilot" : "Pilot",
+              overview: eps[1] === "900123" ? "first discover ep" : "ep one",
+              finaleType: null,
+            }],
+          },
+          links: { next: null },
+        }));
+        return;
+      }
+      res.end(JSON.stringify({ data: {} }));
+    });
+    servers.push(tvdb);
+    await new Promise<void>((r) => tvdb.listen(0, "127.0.0.1", () => r()));
+    tvdbUrl = `http://127.0.0.1:${(tvdb.address() as any).port}`;
+
     const cfg = await auth(request(http).put("/api/v1/system/config").send({
       "metadata.tmdbApiKey": "test-key",
       "metadata.tmdbBaseUrl": tmdbUrl,
+      "metadata.tvdbBaseUrl": tvdbUrl,
     }));
     expect(cfg.status).toBe(200);
   });
@@ -1232,7 +1302,7 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
     for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
   });
 
-  it("populates series seasons + episodes from TMDB", async () => {
+  it("populates series seasons + episodes from TheTVDB", async () => {
     const series = await auth(request(http).post("/api/v1/series").send({ title: "Meta Show", tvdbId: 8888, firstAirYear: 2021 }));
     expect(series.status).toBe(201);
     const sid = series.body.id;
@@ -1252,6 +1322,11 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
     const got = await auth(request(http).get(`/api/v1/series/${sid}`));
     expect(got.body.overview).toBe("a show");
     expect(got.body.genres).toContain("Drama");
+    // TVDB-sourced enrichment lands on the row too.
+    expect(got.body.status).toBe("Continuing");
+    expect(got.body.certification).toBe("TV-MA");
+    expect(got.body.runtime).toBe(45);
+    expect(got.body.alternateTitles).toContain("Alt Title");
   });
 
   it("enriches a movie and supports metadata search", async () => {
@@ -1288,7 +1363,7 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
     expect(dm.posterUrl).toContain("/dm.jpg");
     expect(dm.inLibrary).toBe(false);
 
-    const addedMovie = await auth(request(http).post("/api/v1/discover/add").send({ mediaType: "movie", tmdbId: 424242 }));
+    const addedMovie = await auth(request(http).post("/api/v1/discover/add").send({ mediaType: "movie", externalId: 424242 }));
     expect(addedMovie.status).toBe(201);
     expect(addedMovie.body.created).toBe(true);
     const movieId = addedMovie.body.id;
@@ -1299,7 +1374,7 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
     expect(gotMovie.body.genres).toContain("Action");
 
     // adding again is idempotent (no duplicate created)
-    const addedAgain = await auth(request(http).post("/api/v1/discover/add").send({ mediaType: "movie", tmdbId: 424242 }));
+    const addedAgain = await auth(request(http).post("/api/v1/discover/add").send({ mediaType: "movie", externalId: 424242 }));
     expect(addedAgain.body.created).toBe(false);
     expect(addedAgain.body.id).toBe(movieId);
 
@@ -1309,13 +1384,14 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
     expect(dm2.inLibrary).toBe(true);
     expect(dm2.libraryId).toBe(movieId);
 
-    // series: tmdbId -> tvdbId resolution (append_to_response=external_ids) + seasons/episodes population
+    // series: tmdbId -> tvdbId resolution (append_to_response=external_ids) + seasons/episodes
+    // population from TheTVDB (Discover stays TMDB-sourced; default source "tmdb")
     const seriesTrending = await auth(request(http).get("/api/v1/discover?mediaType=series&category=trending"));
     const ds = seriesTrending.body.results.find((r: any) => r.tmdbId === 100600);
     expect(ds).toBeTruthy();
     expect(ds.inLibrary).toBe(false);
 
-    const addedSeries = await auth(request(http).post("/api/v1/discover/add").send({ mediaType: "series", tmdbId: 100600 }));
+    const addedSeries = await auth(request(http).post("/api/v1/discover/add").send({ mediaType: "series", externalId: 100600 }));
     expect(addedSeries.status).toBe(201);
     expect(addedSeries.body.created).toBe(true);
     const seriesId = addedSeries.body.id;
@@ -1328,6 +1404,15 @@ describe("Metadata import: TMDB (series seasons/episodes + movie enrichment)", (
     const ep1 = seriesEpisodes.body.find((e: any) => e.seasonNumber === 1 && e.episode.episodeNumber === 1);
     expect(ep1).toBeTruthy();
     expect(ep1.episode.title).toBe("Discover Pilot");
+
+    // Add Series search is TVDB-backed: results carry tvdbIds, and the in-library annotation now
+    // matches on schema.series.tvdbId.
+    const lookupSeries = await auth(request(http).get("/api/v1/metadata/search?query=discover&type=series"));
+    expect(lookupSeries.status).toBe(200);
+    expect(lookupSeries.body[0].externalId).toBe("900123");
+    expect(lookupSeries.body[0].title).toBe("Discover Show");
+    expect(lookupSeries.body[0].inLibrary).toBe(true);
+    expect(lookupSeries.body[0].libraryId).toBe(seriesId);
   });
 
   it("discover works without an API key when a metadata base URL (shared proxy) is configured", async () => {
