@@ -1,7 +1,7 @@
 # MediaNexus
 
 [![CI](https://github.com/HellboundGlory/media-nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/HellboundGlory/media-nexus/actions/workflows/ci.yml)
-[![Docker Image](https://img.shields.io/badge/ghcr.io-v1.5.0-blue?logo=docker&logoColor=white)](https://github.com/users/HellboundGlory/packages/container/package/media-nexus%2Fapp)
+[![Docker Image](https://img.shields.io/badge/ghcr.io-v1.6.0-blue?logo=docker&logoColor=white)](https://github.com/users/HellboundGlory/packages/container/package/media-nexus%2Fapp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Unified media automation platform** — the combined capabilities of **Prowlarr**, **Sonarr**, **Radarr**, plus a
