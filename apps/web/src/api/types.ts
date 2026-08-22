@@ -492,6 +492,8 @@ export interface ReleaseProfile {
 export interface AutoTagSpec {
   type: string;
   value: string | number | boolean;
+  /** Optional per-condition label, distinct from the rule's own name. */
+  name?: string;
   negate: boolean;
   required: boolean;
 }

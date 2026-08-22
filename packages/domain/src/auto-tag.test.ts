@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { describe, it, expect } from "vitest";
 import {
-  computeTagChanges, autoTagRuleMatches, type AutoTag, type AutoTagItemInput,
+  computeTagChanges, autoTagRuleMatches, autoTagSpecSchema, type AutoTag, type AutoTagItemInput,
 } from "./auto-tag";
 
 const item = (over: Partial<AutoTagItemInput> = {}): AutoTagItemInput => ({
@@ -80,6 +80,21 @@ describe("computeTagChanges — negate", () => {
     expect(autoTagRuleMatches(r, item({ genres: ["Comedy"] }))).toBe(false);
     const changes = computeTagChanges([r], item({ genres: ["Drama"] }));
     expect(changes.toAdd).toEqual(["no-comedy"]);
+  });
+});
+
+describe("autoTagSpecSchema — optional per-condition name", () => {
+  it("preserves a provided per-condition name alongside negate/required", () => {
+    const spec = autoTagSpecSchema.parse({ type: "genre", value: "Comedy", name: "Not comedy", negate: true, required: false });
+    expect(spec.name).toBe("Not comedy");
+    expect(spec.negate).toBe(true);
+  });
+
+  it("still accepts specs without a name (rows persisted before the field existed)", () => {
+    const spec = autoTagSpecSchema.parse({ type: "genre", value: "Comedy" });
+    expect(spec.name).toBeUndefined();
+    expect(spec.negate).toBe(false);
+    expect(spec.required).toBe(false);
   });
 });
 

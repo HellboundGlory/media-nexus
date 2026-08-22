@@ -19,9 +19,9 @@ const SPEC_TYPES: { type: string; label: string }[] = [
   { type: "seriesType", label: "Series type (series)" },
 ];
 
-interface SpecRow { type: string; value: string | number | boolean; negate: boolean; required: boolean }
+interface SpecRow { name: string; type: string; value: string | number | boolean; negate: boolean; required: boolean }
 
-const emptySpec = (): SpecRow => ({ type: "genre", value: "", negate: false, required: false });
+const emptySpec = (): SpecRow => ({ name: "", type: "genre", value: "", negate: false, required: false });
 const emptyForm = { name: "", removeTagsAutomatically: false, tags: [] as string[], specifications: [emptySpec()] as SpecRow[] };
 
 function specText(s: AutoTagSpec): string {
@@ -48,6 +48,7 @@ export default function AutoTags() {
         specifications: form.specifications.map((s) => ({
           type: s.type,
           value: s.type === "year" ? Number(s.value) : s.value,
+          name: s.name.trim() || undefined,
           negate: s.negate,
           required: s.required,
         })),
@@ -66,7 +67,7 @@ export default function AutoTags() {
       name: r.name,
       removeTagsAutomatically: r.removeTagsAutomatically,
       tags: r.tags,
-      specifications: r.specifications.map((s) => ({ type: s.type, value: s.value, negate: s.negate, required: s.required })),
+      specifications: r.specifications.map((s) => ({ name: s.name ?? "", type: s.type, value: s.value, negate: s.negate, required: s.required })),
     });
   };
   const cancel = () => { setEditing(null); setForm(emptyForm); };
@@ -99,6 +100,13 @@ export default function AutoTags() {
           <span className="text-xs text-ink-dim">Conditions (rule matches when every type-group matches)</span>
           {form.specifications.map((s, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-rule p-2">
+              <input
+                value={s.name}
+                onChange={(e) => setRow(i, { name: e.target.value })}
+                placeholder="Name"
+                aria-label={`Condition ${i + 1} name`}
+                className={`${inputCls} w-36`}
+              />
               <select value={s.type} onChange={(e) => { const nt = e.target.value; setRow(i, { type: nt, value: nt === "monitored" ? true : "" }); }} className={inputCls}>
                 {SPEC_TYPES.map((t) => <option key={t.type} value={t.type}>{t.label}</option>)}
               </select>
@@ -111,8 +119,14 @@ export default function AutoTags() {
               ) : (
                 <input value={String(s.value)} onChange={(e) => setRow(i, { value: e.target.value })} placeholder="value" className={`${inputCls} w-40`} />
               )}
-              <label className="flex items-center gap-1 text-xs text-ink-dim"><input type="checkbox" checked={s.negate} onChange={(e) => setRow(i, { negate: e.target.checked })} className="h-3.5 w-3.5" /> negate</label>
-              <label className="flex items-center gap-1 text-xs text-ink-dim"><input type="checkbox" checked={s.required} onChange={(e) => setRow(i, { required: e.target.checked })} className="h-3.5 w-3.5" /> required</label>
+              <div className="flex flex-col gap-0.5">
+                <label className="flex items-center gap-1 text-xs text-ink-dim"><input type="checkbox" checked={s.negate} onChange={(e) => setRow(i, { negate: e.target.checked })} className="h-3.5 w-3.5" /> negate</label>
+                <span className="max-w-56 text-[10px] leading-snug text-ink-dim">If checked, the auto tagging rule will not apply if this condition matches.</span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="flex items-center gap-1 text-xs text-ink-dim"><input type="checkbox" checked={s.required} onChange={(e) => setRow(i, { required: e.target.checked })} className="h-3.5 w-3.5" /> required</label>
+                <span className="max-w-56 text-[10px] leading-snug text-ink-dim">If checked, this condition must match for the rule to apply. Otherwise, a single matching condition of the same type is sufficient.</span>
+              </div>
               <button onClick={() => setForm((f) => ({ ...f, specifications: f.specifications.filter((_, j) => j !== i) }))} className="rounded p-1 text-ink-dim hover:text-err" aria-label="Remove spec"><Trash2 className="h-4 w-4" /></button>
             </div>
           ))}

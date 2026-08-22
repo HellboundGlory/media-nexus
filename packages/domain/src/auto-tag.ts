@@ -26,8 +26,13 @@ import { z } from "zod";
  * schema doesn't model those fields yet; see HANDOFF for the reasoning.
  */
 
-/** Default negate/required for every spec variant. */
-const specFlags = { negate: z.boolean().default(false), required: z.boolean().default(false) };
+/** Fields shared by every spec variant. `name` is an optional per-condition label (shown in the
+ *  UI next to the condition) — distinct from the rule's own `name`, which lives on `autoTagSchema`. */
+const specFlags = {
+  name: z.string().optional(),
+  negate: z.boolean().default(false),
+  required: z.boolean().default(false),
+};
 
 export const autoTagSpecSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tag"), value: z.string().min(1), ...specFlags }),
